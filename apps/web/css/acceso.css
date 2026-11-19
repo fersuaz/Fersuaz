@@ -1,0 +1,71 @@
+/* Acceso unificado: una tarjeta centrada, sobria, con la marca arriba. */
+.acceso { background: var(--canvas); }
+.acceso-main { position: relative; min-height: 100svh; display: grid; place-items: center; padding: clamp(2.5rem, 7vh, 5rem) 1.25rem; overflow: hidden; }
+.acceso-fondo {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(48rem 30rem at 85% -10%, rgba(48,133,172,.16), transparent 70%),
+    radial-gradient(40rem 28rem at -10% 110%, rgba(0,52,99,.10), transparent 70%);
+}
+.acceso-tarjeta { position: relative; z-index: 1; width: min(100%, 31rem); display: grid; justify-items: stretch; text-align: left; }
+.acceso-logo { justify-self: center; line-height: 0; margin-bottom: 1.5rem; }
+.acceso-logo img { height: 56px; width: auto; }
+.acceso h1 { text-align: center; font-size: clamp(2rem, 4vw, 2.4rem); font-weight: 700; letter-spacing: -.025em; margin-bottom: 1.5rem; }
+
+.pestanas { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem; padding: .3rem; background: var(--panel); border-radius: 16px; margin-bottom: 1.75rem; }
+.pestanas button {
+  font: 600 .98rem/1 var(--sans); color: var(--texto-2); background: transparent; border: 0; border-radius: 12px;
+  padding: .9rem 1rem; cursor: pointer; transition: background .25s, color .25s, box-shadow .25s;
+}
+.pestanas button[aria-selected="true"] { background: #fff; color: var(--marino); box-shadow: 0 1px 2px rgba(0,52,99,.08), 0 6px 18px rgba(0,52,99,.10); }
+.pestanas button:hover:not([aria-selected="true"]) { color: var(--marino); }
+
+.acceso .field label { color: var(--marino); font-weight: 600; font-size: .92rem; }
+.acceso .field input, .acceso .field select { min-height: 54px; border-radius: 14px; border: 1.5px solid var(--linea); background: #fff; padding: 0 1rem; font-size: 1rem; }
+.acceso .field input::placeholder { color: #8796A6; }
+.acceso .field input:focus, .acceso .field select:focus { border-color: var(--celeste); box-shadow: 0 0 0 4px rgba(48,133,172,.18); }
+
+.clave { position: relative; }
+.clave input { width: 100%; padding-right: 3.2rem !important; }
+.ojo { position: absolute; right: .4rem; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; display: grid; place-items: center; border: 0; background: none; border-radius: 10px; cursor: pointer; color: var(--texto-2); }
+.ojo svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.ojo[aria-pressed="true"] { color: var(--marino); }
+.ojo:hover { background: var(--panel); }
+
+.acceso-fila { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin: .25rem 0 1.5rem; }
+.acceso-fila .check { margin: 0; }
+.acceso .check span { color: var(--texto-2); font-weight: 500; }
+.enlace { font: 600 .92rem/1.3 var(--sans); color: var(--marino); background: none; border: 0; padding: .25rem 0; cursor: pointer; text-decoration: none; }
+.enlace:hover { text-decoration: underline; text-underline-offset: 3px; }
+.enlace.fuerte { font-weight: 700; }
+
+.btn-acceso {
+  width: 100%; min-height: 58px; font-size: 1.05rem; font-weight: 600;
+  background: linear-gradient(180deg, #0A4A85 0%, #003463 100%);
+  box-shadow: 0 10px 24px -8px rgba(0,52,99,.55), 0 2px 6px rgba(0,52,99,.18);
+  transition: transform .2s, box-shadow .2s, filter .2s;
+}
+.btn-acceso:hover { filter: brightness(1.08); box-shadow: 0 14px 30px -10px rgba(0,52,99,.6), 0 2px 6px rgba(0,52,99,.2); }
+.btn-acceso:active { transform: translateY(1px); }
+
+.acceso-alt { text-align: center; color: var(--texto-2); margin-top: 1.5rem; font-size: .95rem; }
+.acceso-nota { text-align: center; color: var(--texto-2); font-size: .88rem; margin-top: .9rem; }
+.acceso-legal { display: flex; justify-content: center; flex-wrap: wrap; gap: .2rem 1.1rem; margin-top: 1.25rem; font-size: .88rem; }
+.acceso-legal a { color: var(--texto-2); text-decoration: none; }
+.acceso-legal a:hover { color: var(--marino); text-decoration: underline; }
+.acceso-volver { justify-self: center; margin-top: 1.25rem; padding-bottom: 1.5rem; color: var(--texto-2); font-size: .9rem; font-weight: 500; text-decoration: none; border-bottom: 1px solid var(--linea); width: 100%; text-align: center; }
+.acceso-volver:hover { color: var(--marino); }
+
+.acceso fieldset { margin-bottom: 1.5rem; }
+.acceso legend { font-family: var(--sans); font-weight: 600; font-size: .92rem; color: var(--marino); margin-bottom: .6rem; }
+.acceso .role-pick { grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); }
+.acceso .role-pick label { background: #fff; border: 1.5px solid var(--linea); border-radius: 14px; }
+.acceso .role-pick label:has(input:checked) { border-color: var(--marino); background: #F2F7FB; box-shadow: 0 0 0 3px rgba(48,133,172,.15); }
+.acceso .role-pick span { color: var(--marino); font-weight: 600; }
+
+.recuperar h2 { font-size: 1.35rem; margin-bottom: .35rem; }
+.recuperar > p { color: var(--texto-2); margin-bottom: 1.25rem; }
+.volver-login { display: block; margin: 1rem auto 0; }
+
+.acceso .field { align-content: start; }
+.acceso .row2 { align-items: start; }
