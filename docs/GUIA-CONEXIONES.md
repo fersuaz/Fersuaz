@@ -40,7 +40,12 @@ Los tres agentes ya están definidos en `.claude/agents/` y el flujo en `.github
 2. Cloudflare → My Profile → API Tokens → Create Token → plantilla **Edit Cloudflare Workers** (incluye Pages). Copia el token.
 3. Copia tu **Account ID** (Workers & Pages → panel derecho).
 4. En GitHub → Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
-5. Dominio: en el proyecto Pages → Custom domains → `fersuaz.net` y `www.fersuaz.net` (el DNS ya debe estar en Cloudflare).
+5. Dominio (fersuaz.net está registrado en Hostinger; se queda ahí, solo cambia a dónde apunta):
+   1. Cloudflare → Add a site → `fersuaz.net` → plan Free. Cloudflare copia los registros DNS actuales y te da dos nameservers (por ejemplo `xxx.ns.cloudflare.com`).
+   2. Revisa que estén los registros de correo (MX, SPF, DKIM) antes de seguir, para no cortar el correo.
+   3. Hostinger → hPanel → Dominios → fersuaz.net → DNS / Nameservers → "Cambiar nameservers" → pega los dos de Cloudflare.
+   4. Espera a que Cloudflare marque el sitio como "Active" (minutos a pocas horas).
+   5. En el proyecto Pages → Custom domains → `fersuaz.net` y `www.fersuaz.net`.
 6. Seguridad recomendada (Security): Bot Fight Mode activado, SSL "Full (strict)", WAF con reglas gestionadas.
 
 Resultado: cada PR publica una vista previa propia; cada merge a `main` publica fersuaz.net.

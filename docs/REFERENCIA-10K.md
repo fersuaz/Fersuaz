@@ -24,4 +24,4 @@ y qué se adapta a la infraestructura de FERSUAZ.
 ## Pendiente para usar la skill completa
 - El conector de Higgsfield de esta sesión solo consulta (créditos, modelos, historial). Para generar imagen y video
   hace falta el conector con herramientas de generación (URL `https://mcp.higgsfield.ai/mcp`).
-- Créditos actuales: plan gratuito. Un hero cuesta unos 2 créditos de imagen más 10 a 55 de video según el modelo.
+- Créditos actuales: 1,010 en plan Plus (verificado el 19-11-2026). Un hero cuesta unos 2 créditos de imagen más 10 a 55 de video según el modelo.
