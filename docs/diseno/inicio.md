@@ -48,7 +48,7 @@ Cómo encaja con las leyes del video, y dónde se desvía (dicho a propósito):
 - **Ley 5 (sujetos que perdonan):** no hay planos cerrados de manos ni de caras. La receta y el frasco se ven desenfocados o a distancia.
 - **Ley 6 (eje vertical):** **desviación.** La historia avanza hacia adelante (un empuje lento de cámara), no hacia abajo. Hacia adelante se lee como "seguir la historia" al hacer scroll.
 - **Costuras (ley de la textura):** cada cambio de lugar ocurre dentro de un destello de luz cálida que llena el lente, así la unión no se nota.
-- **Sin texto ni logos en el video.** El frasco real de Tío Dex **no se genera con IA**: la IA inventaría la etiqueta. El producto real aparece en la página, con foto oficial.
+- **Sin texto ni logos en el video.** El frasco real de Tio-Dex **no se genera con IA**: la IA inventaría la etiqueta. El producto real aparece en la página, con foto oficial.
 
 | Seg. | Lugar | Movimiento de cámara | Final del segmento (inicio del siguiente) | Dónde va el texto |
 |---|---|---|---|---|
@@ -163,7 +163,9 @@ Sobre el fotograma final del segmento 4:
 ## 8. Debajo del hero
 
 Se conservan las secciones actuales (`#jornada`, `#cuentas`, cierre). Cambios propuestos:
-- Nueva sección corta **"Tío Dex"** con la **foto oficial del producto** y solo el texto aprobado por FERSUAZ (indicación, presentación y aviso legal). Sin esa foto y ese texto, la sección no se publica.
+- Nueva sección corta **"Tio-Dex"** con la foto oficial (frasco y caja) y solo datos del empaque: indicación, presentación,
+  principios activos sin dosis, fabricante y registro sanitario, más "Lea el prospecto y consulte a su médico". Va en un PR propio.
+- En el video, la bolsa de papel del segmento 3 se mantiene: el empaque real no se genera con IA.
 - Pie de página: aviso de que las personas del video son generadas con IA (decisión pendiente, ver §10).
 
 ## 9. Lista de ingeniería
@@ -176,7 +178,11 @@ página completa sin video; codificación con `-g 8 -keyint_min 8`; crudos en `r
 ## 10. Pendientes antes de generar
 
 1. **Aprobación de este storyboard** (la compuerta más barata).
-2. **Foto oficial y texto aprobado de Tío Dex** (indicación, presentación y si es de venta libre o bajo receta).
+2. **Tio-Dex: fotos recibidas** (`docs/diseno/referencias/`). Datos tomados del empaque: jarabe, vía oral, 120 mL;
+   dextrometorfano y sulfaguayacolato; antitusivo, descongestionante nasal y bronquial; elaborado por FERSUAZ
+   Farmacéutica S.R.L., La Vega; Reg. San. 09-0243; Reg. Ind. 18704. Falta confirmar si es de venta libre o bajo receta.
+   **Verificar el empaque:** dice "Cada 5 mL contiene: Dextrometorfano 50 mg" y "Sulfaguayacolato 5 mL". Las dosis no
+   se publican en la web hasta que el responsable técnico las confirme.
 3. **Revisión regulatoria:** la publicidad de medicamentos en República Dominicana está regulada (DIGEMAPS). Frases como "vuelve a respirar tranquila" o "se sana" deben pasar por el responsable regulatorio de FERSUAZ. No soy abogado; esto es una alerta, no una opinión legal.
 4. **Aviso de IA en el pie:** recomendado, porque las personas del video no son reales.
 5. **Conector de Higgsfield con generación** (`https://mcp.higgsfield.ai/mcp`) o generación manual en higgsfield.ai con estos prompts.
