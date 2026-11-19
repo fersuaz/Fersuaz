@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FERSUAZ — Gestión comercial</title>
+  <title>FERSUAZ, gestión comercial</title>
   <meta name="description" content="Territorios, visitas, recetas, vouchers y viáticos de la fuerza comercial de FERSUAZ en una sola plataforma.">
   <meta name="theme-color" content="#003463">
   <link rel="manifest" href="manifest.webmanifest">
@@ -11,6 +11,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/site.css">
+  <link rel="stylesheet" href="css/hero.css">
+  <!-- DEPLOY STEP: og:url y og:image se completan con la URL pública al desplegar -->
+  <meta property="og:title" content="FERSUAZ, una receta mueve a todo un equipo">
+  <meta property="og:url" content="">
+  <meta property="og:image" content="">
 </head>
 <body>
   <a class="skip" href="#contenido">Saltar al contenido</a>
@@ -25,13 +30,38 @@
   </header>
 
   <main id="contenido">
-    <section class="hero">
-      <h1>Cada kilómetro, cada receta y cada peso del equipo comercial, en su lugar.</h1>
-      <div class="hero-foot">
-        <p>FERSUAZ reúne territorios, visitas médicas, recetas, vouchers de farmacia y viáticos de toda la República Dominicana. La gerencia ve el país entero; cada representante ve su ruta del día.</p>
+    <section class="cine" id="inicio" aria-label="Una receta mueve a todo un equipo">
+      <div class="cine-stage">
+        <div class="cine-poster" aria-hidden="true"></div>
+        <video class="cine-video" preload="none" muted playsinline aria-hidden="true" tabindex="-1"></video>
+        <div class="cine-scrim" aria-hidden="true"></div>
+
+        <div class="band band-left" data-band="0" data-a="0" data-b="0.20" data-fx="blur">
+          <p class="band-line">Todo empieza con alguien que necesita sentirse mejor.</p>
+        </div>
+        <div class="band band-right" data-band="1" data-a="0.24" data-b="0.44" data-fx="write">
+          <p class="band-line">Un médico la escucha y le receta un medicamento FERSUAZ.</p>
+        </div>
+        <div class="band band-left" data-band="2" data-a="0.48" data-b="0.68" data-fx="halves">
+          <p class="band-line">En la farmacia del barrio, el dependiente tiene lo que el médico recetó.</p>
+        </div>
+        <div class="band band-left" data-band="3" data-a="0.72" data-b="0.86" data-fx="breath">
+          <p class="band-line">Ella sigue su tratamiento y vuelve a respirar tranquila.</p>
+        </div>
+        <div class="band band-settle" data-band="4" data-a="0.88" data-b="1" data-fx="rise">
+          <h1 class="band-line">Una receta mueve a todo un equipo.</h1>
+          <p class="settle-sub">El visitador llegó al médico. El vendedor surtió la farmacia. La promotora registró la receta. FERSUAZ conecta cada paso.</p>
+          <p class="settle-cta"><a class="btn" href="registro.html">Solicitar una cuenta</a></p>
+        </div>
+
+        <svg class="cine-ring" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="126" style="stroke-dashoffset:var(--ld,126)"/></svg>
+      </div>
+
+      <div class="cine-static">
+        <h1>Una receta mueve a todo un equipo.</h1>
+        <p>Del consultorio a la farmacia, FERSUAZ conecta a visitadores, vendedores, promotoras y dependientes en una sola plataforma.</p>
         <a class="btn" href="registro.html">Solicitar una cuenta</a>
       </div>
-      <svg class="hero-thread" viewBox="0 0 100 300" preserveAspectRatio="none" aria-hidden="true"><path d="M50 0 V300"/></svg>
     </section>
 
     <section id="jornada" class="story" aria-label="Una jornada en FERSUAZ">
@@ -120,10 +150,11 @@
   </main>
 
   <footer class="foot">
-    <span>FERSUAZ, Santo Domingo, República Dominicana</span>
+    <span>FERSUAZ Farmacéutica S.R.L., La Vega, República Dominicana. Las personas del video son generadas con inteligencia artificial.</span>
     <a href="privacidad.html">Política de privacidad</a>
   </footer>
 
   <script src="js/story.js" defer></script>
+  <script src="js/hero.js" defer></script>
 </body>
 </html>
