@@ -16,7 +16,9 @@ html,body{overflow-x:hidden;overflow-x:clip}
 .band{position:absolute;top:50%;transform:translateY(-50%);opacity:0;color:#fff;text-shadow:var(--tshadow);
   max-width:min(34rem,42vw);pointer-events:none}
 .band::before{content:"";position:absolute;inset:-35% -25%;z-index:-1;pointer-events:none;opacity:calc(.25 + .75*var(--k,1));
-  background:radial-gradient(ellipse 74% 62% at 50% 50%,rgba(0,22,48,.66) 0%,rgba(0,22,48,.42) 46%,rgba(0,22,48,0) 76%)}
+  background:radial-gradient(ellipse 74% 62% at 50% 50%,rgba(0,22,48,var(--sa,.66)) 0%,rgba(0,22,48,calc(var(--sa,.66)*.64)) 46%,rgba(0,22,48,0) 76%)}
+
+.band-settle::before{inset:-25% -15%}
 .band-left{left:var(--gutter)}
 .band-right{right:var(--gutter);text-align:right}
 .band-line{font-family:var(--serif);font-weight:600;font-size:clamp(1.9rem,3.6vw,3.4rem);line-height:1.08;letter-spacing:-.02em;margin:0;color:#fff}
@@ -56,3 +58,16 @@ html,body{overflow-x:hidden;overflow-x:clip}
 @media (max-height:560px){.cine-ring{display:none}}
 @media (pointer:coarse){.btn{min-height:44px;display:inline-flex;align-items:center;justify-content:center}}
 body.paused *,body.paused *::before,body.paused *::after{animation-play-state:paused!important}
+.band-top{top:22vh;transform:none;max-width:min(30rem,34vw)}
+@media (max-width:720px),(orientation:portrait) and (max-width:1024px),(orientation:portrait) and (pointer:coarse),(orientation:landscape) and (pointer:coarse) and (max-height:560px),(prefers-reduced-motion:reduce){
+  .cine{background-size:cover;background-repeat:no-repeat;background-position:center,68% 40%,center}
+}
+
+/* Bandas sobre el cielo del balcón: texto azul marino con halo claro (como el logo sobre fondo claro) */
+.band.on-sky{color:var(--marino);text-shadow:0 1px 1px rgba(245,248,251,.7),0 0 24px rgba(245,248,251,.55)}
+.band.on-sky .band-line{color:var(--marino)}
+.band.on-sky::before{inset:-40% -30%;background:radial-gradient(ellipse 70% 60% at 50% 50%,rgba(245,248,251,.4) 0%,rgba(245,248,251,.26) 46%,rgba(245,248,251,0) 76%)}
+.band-settle.on-sky{top:16vh;bottom:auto}
+.band-settle.on-sky .settle-sub{color:var(--tinta)}
+.band-settle.on-sky .btn{background:var(--marino);color:#fff}
+.band-settle.on-sky .btn:hover{background:#0A4A85}

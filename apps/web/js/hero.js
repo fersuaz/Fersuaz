@@ -14,8 +14,8 @@
 
   const VIDEO_URL = 'assets/hero/hero-scrub.mp4';
   const POSTER_URL = 'assets/hero/hero-poster.jpg';
-  const ENDING_URL = 'assets/hero/hero-ending.jpg';
-  const VIDEO_BYTES = 12000000; // respaldo si el servidor no envía Content-Length
+  const ENDING_URL = new URL('assets/hero/hero-ending.jpg', document.baseURI).href;
+  const VIDEO_BYTES = 11895011; // respaldo si el servidor no envía Content-Length
 
   // ---------- partir el texto en palabras/letras (semilla fija) ----------
   function rng(seed) { let s = seed >>> 0; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296; }
