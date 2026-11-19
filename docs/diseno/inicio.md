@@ -190,6 +190,25 @@ página completa sin video; codificación con `-g 8 -keyint_min 8`; crudos en `r
 6. **Descarga de archivos de Higgsfield:** agregar `d8j0ntlcm91z4.cloudfront.net` en claude.ai → Configuración → Capacidades
    para poder unir los tramos con ffmpeg.
 
+## 12. Cuenta de Higgsfield y uso de las fotos de Tio-Dex
+
+Cuenta única: el espacio privado del plan Plus (`e4c77cae-5b05-46a0-a5d1-35e6d21efb25`). Es el único espacio de la cuenta
+y queda seleccionado. Todo se genera y se cobra ahí.
+
+Fotos oficiales importadas a Higgsfield (sin costo):
+| Archivo | media_id |
+|---|---|
+| `referencias/tio-dex-caja.jpg` | `91aee8a2-737c-4900-be40-6d6166b60846` |
+| `referencias/tio-dex-frasco-y-caja.jpg` | `49b2463a-582e-4a1d-844f-6fe0389d4da4` |
+
+Reglas de uso:
+1. Las fotos son la cara real del producto. En la web se usan tal cual, sin edición con IA.
+2. En Higgsfield solo entran como **referencia de color, forma y tamaño** (`image_references`), nunca como algo que la IA
+   redibuja con la etiqueta a la vista: la IA cambia letras, cifras y el registro sanitario.
+3. Si una escena necesita el frasco, va de espaldas, desenfocado o dentro de la bolsa, y siempre con "no text, no logos".
+4. Toda imagen generada que muestre el producto se revisa contra estas fotos antes de usarla: color azul, frasco ámbar,
+   tapa dosificadora transparente, sin texto inventado.
+
 ## 11. Compuerta de textos
 
 Todo el texto anterior se publica tal cual. Antes de mostrar la página: cero rayas largas, cero palabras de relleno
