@@ -190,7 +190,7 @@ página completa sin video; codificación con `-g 8 -keyint_min 8`; crudos en `r
 6. **Descarga de archivos de Higgsfield:** agregar `d8j0ntlcm91z4.cloudfront.net` en claude.ai → Configuración → Capacidades
    para poder unir los tramos con ffmpeg.
 
-## 12. Cuenta de Higgsfield y uso de las fotos de Tio-Dex
+## 11. Cuenta de Higgsfield y uso de las fotos de Tio-Dex
 
 Cuenta única: el espacio privado del plan Plus (`e4c77cae-5b05-46a0-a5d1-35e6d21efb25`). Es el único espacio de la cuenta
 y queda seleccionado. Todo se genera y se cobra ahí.
@@ -209,13 +209,13 @@ Reglas de uso:
 4. Toda imagen generada que muestre el producto se revisa contra estas fotos antes de usarla: color azul, frasco ámbar,
    tapa dosificadora transparente, sin texto inventado.
 
-## 11. Compuerta de textos
+## 12. Compuerta de textos
 
 Todo el texto anterior se publica tal cual. Antes de mostrar la página: cero rayas largas, cero palabras de relleno
 (leverage, seamless, empower, unlock, robust, actionable, data-driven, solutions y sus equivalentes en español)
 y revisión de muletillas de IA en todo el archivo.
 
-## 12. Registro de generaciones
+## 13. Registro de generaciones
 
 | Fecha | Qué | Modelo | Créditos | Estado |
 |---|---|---|---|---|
