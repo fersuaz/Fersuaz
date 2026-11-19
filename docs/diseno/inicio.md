@@ -1,6 +1,7 @@
 # Paquete de diseño: hero de FERSUAZ.net (`apps/web/index.html`)
 
-Estado: **borrador para aprobar el storyboard**. Todavía no se ha gastado ningún crédito.
+Estado: **storyboard aprobado** (19-11-2026). **Paleta corregida a los colores corporativos de FERSUAZ** el mismo día:
+el primer intento del tramo 1 se generó con un verde que no es de la marca y se descarta.
 Nivel: **Tier 2, recorrido encadenado** (4 segmentos de 6 s, unos 24 s de scroll).
 Herramienta de imagen y video: **Higgsfield**, sin excepciones.
 
@@ -16,30 +17,29 @@ La plataforma existe para que esa cadena no se rompa en ningún punto.
 
 ## 2. Paleta (tokens)
 
-Se mantiene la identidad de `CLAUDE.md`. Cuando el video quede aprobado, se ajustan los tonos
-a partir de los fotogramas reales.
+Colores corporativos de Laboratorio FERSUAZ, muestreados del logo oficial (ver `CLAUDE.md`).
 
 ```css
 :root{
-  --canvas:#08201C;        /* Verde Caribe: fondo */
-  --panel:#123A33;         /* Bosque: tarjetas */
-  --accent:#C9A96E;        /* Champán: CTA y énfasis puntual */
-  --accent-hover:#D8BD88;
-  --accent-muted:rgba(201,169,110,.28);
-  --text-secondary:#8FA39D;/* Niebla */
-  --text-primary:#E6EBE8;  /* Perla */
-  --alert:#D2644A;
+  --canvas:#F5F8FB;          /* blanco clínico: fondo */
+  --panel:#E9F0F6;           /* secciones alternas */
+  --accent:#003463;          /* azul marino (SUAZ): CTA y títulos */
+  --accent-hover:#0A4A85;
+  --accent-muted:#3085AC;    /* celeste (FER): líneas, ruta, acentos gráficos */
+  --text-secondary:#52677A;
+  --text-primary:#0F2A44;
+  --alert:#C0462C;
 }
 ```
 
-Mundo del video: luz de mañana fría y verdosa en la casa, que se vuelve cálida y champán al llegar la recuperación.
-El cambio de temperatura de la luz cuenta la historia por su cuenta.
+Mundo del video: casas, consultorio y farmacia luminosos, con paredes blancas y azul muy pálido, telas y detalles
+en azul marino y celeste. La mañana empieza fría y azulada; la recuperación llega con luz cálida de tarde sobre un
+cielo azul limpio. Sin verdes dominantes en paredes ni ropa: las únicas plantas son un detalle natural.
 
 ## 3. Tipografía
 
-- Títulos: **Bodoni Moda** 400 y 500, itálica 400 para una sola palabra de énfasis por banda.
+- Títulos: **Poppins** 500 y 600 (geométrica, del mismo carácter que el logo).
 - Texto: **Figtree** 400, 500 y 600.
-- Etiquetas pequeñas (hora, paso): **Figtree** 600 en versalitas con espaciado amplio. No se añade una tercera familia, para respetar la identidad ya aprobada.
 
 ## 4. Storyboard (un solo plano continuo, 4 segmentos)
 
@@ -66,8 +66,8 @@ Se usa como `image_references` en los cuatro segmentos para que la paciente sea 
 ```
 Portrait reference of a Dominican woman in her late thirties, warm brown skin,
 shoulder-length dark curly hair tied loosely back, small gold stud earrings,
-wearing a soft sage-green cotton blouse. Neutral expression, three-quarter view,
-soft even daylight, plain deep green background. Photorealistic. No text, no logos,
+wearing a soft light-blue cotton blouse. Neutral expression, three-quarter view,
+soft even daylight, plain pale grey-blue background. Photorealistic. No text, no logos,
 no lettering anywhere.
 ```
 
@@ -78,9 +78,10 @@ A Dominican woman in her late thirties sits on a simple sofa in a modest Santo
 Domingo living room at early dawn, wrapped in a light grey blanket, slightly
 hunched as if she has a cough, positioned in the right third of the frame,
 composed as the first moment of a slow forward camera push toward her and the
-window behind her. Cool blue-green morning light through sheer curtains, the
-room otherwise in soft shadow. Palette of deep Caribbean green walls, forest
-green plants, pearl-grey fabric and a faint champagne glow at the window edge.
+window behind her. Cool soft-blue morning light through white sheer curtains,
+the room otherwise in gentle shadow. Palette of white and very pale blue walls,
+deep navy-blue cushions and throw, light sky-blue accents, pearl-grey fabric and
+one small potted plant as a natural detail.
 Dust drifting in the light. The left third of the frame is the same room
 continuing in soft shadow: a plain wall and a doorway receding in depth.
 Cinematic, photorealistic, 16:9. No text, no logos, no lettering anywhere.
@@ -133,8 +134,8 @@ woman, now without the blanket, stands at the railing, takes a slow deep breath
 and smiles. The camera keeps its slow forward push and eases to a complete
 stop. She stays alive: hair moving in a light breeze, a relaxed breath. Leaves
 sway gently. The shot ends at rest: the woman in profile in the right third of
-the frame, the left half filled with warm champagne sky and soft green foliage,
-calm and arrived. No text, no logos, no lettering anywhere.
+the frame, the left half filled with a clean blue sky warmed by late sun and a
+white railing, calm and arrived. No text, no logos, no lettering anywhere.
 ```
 
 Ajustes comunes de video: imagen a video, 1080p, 6 s, sin audio, 16:9, referencia de personaje en cada segmento.
@@ -185,10 +186,23 @@ página completa sin video; codificación con `-g 8 -keyint_min 8`; crudos en `r
    se publican en la web hasta que el responsable técnico las confirme.
 3. **Revisión regulatoria:** la publicidad de medicamentos en República Dominicana está regulada (DIGEMAPS). Frases como "vuelve a respirar tranquila" o "se sana" deben pasar por el responsable regulatorio de FERSUAZ. No soy abogado; esto es una alerta, no una opinión legal.
 4. **Aviso de IA en el pie:** recomendado, porque las personas del video no son reales.
-5. **Conector de Higgsfield con generación** (`https://mcp.higgsfield.ai/mcp`) o generación manual en higgsfield.ai con estos prompts.
+5. ~~Conector de Higgsfield con generación~~ conectado el 19-11-2026 (1,010 créditos, plan Plus).
+6. **Descarga de archivos de Higgsfield:** agregar `d8j0ntlcm91z4.cloudfront.net` en claude.ai → Configuración → Capacidades
+   para poder unir los tramos con ffmpeg.
 
 ## 11. Compuerta de textos
 
 Todo el texto anterior se publica tal cual. Antes de mostrar la página: cero rayas largas, cero palabras de relleno
 (leverage, seamless, empower, unlock, robust, actionable, data-driven, solutions y sus equivalentes en español)
 y revisión de muletillas de IA en todo el archivo.
+
+## 12. Registro de generaciones
+
+| Fecha | Qué | Modelo | Créditos | Estado |
+|---|---|---|---|---|
+| 19-11-2026 | Referencia de paciente (blusa verde, fondo verde) | gpt_image_2_6 2k high | 2.75 | Descartada por paleta |
+| 19-11-2026 | Cuadro inicial tramo 1 (paredes verdes) | gpt_image_2_6 2k high | 2.75 | Descartado por paleta |
+| 19-11-2026 | Video tramo 1 (verde) | seedance_2_0 1080p 6 s | 72 | Descartado por paleta |
+
+Precios consultados para el video (por tramo de 6 s, 1080p, sin audio): Seedance 2.0 72, Seedance 2.5 96, Kling 3.0 Pro 10.5
+(sin referencia de personaje), Minimax Hailuo 10. Elegido: **Seedance 2.0**.
