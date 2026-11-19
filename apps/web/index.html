@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FERSUAZ — Gestión comercial</title>
+  <meta name="description" content="Territorios, visitas, recetas, vouchers y viáticos de la fuerza comercial de FERSUAZ en una sola plataforma.">
+  <meta name="theme-color" content="#08201C">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,500;1,6..96,400&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+  <a class="skip" href="#contenido">Saltar al contenido</a>
+
+  <header class="bar">
+    <a class="brand" href="./" aria-label="FERSUAZ, inicio">FERSUAZ</a>
+    <nav aria-label="Principal">
+      <a href="#jornada">La jornada</a>
+      <a href="#cuentas">Tipos de cuenta</a>
+      <a class="bar-cta" href="entrar.html">Iniciar sesión</a>
+    </nav>
+  </header>
+
+  <main id="contenido">
+    <section class="hero">
+      <h1>Cada kilómetro, cada receta y cada peso del equipo comercial, en su lugar.</h1>
+      <div class="hero-foot">
+        <p>FERSUAZ reúne territorios, visitas médicas, recetas, vouchers de farmacia y viáticos de toda la República Dominicana. La gerencia ve el país entero; cada representante ve su ruta del día.</p>
+        <a class="btn" href="registro.html">Solicitar una cuenta</a>
+      </div>
+      <svg class="hero-thread" viewBox="0 0 100 300" preserveAspectRatio="none" aria-hidden="true"><path d="M50 0 V300"/></svg>
+    </section>
+
+    <section id="jornada" class="story" aria-label="Una jornada en FERSUAZ">
+      <div class="story-intro">
+        <h2>Una jornada, de la residencia a la liquidación</h2>
+        <p class="note">Ejemplo ilustrativo. Las cifras son casos de prueba del sistema, no datos reales.</p>
+      </div>
+
+      <div class="story-grid">
+        <ol class="steps">
+          <li class="step" data-step="0">
+            <time>6:40</time>
+            <h3>Sale de su residencia</h3>
+            <p>La ruta empieza donde vive cada representante. Su dirección exacta solo la ven quienes tienen permiso.</p>
+          </li>
+          <li class="step" data-step="1">
+            <time>8:15</time>
+            <h3>Primera visita del día</h3>
+            <p>El calendario reparte las visitas en los días laborables y respeta la frecuencia de cada centro: dos al mes, salvo que la gerencia diga otra cosa.</p>
+          </li>
+          <li class="step" data-step="2">
+            <time>10:30</time>
+            <h3>La promotora registra una receta</h3>
+            <p>Elige los medicamentos, anota al médico que prescribió y el sistema compara lo recetado con las unidades en las farmacias de la zona. Si se acerca al límite, avisa para gestionar compra con el vendedor.</p>
+          </li>
+          <li class="step" data-step="3">
+            <time>13:00</time>
+            <h3>El dependiente carga su voucher</h3>
+            <p>Cada venta suma a su comisión según el porcentaje configurado, y se paga por quincena o por mes.</p>
+          </li>
+          <li class="step" data-step="4">
+            <time>17:30</time>
+            <h3>Cierre y liquidación</h3>
+            <p>Combustible, comida, hotel y peajes se presupuestan y se justifican con comprobantes. El salario queda aparte, siempre.</p>
+          </li>
+        </ol>
+
+        <figure class="stage" aria-hidden="true">
+          <svg class="map" viewBox="0 0 600 600">
+            <g class="contours">
+              <path d="M40 420 C120 360 210 380 280 330 S430 250 560 280"/>
+              <path d="M20 470 C130 410 220 430 300 380 S450 300 590 330"/>
+              <path d="M60 360 C140 310 220 320 290 270 S420 200 540 220"/>
+              <path d="M90 300 C160 260 240 260 300 215 S410 150 520 160"/>
+              <path d="M130 245 C190 215 250 210 310 170 S400 110 490 110"/>
+              <path d="M30 530 C150 470 250 490 330 440 S480 370 600 390"/>
+            </g>
+            <path class="route" id="route" d="M90 500 C150 470 170 420 210 400 S300 390 330 330 S360 230 420 210 S500 190 520 130"/>
+            <g class="stops">
+              <circle data-stop="0" cx="90" cy="500" r="7"/>
+              <circle data-stop="1" cx="210" cy="400" r="7"/>
+              <circle data-stop="2" cx="330" cy="330" r="7"/>
+              <circle data-stop="3" cx="420" cy="210" r="7"/>
+              <circle data-stop="4" cx="520" cy="130" r="7"/>
+            </g>
+          </svg>
+
+          <dl class="ledger">
+            <div data-show="1"><dt>Kilómetros del mes</dt><dd><span data-count="2100">0</span> km</dd></div>
+            <div data-show="1"><dt>Galones a 35 km/gal</dt><dd><span data-count="60">0</span> gal</dd></div>
+            <div data-show="2" class="ledger-alert"><dt>Recetas de la zona contra inventario</dt><dd><span data-count="50">0</span> de 25 unidades</dd></div>
+            <div data-show="3"><dt>Comisión de 100 vouchers al 10 %</dt><dd>RD$ <span data-count="5000" data-money>0</span></dd></div>
+            <div data-show="4" class="ledger-total"><dt>Presupuesto de viáticos</dt><dd>RD$ <span data-count="36000" data-money>0</span></dd></div>
+          </dl>
+        </figure>
+      </div>
+    </section>
+
+    <section id="cuentas" class="accounts">
+      <h2>Una cuenta para cada función</h2>
+      <p class="lede">Cada persona ve y hace solo lo que le corresponde. Las solicitudes nuevas quedan pendientes hasta que alguien con autoridad las aprueba.</p>
+      <dl class="roles">
+        <div><dt>Representante</dt><dd>Visitadores, PVC, vendedores y promotoras. Su territorio, su calendario, sus rutas, recetas y gastos.</dd><a href="registro.html?rol=representante">Solicitar cuenta de representante</a></div>
+        <div><dt>Dependiente de farmacia</dt><dd>Carga vouchers de venta y consulta su comisión por período.</dd><a href="registro.html?rol=dependiente">Solicitar cuenta de dependiente</a></div>
+        <div><dt>Supervisor</dt><dd>Sigue a los representantes a su cargo y aprueba sus solicitudes.</dd><a href="registro.html?rol=supervisor">Solicitar cuenta de supervisor</a></div>
+        <div><dt>Gerencia</dt><dd>Vista nacional, asignaciones de territorio, presupuestos y autorizaciones.</dd><a href="registro.html?rol=gerencia">Solicitar cuenta de gerencia</a></div>
+        <div><dt>Finanzas</dt><dd>Desembolsos, comprobantes, comisiones y liquidaciones.</dd><a href="registro.html?rol=finanzas">Solicitar cuenta de finanzas</a></div>
+      </dl>
+      <p class="fine">Las cuentas de administrador las crea directamente el equipo de FERSUAZ.</p>
+    </section>
+
+    <section class="closing">
+      <h2>Empieza por tu cuenta.</h2>
+      <a class="btn" href="registro.html">Solicitar una cuenta</a>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>FERSUAZ, Santo Domingo, República Dominicana</span>
+    <a href="privacidad.html">Política de privacidad</a>
+  </footer>
+
+  <script src="js/story.js" defer></script>
+</body>
+</html>

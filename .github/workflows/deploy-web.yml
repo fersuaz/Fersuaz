@@ -1,0 +1,27 @@
+# Web estática → Cloudflare Pages.
+# PR: vista previa en <rama>.fersuaz-web.pages.dev | main: producción (fersuaz.net)
+name: Deploy web (Cloudflare Pages)
+on:
+  push:
+    branches: [main]
+    paths: ['apps/web/**', '.github/workflows/deploy-web.yml']
+  pull_request:
+    paths: ['apps/web/**']
+
+permissions:
+  contents: read
+  deployments: write
+  pull-requests: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inyectar URL de la API
+        run: sed -i 's#<meta name="fersuaz-api" content="">#<meta name="fersuaz-api" content="${{ vars.API_URL }}">#' apps/web/*.html
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/web --project-name=fersuaz-web --branch=${{ github.head_ref || github.ref_name }}

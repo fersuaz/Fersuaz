@@ -1,0 +1,28 @@
+# DigitalOcean App Platform. El balanceador lo incluye App Platform.
+# instance_count sube hasta los 10 servidores previstos en la estructura tecnológica.
+name: fersuaz-api
+region: nyc
+services:
+  - name: api
+    github:
+      repo: fersuaz/Fersuaz
+      branch: main
+      deploy_on_push: false   # lo dispara GitHub Actions tras pasar CI
+    source_dir: apps/api
+    environment_slug: node-js
+    run_command: npm start
+    http_port: 8080
+    instance_size_slug: apps-s-1vcpu-1gb
+    instance_count: 2
+    health_check: { http_path: /api/health }
+    routes: [{ path: /api }]
+    envs:
+      - { key: NODE_ENV, value: production }
+      - { key: DATABASE_URL, scope: RUN_TIME, value: "${fersuaz-db.DATABASE_URL}" }
+      - { key: SESSION_SECRET, scope: RUN_TIME, type: SECRET }
+      - { key: ALLOWED_ORIGINS, scope: RUN_TIME, value: "https://fersuaz.net,https://www.fersuaz.net" }
+databases:
+  - name: fersuaz-db
+    engine: PG
+    production: true
+    cluster_name: fersuaz-db   # crear antes en DigitalOcean → Databases
