@@ -1,6 +1,7 @@
 // Registro por tipo de usuario. La validación aquí ayuda al usuario;
 // la que manda es la del servidor (apps/api/src/validation.js).
 import { apiBase } from './api.js';
+import { activarTelefono, activarCorreo, correoValido } from './campos.js';
 
 const form = document.getElementById('registro');
 const statusEl = document.getElementById('status');
@@ -18,6 +19,8 @@ function syncRoleFields() {
 }
 form.addEventListener('change', (e) => { if (e.target.name === 'role') syncRoleFields(); });
 syncRoleFields();
+activarTelefono(form.elements.phone);
+activarCorreo(form.elements.email, document.getElementById('email-error'));
 
 function showErrors(errors = {}) {
   for (const f of FIELDS) {
@@ -35,7 +38,7 @@ function localValidate(d) {
   const e = {};
   if (!d.role) e.role = 'Elige el tipo de usuario.';
   if (d.fullName.trim().length < 3) e.fullName = 'Escribe tu nombre completo.';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(d.email.trim())) e.email = 'Escribe un correo válido, por ejemplo nombre@fersuaz.net.';
+  if (!correoValido(d.email)) e.email = 'Escribe un correo válido, por ejemplo nombre@fersuaz.net.';
   if (d.phone && !/^(?:\+?1)?(809|829|849)\d{7}$/.test(d.phone.replace(/[\s\-().]/g, ''))) e.phone = 'Usa un teléfono dominicano de 10 dígitos que empiece por 809, 829 o 849.';
   if (d.role === 'representante' && !d.position) e.position = 'Elige tu posición.';
   if (d.role === 'dependiente' && d.pharmacy.trim().length < 2) e.pharmacy = 'Escribe el nombre de la farmacia donde trabajas.';

@@ -95,7 +95,6 @@ FOOTER = '''  <footer class="pie" aria-labelledby="pie-titulo">
 
     <div class="pie-final">
       <p>© 2026 FERSUAZ Farmacéutica S.R.L. Todos los derechos reservados. La Vega, República Dominicana.</p>
-      <p>Las personas que aparecen en los videos son generadas con inteligencia artificial.</p>
     </div>
   </footer>'''
 
@@ -191,7 +190,7 @@ def auth_page(active):
             </div>
             <div class="field">
               <label for="phone">Teléfono <span class="hint">(opcional)</span></label>
-              <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="809 555 0000" aria-describedby="phone-error">
+              <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="809-555-0000" maxlength="12" aria-describedby="phone-error">
               <p class="error" id="phone-error"></p>
             </div>
           </div>

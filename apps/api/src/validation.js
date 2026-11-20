@@ -1,6 +1,7 @@
 import { POSITIONS, ROLES, SELF_REGISTERABLE } from './roles.js';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const EMAIL_RE = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
+const EMAIL_MAL = /\.\.|^\.|\.@|@\.|@-|-\./;
 // Teléfonos dominicanos: códigos 809, 829, 849 + 7 dígitos. Acepta +1, espacios y guiones.
 const DO_PHONE_RE = /^(?:\+?1)?(809|829|849)\d{7}$/;
 
@@ -28,7 +29,7 @@ export function validateRegistration(input = {}) {
   if (fullName.length < 3) errors.fullName = 'Escribe tu nombre completo.';
   else if (fullName.length > 120) errors.fullName = 'El nombre no puede pasar de 120 caracteres.';
 
-  if (!EMAIL_RE.test(email)) errors.email = 'Escribe un correo válido, por ejemplo nombre@fersuaz.net.';
+  if (!EMAIL_RE.test(email) || EMAIL_MAL.test(email) || email.length > 254) errors.email = 'Escribe un correo válido, por ejemplo nombre@fersuaz.net.';
 
   if (phone && !DO_PHONE_RE.test(phone)) {
     errors.phone = 'Usa un teléfono dominicano de 10 dígitos que empiece por 809, 829 o 849.';

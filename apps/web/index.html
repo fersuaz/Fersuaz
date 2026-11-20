@@ -147,22 +147,77 @@
       </div>
     </section>
 
-    <section id="cuentas" class="accounts">
-      <h2>Una cuenta para cada función</h2>
-      <p class="lede">Cada persona ve y hace solo lo que le corresponde. Las solicitudes nuevas quedan pendientes hasta que alguien con autoridad las aprueba.</p>
-      <dl class="roles">
-        <div><dt>Representante</dt><dd>Visitadores, PVC, vendedores y promotoras. Su territorio, su calendario, sus rutas, recetas y gastos.</dd><a href="registro.html?rol=representante">Solicitar cuenta de representante</a></div>
-        <div><dt>Dependiente de farmacia</dt><dd>Carga vouchers de venta y consulta su comisión por período.</dd><a href="registro.html?rol=dependiente">Solicitar cuenta de dependiente</a></div>
-        <div><dt>Supervisor</dt><dd>Sigue a los representantes a su cargo y aprueba sus solicitudes.</dd><a href="registro.html?rol=supervisor">Solicitar cuenta de supervisor</a></div>
-        <div><dt>Gerencia</dt><dd>Vista nacional, asignaciones de territorio, presupuestos y autorizaciones.</dd><a href="registro.html?rol=gerencia">Solicitar cuenta de gerencia</a></div>
-        <div><dt>Finanzas</dt><dd>Desembolsos, comprobantes, comisiones y liquidaciones.</dd><a href="registro.html?rol=finanzas">Solicitar cuenta de finanzas</a></div>
-      </dl>
+    <section id="cuentas" class="accounts" aria-labelledby="cuentas-titulo">
+      <div class="accounts-cabeza">
+        <h2 id="cuentas-titulo">Una cuenta para cada función</h2>
+        <p class="lede">Cada persona ve y hace solo lo que le corresponde. Las solicitudes nuevas quedan pendientes hasta que alguien con autoridad las aprueba.</p>
+      </div>
+      <div class="roles-grid">
+        <article class="rol rol-destacado">
+          <svg class="rol-ruta" viewBox="0 0 260 200" aria-hidden="true">
+            <path d="M30 160 C 80 160, 70 90, 120 90 S 170 40, 230 40" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="2" stroke-dasharray="2 8" stroke-linecap="round"/>
+            <circle cx="30" cy="160" r="9" fill="#fff"/><circle cx="30" cy="160" r="3.5" fill="#003463"/>
+            <circle cx="120" cy="90" r="7" fill="none" stroke="#3085AC" stroke-width="3"/>
+            <circle cx="230" cy="40" r="7" fill="none" stroke="#3085AC" stroke-width="3"/>
+            <text x="44" y="186" fill="rgba(255,255,255,.7)" font-size="12" font-family="Figtree, sans-serif">Residencia</text>
+            <text x="134" y="114" fill="rgba(255,255,255,.7)" font-size="12" font-family="Figtree, sans-serif">Clínica</text>
+            <text x="186" y="22" fill="rgba(255,255,255,.7)" font-size="12" font-family="Figtree, sans-serif">Farmacia</text>
+          </svg>
+          <svg class="rol-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6-5.6-6-10.5A6 6 0 0 1 18 10.5C18 15.4 12 21 12 21Z"/><circle cx="12" cy="10.5" r="2.2"/></svg>
+          <h3>Representante</h3>
+          <p>El equipo en la calle: su cronograma, sus rutas, recetas y gastos, desde el celular.</p>
+          <ul class="rol-cargos"><li>Visitador</li><li>PVC</li><li>Vendedor</li><li>Promotora</li></ul>
+          <ul class="rol-hace"><li>Jornada armada desde el cronograma aprobado</li><li>Ruta ordenada para gastar menos combustible</li><li>Viáticos y comprobantes en el mismo lugar</li></ul>
+          <a class="rol-cta" href="registro.html?rol=representante">Solicitar cuenta de representante</a>
+        </article>
+        <article class="rol ">
+          <svg class="rol-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5 5.5 4h13L20 9.5"/><path d="M4 9.5h16v1a2.7 2.7 0 0 1-5.3 0 2.7 2.7 0 0 1-5.4 0A2.7 2.7 0 0 1 4 10.5Z"/><path d="M5.5 12.5V20h13v-7.5"/><path d="M10 20v-4.5h4V20"/></svg>
+          <h3>Dependiente de farmacia</h3>
+          <p>La venta en el mostrador, convertida en comisión clara.</p>
+          <ul class="rol-hace"><li>Vouchers de venta en segundos</li><li>Comisión por quincena o mes</li></ul>
+          <a class="rol-cta" href="registro.html?rol=dependiente">Solicitar cuenta de dependiente</a>
+        </article>
+        <article class="rol ">
+          <svg class="rol-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="m15.5 10 1.8 1.8 3.7-3.8"/></svg>
+          <h3>Supervisor</h3>
+          <p>Su equipo, a la vista.</p>
+          <ul class="rol-hace"><li>Aprueba solicitudes de su equipo</li><li>Asigna provincias y valida lugares</li></ul>
+          <a class="rol-cta" href="registro.html?rol=supervisor">Solicitar cuenta de supervisor</a>
+        </article>
+        <article class="rol ">
+          <svg class="rol-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M3 20h18"/></svg>
+          <h3>Gerencia</h3>
+          <p>La vista nacional del negocio.</p>
+          <ul class="rol-hace"><li>Cronogramas, presupuestos y hospedajes</li><li>Reportes por zona, médico y producto</li></ul>
+          <a class="rol-cta" href="registro.html?rol=gerencia">Solicitar cuenta de gerencia</a>
+        </article>
+        <article class="rol ">
+          <svg class="rol-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="6" width="17" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M7 9.5v5M17 9.5v5"/></svg>
+          <h3>Finanzas</h3>
+          <p>Cada peso, con su comprobante.</p>
+          <ul class="rol-hace"><li>Desembolsos y liquidaciones</li><li>Precios de combustible al día</li></ul>
+          <a class="rol-cta" href="registro.html?rol=finanzas">Solicitar cuenta de finanzas</a>
+        </article>
+      </div>
       <p class="fine">Las cuentas de administrador las crea directamente el equipo de FERSUAZ.</p>
     </section>
 
-    <section class="closing">
-      <h2>Empieza por tu cuenta.</h2>
-      <a class="btn" href="registro.html">Solicitar una cuenta</a>
+    <section class="closing" aria-labelledby="cierre-titulo">
+      <div class="cierre-texto">
+        <h2 id="cierre-titulo">Empieza por tu cuenta.</h2>
+        <p class="lede">Una solicitud, una aprobación y tu panel queda listo con lo que te corresponde.</p>
+      </div>
+      <div class="cierre-panel">
+        <ol class="cierre-pasos">
+          <li><strong>Solicitas tu acceso</strong><span>Con tu correo y tu función en FERSUAZ.</span></li>
+          <li><strong>Tu supervisor o la gerencia lo aprueba</strong><span>Si ya estabas pre-registrado, entras de inmediato.</span></li>
+          <li><strong>Entras a tu panel</strong><span>Desde la computadora o el celular.</span></li>
+        </ol>
+        <div class="cierre-acciones">
+          <a class="btn btn-claro" href="registro.html">Solicitar una cuenta</a>
+          <a class="btn-linea" href="entrar.html">Ya tengo cuenta</a>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -248,7 +303,6 @@
 
     <div class="pie-final">
       <p>© 2026 FERSUAZ Farmacéutica S.R.L. Todos los derechos reservados. La Vega, República Dominicana.</p>
-      <p>Las personas que aparecen en los videos son generadas con inteligencia artificial.</p>
     </div>
   </footer>
 
