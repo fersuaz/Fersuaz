@@ -85,7 +85,7 @@ function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false 
 const tabla = (cols, filas, vacio) => filas.length
   ? h('div', { class: 'tabla-envoltura' }, h('table', { class: 'tabla' },
       h('thead', {}, h('tr', {}, cols.map((c) => h('th', { scope: 'col', class: c.num ? 'num' : null }, c.t)))),
-      h('tbody', {}, filas.map((f) => h('tr', {}, cols.map((c) => h('td', { 'data-label': c.t, class: c.num ? 'num' : null }, c.v(f))))))))
+      h('tbody', {}, filas.map((f) => h('tr', {}, cols.map((c) => h('td', { 'data-label': c.t, class: c.num ? 'num' : null }, h('span', { class: 'celda' }, c.v(f)))))))))
   : h('div', { class: 'tarjeta vacio' }, h('strong', {}, vacio[0]), vacio[1]);
 const vista = (titulo, sub, ...contenido) => [h('h1', {}, titulo), sub ? h('p', { class: 'vista-sub' }, sub) : null, ...contenido];
 
@@ -237,8 +237,8 @@ async function verAdjunto(clave) {
   if (!r.ok) return alert('No se pudo abrir la foto.');
   window.open(URL.createObjectURL(await r.blob()), '_blank', 'noopener');
 }
-function filtroMes(mes, ruta, extra) {
-  const inp = h('input', { type: 'month', value: mes, id: 'filtro-mes', max: mesActual() });
+function filtroMes(mes, ruta, extra, { futuro = false } = {}) {
+  const inp = h('input', { type: 'month', value: mes, id: 'filtro-mes', max: futuro ? null : mesActual() });
   inp.addEventListener('change', () => { location.hash = `#${ruta}?mes=${inp.value}${extra ? `&${extra()}` : ''}`; });
   return h('div', { class: 'field', style: 'max-width:14rem' }, h('label', { for: 'filtro-mes' }, 'Mes'), inp);
 }
@@ -377,7 +377,247 @@ V.solicitudes = async () => {
     { t: '', v: (u) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' }, h('button', { class: 'btn btn-peq', onclick: () => decidir(u, true) }, 'Aprobar'), h('button', { class: 'btn-sec btn-peq', onclick: () => decidir(u, false) }, 'Rechazar')) },
   ], pending, ['No hay solicitudes pendientes', 'Las nuevas cuentas aparecerán aquí.']));
 };
-V.pronto = async () => vista('Tu panel', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Tu módulo está en desarrollo'), 'Rutas y viáticos para visitadores, PVC y vendedores llegan en la próxima entrega.'));
+V.pronto = async () => vista('Tu panel', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay módulos para tu rol todavía'), 'Pide a la gerencia que revise los permisos de tu cuenta.'));
+
+// ---------------------------------------------------------------- vistas: rutas y viáticos
+const CAT = { combustible: 'Combustible', alimentacion: 'Alimentación', hospedaje: 'Hospedaje', peajes: 'Peajes', estacionamiento: 'Estacionamiento', otros: 'Otros' };
+const EST_P = { sin_solicitud: 'Sin solicitud', borrador: 'Borrador', solicitado: 'Solicitado', aprobado: 'Aprobado', rechazado: 'Rechazado', desembolsado: 'Desembolsado', liquidado: 'Liquidado', planificada: 'Planificada', realizada: 'Realizada', cancelada: 'Cancelada', propuesto: 'Por autorizar', reportado: 'Por revisar', aceptado: 'Aceptado' };
+const chipP = (e) => h('span', { class: `chip ${({ aprobado: 'aprobado', liquidado: 'aprobado', realizada: 'aprobado', aceptado: 'aprobado', solicitado: 'pendiente', propuesto: 'pendiente', reportado: 'pendiente', desembolsado: 'ok', rechazado: 'rechazado', cancelada: 'anulado' })[e] ?? ''}` }, EST_P[e] ?? e);
+const mesDe = () => new URLSearchParams(location.hash.split('?')[1]).get('mes') || mesActual();
+const archivoB64 = (file) => new Promise((ok, ko) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.onerror = ko; fr.readAsDataURL(file); });
+function desglose(d, total) {
+  return h('dl', { class: 'rejilla' }, ...Object.entries(CAT).map(([k, l]) => h('div', { class: 'cifra' }, h('dt', {}, l), h('dd', {}, RD(d[k] ?? 0)))),
+    h('div', { class: 'cifra destacada' }, h('dt', {}, 'Total'), h('dd', {}, RD(total))));
+}
+
+V.jornadas = async () => {
+  const mes = mesDe();
+  const [{ items }, est] = await Promise.all([api('GET', `/api/viaticos/jornadas?mes=${mes}`), api('GET', '/api/viaticos/estado')]);
+  const paradas = h('div', { class: 'lineas' }); let n = 0;
+  const addParada = () => { const i = n++; const f = h('div', { class: 'linea' }, campo(`paradas.${i}.lugar`, 'Lugar (clínica, hospital, farmacia)'), campo(`paradas.${i}.municipio`, 'Municipio'), campo(`paradas.${i}.provincia`, 'Provincia'),
+    h('button', { type: 'button', class: 'quitar', 'aria-label': 'Quitar parada', onclick: () => { if (paradas.children.length > 1) f.remove(); } }, 'Quitar')); paradas.append(f); };
+  addParada();
+  const hosp = h('details', { class: 'tarjeta', style: 'background:var(--canvas)' }, h('summary', { style: 'cursor:pointer;font-weight:600;color:var(--marino)' }, '¿Necesitas hotel? La gerencia debe autorizarlo'),
+    h('div', { class: 'form-fila', style: 'margin-top:1rem' }, campo('hospedaje.noches', 'Noches', { type: 'number', min: 1, step: 1, inputmode: 'numeric' }), campo('hospedaje.tarifaNoche', 'Tarifa por noche RD$', { type: 'number', min: 0, step: 0.01 }),
+      campo('hospedaje.cargos', 'Impuestos y cargos RD$', { type: 'number', min: 0, step: 0.01, value: 0 }), campo('hospedaje.hotel', 'Hotel', {}, '(si lo sabes)')),
+    campo('hospedaje.motivo', 'Motivo del hospedaje'));
+  const kmInfo = h('p', { class: 'hint', 'aria-live': 'polite' }, est.mapas ? 'Calcula los km por carretera desde tu residencia, con regreso.' : 'El mapa aún no está conectado: escribe los km por carretera (ida, paradas y regreso). Quedan marcados como estimado manual.');
+  let kmFuente = 'manual';
+  const calc = est.mapas ? h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: async () => {
+    calc.disabled = true; calc.textContent = 'Calculando…';
+    try { const r = await api('POST', '/api/viaticos/calcular-km', { paradas: leerParadas() }); form.kmEstimados.value = r.km; kmFuente = 'google'; kmInfo.textContent = `Ruta por carretera: ${fmtN.format(r.km)} km, unos ${fmtN.format(r.minutos)} minutos de manejo.`; }
+    catch (e) { mostrarErrores(form, e); kmInfo.textContent = e.message; }
+    finally { calc.disabled = false; calc.textContent = 'Calcular km con el mapa'; }
+  } }, 'Calcular km con el mapa') : null;
+  const boton = h('button', { class: 'btn', type: 'submit' }, 'Guardar jornada');
+  const form = h('form', { class: 'tarjeta', novalidate: true },
+    h('div', { class: 'form-fila' }, campo('fecha', 'Fecha', { type: 'date', value: hoy(), required: true })),
+    h('h2', {}, 'Paradas en orden'), h('p', { class: 'error', dataset: { for: 'paradas' } }), paradas, h('div', { class: 'acciones' }, h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: addParada }, 'Agregar parada')),
+    h('div', { class: 'form-fila', style: 'margin-top:1rem' }, campo('kmEstimados', 'Km por carretera', { type: 'number', min: 0, step: 0.1, inputmode: 'decimal', oninput: () => { kmFuente = 'manual'; } }),
+      campo('peajes', 'Peajes RD$', { type: 'number', min: 0, step: 0.01, value: 0 }), campo('estacionamiento', 'Estacionamiento RD$', { type: 'number', min: 0, step: 0.01, value: 0 }), campo('otros', 'Otros RD$', { type: 'number', min: 0, step: 0.01, value: 0 })),
+    kmInfo, calc ? h('div', { class: 'acciones', style: 'margin-top:0' }, calc) : null,
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'conAlimentacion', checked: true }), h('span', {}, 'Este día lleva gasto de alimentación')),
+    hosp, h('div', { class: 'acciones' }, boton));
+  function leerParadas() { return [...paradas.children].map((f) => ({ lugar: f.querySelector('[name$=".lugar"]').value, municipio: f.querySelector('[name$=".municipio"]').value, provincia: f.querySelector('[name$=".provincia"]').value })); }
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const g = (k) => form.elements[k]?.value;
+    const body = { fecha: g('fecha'), paradas: leerParadas(), kmEstimados: g('kmEstimados'), kmFuente, peajes: g('peajes'), estacionamiento: g('estacionamiento'), otros: g('otros'), conAlimentacion: form.conAlimentacion.checked,
+      hospedaje: hosp.open && g('hospedaje.noches') ? { noches: Number(g('hospedaje.noches')), tarifaNoche: g('hospedaje.tarifaNoche'), cargos: g('hospedaje.cargos'), hotel: g('hospedaje.hotel'), motivo: g('hospedaje.motivo') } : null };
+    if (await enviar(form, boton, () => api('POST', '/api/viaticos/jornadas', body))) { location.hash = `#jornadas?mes=${body.fecha.slice(0, 7)}`; router(); }
+  });
+  const accion = async (j, a) => {
+    if (a === 'realizada') {
+      const km = await confirmar('Marcar jornada realizada', `Escribe los km reales del ${fecha(j.fecha)} según el odómetro.`, { okTexto: 'Guardar', pedirMotivo: true });
+      if (km == null) return; try { await api('POST', `/api/viaticos/jornadas/${j.id}/realizada`, { kmReales: Number(String(km).replace(',', '.')) }); } catch (e) { alert(e.message); }
+    } else if (await confirmar('Cancelar jornada', `¿Cancelar la jornada del ${fecha(j.fecha)}? No contará en el presupuesto.`, { okTexto: 'Cancelar jornada' })) {
+      try { await api('POST', `/api/viaticos/jornadas/${j.id}/cancelar`); } catch (e) { alert(e.message); }
+    }
+    router();
+  };
+  return vista('Mis jornadas', 'Planifica tus rutas del mes. El presupuesto de viáticos se calcula con estas jornadas.', form,
+    h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Jornadas del mes'), filtroMes(mes, 'jornadas', null, { futuro: true }),
+    tabla([
+      { t: 'Fecha', v: (j) => fecha(j.fecha) }, { t: 'Paradas', v: (j) => j.paradas.map((p) => `${p.lugar} (${p.municipio})`).join(' → ') },
+      { t: 'Km', num: true, v: (j) => [fmtN.format(j.kmEstimados), h('small', { style: 'display:block;color:var(--texto-2)' }, j.kmFuente === 'google' ? 'mapa' : 'manual'), j.kmReales != null ? h('small', { style: 'display:block' }, `real ${fmtN.format(j.kmReales)}`) : null] },
+      { t: 'Hotel', v: (j) => j.hospedaje ? [`${j.hospedaje.noches} noche(s)`, ' ', chipP(j.hospedaje.estado)] : 'No' },
+      { t: 'Estado', v: (j) => chipP(j.estado) },
+      { t: '', v: (j) => j.estado === 'planificada' ? h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' },
+        j.fecha <= hoy() ? h('button', { class: 'btn btn-peq', onclick: () => accion(j, 'realizada') }, 'Realizada') : null, h('button', { class: 'btn-sec btn-peq', onclick: () => accion(j, 'cancelar') }, 'Cancelar')) : '' },
+    ], items, ['No hay jornadas en este mes', 'Planifica tu primera jornada con el formulario de arriba.']));
+};
+
+function bloqueResumen(p) {
+  const r = p.resumen;
+  return h('dl', { class: 'rejilla' },
+    h('div', { class: 'cifra' }, h('dt', {}, 'Aprobado'), h('dd', {}, r.aprobado == null ? 'Pendiente' : RD(r.aprobado))),
+    h('div', { class: 'cifra' }, h('dt', {}, 'Entregado'), h('dd', {}, RD(r.entregado))),
+    h('div', { class: 'cifra' }, h('dt', {}, 'Justificado'), h('dd', {}, RD(r.justificado))),
+    h('div', { class: 'cifra destacada' }, h('dt', {}, r.saldo > 0 ? 'Saldo por devolver' : r.saldo < 0 ? 'FERSUAZ te debe' : 'Saldo'), h('dd', {}, RD(Math.abs(r.saldo)))));
+}
+function tablaGastos(p, acciones) {
+  return tabla([
+    { t: 'Fecha', v: (g) => fecha(g.fecha) }, { t: 'Categoría', v: (g) => CAT[g.categoria] }, { t: 'Comprobante', v: (g) => [g.referencia, g.adjunto ? h('button', { class: 'enlace', style: 'display:block', onclick: () => verAdjunto(g.adjunto.clave) }, 'Ver archivo') : null] },
+    { t: 'Monto', num: true, v: (g) => RD(g.monto) }, { t: 'Estado', v: (g) => [chipP(g.estado), g.motivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, g.motivo) : null] },
+    ...(acciones ? [{ t: '', v: acciones }] : []),
+  ], p.gastos ?? [], ['Aún no hay gastos reportados', 'Cada gasto con su comprobante aparecerá aquí.']);
+}
+V.presupuesto = async () => {
+  const mes = mesDe();
+  const { guardado: p, calculo: c } = await api('GET', `/api/viaticos/presupuesto?mes=${mes}`);
+  const bloques = [filtroMes(mes, 'presupuesto', null, { futuro: true })];
+  const editable = !p || ['borrador', 'rechazado'].includes(p.estado);
+  if (p) bloques.push(h('div', { class: `aviso ${p.estado === 'rechazado' ? 'error' : 'ok'}` }, `Estado: ${EST_P[p.estado]}.${p.motivo ? ` Motivo: ${p.motivo}` : ''}${p.estado === 'liquidado' ? ` Resultado: ${p.liquidacion.resultado}.` : ''}`));
+  if (editable) {
+    if (c.faltan?.length) bloques.push(h('div', { class: 'aviso' }, h('strong', {}, 'Para solicitar falta: '), c.faltan.join(' ')));
+    if (c.detalle) {
+      bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Presupuesto calculado'), desglose(c.detalle, c.total),
+        h('p', { class: 'hint', style: 'margin-top:1rem' }, `${c.supuestos.jornadas} jornadas, ${fmtN.format(c.supuestos.km)} km (${c.supuestos.kmTipo}), ${c.supuestos.diasAlimentacion} días de alimentación a ${RD(c.supuestos.tarifaAlimentacion)}.${c.supuestos.reembolsoPorKm ? ` Reembolso de ${RD(c.supuestos.reembolsoPorKm)} por km.` : c.supuestos.galones ? ` ${fmtN.format(c.supuestos.galones)} galones a ${c.supuestos.rendimiento} km/gal.` : ''} Tu salario no forma parte de este presupuesto.`),
+        h('div', { class: 'acciones' }, h('button', { class: 'btn', disabled: c.faltan?.length > 0, onclick: async (ev) => {
+          if (!(await confirmar('Solicitar viáticos', `Enviar a la gerencia el presupuesto de ${mes} por ${RD(c.total)}. Después no podrás cambiar las jornadas del mes.`, { okTexto: 'Solicitar' }))) return;
+          ev.target.disabled = true; try { await api('POST', '/api/viaticos/presupuesto/solicitar', { mes }); } catch (e) { alert(e.message); } router();
+        } }, 'Solicitar viáticos'))));
+    }
+  } else {
+    bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Presupuesto solicitado'), desglose(p.detalle, p.total)), bloqueResumen(p));
+    if (['aprobado', 'desembolsado'].includes(p.estado)) {
+      const b = h('button', { class: 'btn', type: 'submit' }, 'Reportar gasto');
+      const f = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-top:1.25rem' }, h('h2', {}, 'Reportar un gasto'),
+        h('div', { class: 'form-fila' }, campo('categoria', 'Categoría', { options: Object.entries(CAT).map(([value, label]) => ({ value, label })) }), campo('monto', 'Monto RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }),
+          campo('fecha', 'Fecha', { type: 'date', value: hoy().startsWith(mes) ? hoy() : `${mes}-01`, min: `${mes}-01`, max: hoy() }), campo('referencia', 'Factura o NCF')),
+        campo('adjunto', 'Comprobante', { type: 'file', accept: 'image/jpeg,image/png,image/webp,application/pdf', capture: 'environment' }, '(foto o PDF, hasta 5 MB)'), campo('nota', 'Nota', {}, '(opcional)'),
+        h('div', { class: 'acciones' }, b));
+      f.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const r = await enviar(f, b, async () => {
+          const file = f.adjunto.files[0];
+          if (file && file.size > 5 * 1024 * 1024) throw new ApiError(413, { error: 'El comprobante no puede pasar de 5 MB.', fields: { adjunto: 'Archivo demasiado grande.' } });
+          const adjunto = file ? { nombre: file.name, tipo: file.type, base64: await archivoB64(file) } : undefined;
+          return api('POST', `/api/viaticos/presupuestos/${p.id}/gastos`, { categoria: f.categoria.value, monto: f.monto.value, fecha: f.fecha.value, referencia: f.referencia.value, nota: f.nota.value, adjunto });
+        });
+        if (r) router();
+      });
+      bloques.push(f);
+    }
+    bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Gastos reportados'), tablaGastos(p));
+  }
+  return vista('Mi presupuesto de viáticos', 'Se calcula con tus jornadas del mes, el rendimiento de tu vehículo y el precio vigente del combustible.', ...bloques);
+};
+
+V.perfiles = async () => {
+  const [{ items: reps }, { items: combs }] = await Promise.all([api('GET', '/api/viaticos/representantes'), api('GET', '/api/viaticos/combustibles')]);
+  const puede = ['administrador', 'gerencia', 'supervisor'].includes(yo.role);
+  const id = new URLSearchParams(location.hash.split('?')[1]).get('rep');
+  const lista = tabla([
+    { t: 'Representante', v: (r) => [r.fullName, h('small', { style: 'display:block;color:var(--texto-2)' }, r.position ?? '')] },
+    { t: 'Residencia', v: (r) => r.perfil ? `${r.perfil.residencia.municipio}, ${r.perfil.residencia.provincia}` : 'Sin perfil' },
+    { t: 'Vehículo', v: (r) => r.perfil ? `${r.perfil.vehiculo.propiedad === 'propio' ? 'Propio' : 'Asignado'}, ${combs.find((c) => c.value === r.perfil.vehiculo.combustible)?.label ?? ''}${r.perfil.vehiculo.rendimiento ? `, ${r.perfil.vehiculo.rendimiento} km/gal` : ''}` : '' },
+    { t: 'Comida/día', num: true, v: (r) => r.perfil ? RD(r.perfil.tarifaAlimentacion) : '' },
+    { t: '', v: (r) => puede ? h('a', { class: 'btn-sec btn-peq', href: `#perfiles?rep=${r.id}` }, r.perfil ? 'Editar' : 'Configurar') : '' },
+  ], reps, ['Aún no hay representantes activos', 'Aparecen aquí cuando se aprueban sus cuentas.']);
+  if (!id || !puede) return vista('Perfiles de viático', 'Vehículo, residencia y tarifa de cada representante. La dirección exacta solo la ven la gerencia y el propio representante.', lista);
+  const r = reps.find((x) => x.id === id); const pf = (await api('GET', `/api/viaticos/perfiles/${id}`)).item;
+  const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar perfil');
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, r?.fullName ?? 'Representante'),
+    h('div', { class: 'form-fila' }, campo('residencia.provincia', 'Provincia de residencia', { value: pf?.residencia?.provincia ?? '' }), campo('residencia.municipio', 'Municipio de residencia', { value: pf?.residencia?.municipio ?? '' }),
+      campo('residencia.direccion', 'Dirección desde donde sale', { value: pf?.residencia?.direccion ?? '' }, '(restringida)')),
+    h('h2', { style: 'margin-top:1rem' }, 'Vehículo'),
+    h('div', { class: 'form-fila' }, campo('vehiculo.propiedad', 'Propiedad', { options: [{ value: 'asignado', label: 'Asignado por FERSUAZ' }, { value: 'propio', label: 'Propio' }], value: pf?.vehiculo?.propiedad }),
+      campo('vehiculo.combustible', 'Combustible', { options: combs, value: pf?.vehiculo?.combustible }), campo('vehiculo.rendimiento', 'Rendimiento real km/galón', { type: 'number', min: 1, step: 0.1, value: pf?.vehiculo?.rendimiento ?? '' }),
+      campo('vehiculo.marca', 'Marca', { value: pf?.vehiculo?.marca ?? '' }), campo('vehiculo.modelo', 'Modelo', { value: pf?.vehiculo?.modelo ?? '' }), campo('vehiculo.anio', 'Año', { type: 'number', value: pf?.vehiculo?.anio ?? '' }), campo('vehiculo.placa', 'Placa', { value: pf?.vehiculo?.placa ?? '' }, '(restringida)')),
+    h('h2', { style: 'margin-top:1rem' }, 'Viáticos'),
+    h('div', { class: 'form-fila' }, campo('tarifaAlimentacion', 'Alimentación por día RD$', { type: 'number', min: 0, step: 0.01, value: pf?.tarifaAlimentacion ?? '' }),
+      campo('reembolsoPorKm', 'Reembolso por km RD$', { type: 'number', min: 0, step: 0.01, value: pf?.reembolsoPorKm ?? '' }, '(solo vehículo propio; reemplaza al combustible)')),
+    h('div', { class: 'acciones' }, b, h('a', { class: 'btn-sec', href: '#perfiles' }, 'Volver')));
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault(); const g = (k) => f.elements[k].value;
+    const body = { residencia: { provincia: g('residencia.provincia'), municipio: g('residencia.municipio'), direccion: g('residencia.direccion') },
+      vehiculo: { propiedad: g('vehiculo.propiedad'), combustible: g('vehiculo.combustible'), rendimiento: g('vehiculo.rendimiento'), marca: g('vehiculo.marca'), modelo: g('vehiculo.modelo'), anio: g('vehiculo.anio'), placa: g('vehiculo.placa') },
+      tarifaAlimentacion: g('tarifaAlimentacion'), reembolsoPorKm: g('reembolsoPorKm') };
+    if (await enviar(f, b, () => api('POST', `/api/viaticos/perfiles/${id}`, body))) location.hash = '#perfiles';
+  });
+  return vista('Perfil de viático', null, f);
+};
+
+V.precios = async () => {
+  const [{ items }, { items: combs }] = await Promise.all([api('GET', '/api/viaticos/precios'), api('GET', '/api/viaticos/combustibles')]);
+  const bloques = [];
+  if (['administrador', 'gerencia', 'finanzas'].includes(yo.role)) {
+    const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar precio');
+    const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo precio'),
+      h('div', { class: 'form-fila' }, campo('combustible', 'Combustible', { options: combs.filter((c) => !['hibrido', 'electrico'].includes(c.value)) }),
+        campo('precioGalon', 'Precio por galón RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }), campo('vigenteDesde', 'Vigente desde', { type: 'date', value: hoy() })),
+      h('div', { class: 'acciones' }, b));
+    f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/viaticos/precios', { combustible: f.combustible.value, precioGalon: f.precioGalon.value, vigenteDesde: f.vigenteDesde.value }))) router(); });
+    bloques.push(f);
+  }
+  bloques.push(tabla([{ t: 'Combustible', v: (p) => combs.find((c) => c.value === p.combustible)?.label ?? p.combustible }, { t: 'Precio por galón', num: true, v: (p) => RD(p.precioGalon) }, { t: 'Vigente desde', v: (p) => fecha(p.vigenteDesde) }],
+    items, ['Aún no hay precios registrados', 'Registra los precios oficiales semanales del MICM para que se calcule el combustible.']));
+  return vista('Precios de combustible', 'Cada jornada usa el precio vigente en su fecha. Los presupuestos ya aprobados no cambian.', ...bloques);
+};
+
+V.viaticos = async () => {
+  const mes = mesDe();
+  const r = await api('GET', `/api/viaticos/consolidado?mes=${mes}`);
+  return vista('Presupuestos de viáticos', `Consolidado de ${mes}: ${RD(r.totales.total)} solicitados, ${RD(r.totales.entregado)} entregados, ${RD(r.totales.justificado)} justificados.`,
+    filtroMes(mes, 'viaticos'),
+    tabla([
+      { t: 'Representante', v: (f) => [f.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, f.posicion ?? '')] },
+      { t: 'Jornadas', num: true, v: (f) => fmtN.format(f.jornadas) }, { t: 'Km est. / real', num: true, v: (f) => `${fmtN.format(f.kmEstimados)} / ${fmtN.format(f.kmReales)}` },
+      { t: 'Presupuesto', num: true, v: (f) => f.total == null ? '' : RD(f.total) }, { t: 'Entregado', num: true, v: (f) => RD(f.entregado) }, { t: 'Saldo', num: true, v: (f) => RD(f.saldo) },
+      { t: 'Estado', v: (f) => [chipP(f.estado), f.porRevisar ? h('small', { style: 'display:block;color:var(--alerta)' }, `${f.porRevisar} gasto(s) por revisar`) : null] },
+      { t: '', v: (f) => h('a', { class: 'btn-sec btn-peq', href: `#viatico?rep=${f.representanteId}&mes=${mes}` }, 'Abrir') },
+    ], r.filas, ['No hay representantes activos', 'Aparecen aquí cuando se aprueban sus cuentas.']));
+};
+V.viatico = async () => {
+  const q = new URLSearchParams(location.hash.split('?')[1]); const rep = q.get('rep'); const mes = q.get('mes') || mesActual();
+  const [{ guardado: p, calculo: c }, { items: js }, reps] = await Promise.all([
+    api('GET', `/api/viaticos/presupuesto?representanteId=${rep}&mes=${mes}`), api('GET', `/api/viaticos/jornadas?representanteId=${rep}&mes=${mes}`), api('GET', '/api/viaticos/representantes')]);
+  const nombre = reps.items.find((r) => r.id === rep)?.fullName ?? 'Representante';
+  const ger = ['administrador', 'gerencia'].includes(yo.role); const fin = ['administrador', 'finanzas'].includes(yo.role);
+  const recargar = () => router();
+  const accion = async (fn) => { try { await fn(); } catch (e) { alert(e.message); } recargar(); };
+  const bloques = [h('p', {}, h('a', { href: `#viaticos?mes=${mes}` }, 'Volver al consolidado'))];
+  const hoteles = js.filter((j) => j.hospedaje && j.estado !== 'cancelada');
+  if (hoteles.length) bloques.push(h('h2', { style: 'margin:1rem 0 .75rem;font-size:1.2rem' }, 'Hospedajes'), tabla([
+    { t: 'Fecha', v: (j) => fecha(j.fecha) }, { t: 'Destino', v: (j) => j.paradas.at(-1)?.municipio ?? '' }, { t: 'Motivo', v: (j) => j.hospedaje.motivo },
+    { t: 'Costo', num: true, v: (j) => RD(j.hospedaje.noches * j.hospedaje.tarifaNoche + j.hospedaje.cargos) }, { t: 'Estado', v: (j) => chipP(j.hospedaje.estado) },
+    { t: '', v: (j) => ger && j.hospedaje.estado === 'propuesto' ? h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' },
+      h('button', { class: 'btn btn-peq', onclick: () => accion(() => api('POST', `/api/viaticos/jornadas/${j.id}/hospedaje`, { aprobar: true })) }, 'Autorizar'),
+      h('button', { class: 'btn-sec btn-peq', onclick: () => accion(() => api('POST', `/api/viaticos/jornadas/${j.id}/hospedaje`, { aprobar: false })) }, 'No autorizar')) : '' },
+  ], hoteles, ['', '']));
+  if (!p || ['borrador', 'rechazado'].includes(p.estado)) {
+    bloques.push(h('div', { class: 'aviso' }, p?.estado === 'rechazado' ? `Rechazado: ${p.motivo}. El representante puede ajustar y volver a solicitar.` : 'El representante todavía no ha solicitado este presupuesto.'));
+    if (c.detalle) bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Cálculo actual'), desglose(c.detalle, c.total)));
+    if (c.faltan?.length) bloques.push(h('div', { class: 'aviso' }, c.faltan.join(' ')));
+  } else {
+    bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, `Presupuesto ${EST_P[p.estado].toLowerCase()}`), desglose(p.detalle, p.total),
+      h('p', { class: 'hint', style: 'margin-top:1rem' }, `${p.supuestos.jornadas} jornadas, ${fmtN.format(p.supuestos.km)} km (${p.supuestos.kmTipo}).`)), bloqueResumen(p));
+    const acc = h('div', { class: 'acciones' });
+    if (ger && p.estado === 'solicitado') {
+      acc.append(h('button', { class: 'btn', onclick: async () => { const m = await confirmar('Aprobar presupuesto', `Monto a aprobar (máximo ${RD(p.total)}). Déjalo vacío para aprobar el total.`, { okTexto: 'Aprobar', pedirMotivo: true }); if (m == null) return; accion(() => api('POST', `/api/viaticos/presupuestos/${p.id}/aprobar`, { montoAprobado: m.trim() ? Number(m.replace(',', '.')) : null })); } }, 'Aprobar'),
+        h('button', { class: 'btn-sec', onclick: async () => { const m = await confirmar('Rechazar presupuesto', 'Explica qué debe corregir el representante.', { okTexto: 'Rechazar', pedirMotivo: true }); if (m == null) return; accion(() => api('POST', `/api/viaticos/presupuestos/${p.id}/rechazar`, { motivo: m })); } }, 'Rechazar'));
+    }
+    if (fin && ['aprobado', 'desembolsado'].includes(p.estado)) {
+      const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar desembolso');
+      const f = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-top:1.25rem' }, h('h2', {}, 'Desembolso'),
+        h('div', { class: 'form-fila' }, campo('monto', 'Monto RD$', { type: 'number', min: 0.01, step: 0.01, value: r2(p.montoAprobado - p.resumen.entregado) }), campo('fecha', 'Fecha', { type: 'date', value: hoy(), max: hoy() }), campo('referencia', 'Referencia (transferencia o cheque)')),
+        h('div', { class: 'acciones' }, b));
+      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', `/api/viaticos/presupuestos/${p.id}/desembolsos`, { monto: f.monto.value, fecha: f.fecha.value, referencia: f.referencia.value }))) recargar(); });
+      bloques.push(f);
+    }
+    if (fin && p.estado === 'desembolsado') acc.append(h('button', { class: 'btn', onclick: async () => { if (await confirmar('Liquidar viáticos', `Cerrar ${mes} de ${nombre}. Entregado ${RD(p.resumen.entregado)}, justificado ${RD(p.resumen.justificado)}.`, { okTexto: 'Liquidar' })) accion(() => api('POST', `/api/viaticos/presupuestos/${p.id}/liquidar`)); } }, 'Liquidar'));
+    bloques.push(acc, h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Gastos y comprobantes'),
+      tablaGastos(p, fin && p.estado !== 'liquidado' ? (g) => g.estado === 'reportado' ? h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' },
+        h('button', { class: 'btn btn-peq', onclick: () => accion(() => api('POST', `/api/viaticos/presupuestos/${p.id}/gastos/${g.id}/aceptar`)) }, 'Aceptar'),
+        h('button', { class: 'btn-sec btn-peq', onclick: async () => { const m = await confirmar('No aceptar gasto', 'Explica el motivo.', { okTexto: 'No aceptar', pedirMotivo: true }); if (m != null) accion(() => api('POST', `/api/viaticos/presupuestos/${p.id}/gastos/${g.id}/rechazar`, { motivo: m })); } }, 'No aceptar')) : '' : null));
+  }
+  bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Jornadas'),
+    tabla([{ t: 'Fecha', v: (j) => fecha(j.fecha) }, { t: 'Paradas', v: (j) => j.paradas.map((x) => x.lugar).join(' → ') }, { t: 'Km', num: true, v: (j) => `${fmtN.format(j.kmEstimados)}${j.kmReales != null ? ` / ${fmtN.format(j.kmReales)} real` : ''}` }, { t: 'Estado', v: (j) => chipP(j.estado) }],
+      js, ['Sin jornadas en el mes', '']));
+  return vista(`${nombre}: viáticos de ${mes}`, null, ...bloques);
+};
+const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
 // ---------------------------------------------------------------- menú por rol
 let yo;
@@ -387,16 +627,19 @@ function menuPara(u) {
   if (u.role === 'dependiente') s.push(['Mi trabajo', [['voucher', 'Cargar voucher'], ['misVouchers', 'Mis vouchers'], ['comision', 'Mi comisión']]]);
   if (u.role === 'representante' && u.position === 'Promotora') s.push(['Mi trabajo', [['operativo', 'Operativo de hoy'], ['receta', 'Cargar receta'], ['misRecetas', 'Mis recetas'], ['alertas', 'Alertas']]]);
   if (u.role === 'representante' && u.position === 'Vendedor') s.push(['Mi trabajo', [['inventario', 'Inventario'], ['catalogo', 'Farmacias']]]);
+  if (u.role === 'representante') s.push(['Rutas y viáticos', [['jornadas', 'Mis jornadas'], ['presupuesto', 'Mi presupuesto']]]);
   if (G) {
     s.push(['Dependientes', [['revisar', 'Vouchers por revisar'], ['comisiones', 'Comisiones']]]);
     s.push(['Promotoras', [['reportes', 'Reporte de recetas'], ['misRecetas', 'Recetas'], ['alertas', 'Alertas']]]);
+    s.push(['Rutas y viáticos', [['viaticos', 'Presupuestos'], ['perfiles', 'Perfiles de viático'], ['precios', 'Precios de combustible'], ['viatico', null]]]);
     s.push(['Administración', [['inventario', 'Inventario'], ['catalogo', 'Catálogo'], ...(u.role !== 'finanzas' ? [['solicitudes', 'Solicitudes de cuenta']] : [])]]);
   }
   if (!s.length) s.push(['Mi trabajo', [['pronto', 'Inicio']]]);
   return s;
 }
 function pintarMenu(secciones, actual) {
-  $('#menu').replaceChildren(...secciones.flatMap(([titulo, items]) => [h('h3', {}, titulo), ...items.map(([id, label]) => h('a', { href: `#${id}`, 'aria-current': id === actual ? 'page' : null }, label))]));
+  const padre = { viatico: 'viaticos' }[actual] ?? actual;
+  $('#menu').replaceChildren(...secciones.flatMap(([titulo, items]) => [h('h3', {}, titulo), ...items.filter(([, label]) => label).map(([id, label]) => h('a', { href: `#${id}`, 'aria-current': id === padre ? 'page' : null }, label))]));
 }
 let secciones;
 async function router() {
