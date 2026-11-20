@@ -66,7 +66,12 @@ export function preciosDeLineas(paginas) {
           let publico = oficial; let ajuste = 0;
           const explicito = resto.find((x) => x !== oficial && Math.abs(x - oficial) <= oficial * 0.2 && resto.some((y) => Math.abs(oficial + y - x) <= 0.05));
           if (explicito != null) { publico = explicito; ajuste = r2(explicito - oficial); }
-          else { const aj = resto.find((x) => x !== 0 && Math.abs(x) < oficial * 0.2); if (aj != null) { ajuste = aj; publico = oficial + aj; } }
+          else {
+            const aj = resto.find((x) => x !== 0 && Math.abs(x) < oficial * 0.2);
+            const cerca = resto.find((x) => x !== oficial && Math.abs(x - oficial) <= oficial * 0.2);
+            if (aj != null && (cerca == null || resto.indexOf(aj) < resto.indexOf(cerca))) { ajuste = aj; publico = oficial + aj; }
+            else if (cerca != null) { publico = cerca; ajuste = r2(cerca - oficial); }
+          }
           out[e[0]] = r2(publico);
           detalle[e[0]] = { oficial, ajuste, componentes: nums.slice(i, i + 6) };
           break;
