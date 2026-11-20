@@ -1,7 +1,7 @@
 // Crea el primer administrador (el registro público no permite ese rol).
 // Uso: DATABASE_URL=... node src/cli/crear-admin.js "Nombre Completo" correo@fersuaz.net
-// La contraseña se pide por la terminal y no queda en el historial.
-import { createInterface } from 'node:readline/promises';
+// La contraseña se pide por la terminal sin mostrarse y no queda en el historial.
+import { pedirClave } from './pedir-clave.js';
 import { PostgresStore } from '../store.js';
 import { hashPassword } from '../security.js';
 import { normalizeName } from '../validation.js';
@@ -10,9 +10,7 @@ const [nombre, correo] = process.argv.slice(2);
 if (!process.env.DATABASE_URL || !nombre || !correo) {
   console.error('Uso: DATABASE_URL=... node src/cli/crear-admin.js "Nombre" correo@dominio'); process.exit(1);
 }
-const rl = createInterface({ input: process.stdin, output: process.stdout });
-const clave = await rl.question('Contraseña (mínimo 12 caracteres): ');
-rl.close();
+const clave = await pedirClave('Contraseña (mínimo 12 caracteres, no se muestra): ');
 if (clave.length < 12) { console.error('La contraseña es demasiado corta.'); process.exit(1); }
 const store = await PostgresStore.connect(process.env.DATABASE_URL);
 const email = correo.trim().toLowerCase();
