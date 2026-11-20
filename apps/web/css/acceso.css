@@ -69,3 +69,8 @@
 
 .acceso .field { align-content: start; }
 .acceso .row2 { align-items: start; }
+
+/* Sugerencia de corrección del correo (va dentro del mensaje del campo) */
+.sugerencia { margin-left: .35rem; padding: .2rem .65rem; border-radius: 999px; border: 1.5px solid var(--celeste); background: #fff; color: var(--marino); font: 600 .85rem/1.4 var(--sans); cursor: pointer; }
+.sugerencia:hover { background: var(--panel); }
+.sugerencia:focus-visible { outline: 3px solid var(--celeste); outline-offset: 2px; }
