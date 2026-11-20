@@ -3,9 +3,9 @@
 
 const CONSULTA = {
   farmacia: 'farmacias', clinica: 'clínicas', hospital: 'hospitales', unap: 'UNAP unidad de atención primaria',
-  cpn: 'centro de primer nivel de atención', diagnostico: 'centro diagnóstico', consultorio: 'consultorio médico',
+  cpn: 'centro de primer nivel de atención', diagnostico: 'centro diagnóstico', consultorio: 'consultorio médico', hotel: 'hoteles',
 };
-const CAMPOS = 'places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.businessStatus';
+const CAMPOS = 'places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.businessStatus,places.rating';
 
 export class SinLugares { activo = false; async buscar() { return []; } async pagina() { return { items: [], siguiente: null }; } async detalle() { return null; } }
 
@@ -27,7 +27,7 @@ export class GooglePlaces {
   static #lugar(p) {
     return {
       placeId: p.id, nombre: p.displayName?.text ?? '', direccion: p.formattedAddress ?? '',
-      lat: p.location?.latitude ?? null, lng: p.location?.longitude ?? null, telefono: p.nationalPhoneNumber ?? null,
+      lat: p.location?.latitude ?? null, lng: p.location?.longitude ?? null, telefono: p.nationalPhoneNumber ?? null, calificacion: p.rating ?? null,
       cerrado: p.businessStatus === 'CLOSED_PERMANENTLY',
     };
   }

@@ -151,3 +151,26 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .95rem; }
 .ruta-orden li::before { content: counter(p); width: 2rem; height: 2rem; border-radius: 50%; display: grid; place-items: center; background: var(--marino); color: #fff; font: 600 .9rem var(--serif); }
 .ruta-orden li.casa { counter-increment: none; }
 .ruta-orden li.casa::before { content: ""; background: #fff; border: 2px solid var(--marino); }
+
+/* Zona por municipio */
+.provincias-zona { grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); align-items: start; }
+.prov-item { display: grid; gap: .2rem; }
+.prov-muns { margin: 0 0 .35rem 1.6rem; font-size: .9rem; }
+.prov-muns summary { cursor: pointer; color: var(--celeste-texto); min-height: 28px; display: flex; align-items: center; }
+.prov-muns summary:focus-visible { outline: 3px solid var(--celeste); outline-offset: 2px; border-radius: 6px; }
+.prov-muns-lista { display: grid; gap: .1rem; padding: .35rem .5rem; background: var(--canvas); border-radius: 10px; margin-top: .25rem; }
+.prov-muns-lista label { font-size: .9rem; min-height: 30px; }
+
+/* Propuesta automática del cronograma */
+.propuesta { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: .9rem; margin-top: 1rem; }
+.propuesta-dia { border: 1px solid var(--linea); border-radius: 14px; padding: .85rem; background: #fff; display: grid; gap: .6rem; align-content: start; }
+.propuesta-cabeza { display: flex; gap: .6rem; align-items: flex-start; cursor: pointer; }
+.propuesta-cabeza strong { display: block; color: var(--marino); }
+.propuesta-cabeza small, .propuesta-lugares small { display: block; color: var(--texto-2); }
+.propuesta-lugares { margin: 0; padding-left: 1.2rem; display: grid; gap: .4rem; }
+.propuesta-lugares li { display: flex; justify-content: space-between; gap: .5rem; align-items: flex-start; font-size: .92rem; }
+.quitado { opacity: .45; }
+.propuesta-lugares li.quitado strong { text-decoration: line-through; }
+
+/* Hotel recomendado */
+.tarjeta.recomendado { border-left: 4px solid var(--celeste); margin-bottom: 1.25rem; }

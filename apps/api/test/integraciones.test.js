@@ -88,7 +88,7 @@ test('cronograma: solo el administrador lo crea, dentro de las provincias del re
     assert.equal((await call('POST', '/api/cronogramas', body, tok.rep)).status, 403);
     assert.equal((await call('POST', '/api/cronogramas', { ...body, fechas: ['2026-10-31'] }, tok.adm)).status, 422, 'meses anteriores no');
     const fuera = await call('POST', '/api/cronogramas', { ...body, lugares: [ref(lug.farm, 'farmacia')] }, tok.adm);
-    assert.equal(fuera.status, 422); assert.match(fuera.body.fields.lugares, /fuera de las provincias/);
+    assert.equal(fuera.status, 422); assert.match(fuera.body.fields.lugares, /fuera de la zona/);
     assert.equal((await call('POST', '/api/cronogramas', { ...body, representanteId: ids.otro }, tok.adm)).status, 409, 'sin provincias asignadas');
     const ok = await call('POST', '/api/cronogramas', body, tok.adm);
     assert.equal(ok.status, 201); assert.equal(ok.body.items.length, 2);
