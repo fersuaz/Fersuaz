@@ -14,6 +14,10 @@ export const COLECCIONES = {
   recetas: { tabla: 'recetas', campos: ['promotoraId', 'operativoId', 'medicoId', 'fecha', 'provincia', 'municipio', 'items', 'adjunto'], json: ['items', 'adjunto'] },
   inventario: { tabla: 'inventario', campos: ['farmaciaId', 'medicamentoId', 'unidades', 'fechaCorte', 'registradoPor'], json: [] },
   configuracion: { tabla: 'configuracion', campos: ['clave', 'valor', 'actualizadoPor'], json: ['valor'] },
+  perfiles: { tabla: 'perfiles_viatico', campos: ['representanteId', 'residencia', 'vehiculo', 'tarifaAlimentacion', 'reembolsoPorKm', 'actualizadoPor'], json: ['residencia', 'vehiculo'] },
+  precios: { tabla: 'precios_combustible', campos: ['combustible', 'precioGalon', 'vigenteDesde', 'registradoPor'], json: [] },
+  jornadas: { tabla: 'jornadas', campos: ['representanteId', 'fecha', 'paradas', 'kmEstimados', 'kmReales', 'conAlimentacion', 'hospedaje', 'peajes', 'estacionamiento', 'otros', 'estado'], json: ['paradas', 'hospedaje'] },
+  presupuestos: { tabla: 'presupuestos_viatico', campos: ['representanteId', 'mes', 'detalle', 'supuestos', 'total', 'estado', 'montoAprobado', 'aprobadoPor', 'motivo', 'desembolsos', 'gastos', 'liquidacion'], json: ['detalle', 'supuestos', 'desembolsos', 'gastos', 'liquidacion'] },
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -61,7 +65,7 @@ export class PgData {
     for (const f of c.campos) {
       let v = r[snake(f)];
       if (v instanceof Date) v = v.toISOString().slice(0, 10);
-      if (typeof v === 'string' && /^\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision'].includes(f)) v = Number(v);
+      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision', 'precioGalon', 'kmEstimados', 'kmReales', 'peajes', 'estacionamiento', 'otros', 'tarifaAlimentacion', 'reembolsoPorKm', 'montoAprobado'].includes(f)) v = Number(v);
       out[f] = v;
     }
     return out;

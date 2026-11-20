@@ -5,6 +5,7 @@ import { STATUS } from './roles.js';
 import { calcularComisionVouchers, evaluarAlertaInventario } from './calculos.js';
 import { esFechaISO, hoyRD, periodoDe, rangoDe } from './periodos.js';
 import { normalizeName } from './validation.js';
+import { guardarAdjunto } from './adjuntos.js';
 
 const GESTION = ['administrador', 'gerencia', 'supervisor', 'finanzas'];
 const esActivo = (u) => u && u.status === STATUS.ACTIVO;
@@ -25,13 +26,6 @@ function texto(errors, campo, v, { min = 2, max = 120, requerido = true, etiquet
   return s;
 }
 
-const TIPOS_ADJUNTO = {
-  'image/jpeg': [0xff, 0xd8, 0xff],
-  'image/png': [0x89, 0x50, 0x4e, 0x47],
-  'image/webp': [0x52, 0x49, 0x46, 0x46],
-  'application/pdf': [0x25, 0x50, 0x44, 0x46],
-};
-export const MAX_ADJUNTO = 5 * 1024 * 1024;
 
 export function createComercial({ data, users, files, audit, now = () => new Date() }) {
   const hoy = () => hoyRD(now());
@@ -266,21 +260,6 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
   };
 
   // ------------------------------------------------------------ promotoras
-  async function guardarAdjunto(actor, adj) {
-    if (!adj) return null;
-    const tipo = String(adj.tipo ?? '');
-    const firma = TIPOS_ADJUNTO[tipo];
-    if (!firma) throw new HttpError(422, 'La foto debe ser JPG, PNG, WEBP o PDF.', { adjunto: 'Formato no permitido.' });
-    let buf;
-    try { buf = Buffer.from(String(adj.base64 ?? ''), 'base64'); } catch { buf = Buffer.alloc(0); }
-    if (!buf.length) throw new HttpError(422, 'No se pudo leer el archivo.', { adjunto: 'Archivo vacío o dañado.' });
-    if (buf.length > MAX_ADJUNTO) throw new HttpError(413, 'La foto no puede pasar de 5 MB.', { adjunto: 'Archivo demasiado grande.' });
-    if (!firma.every((b, i) => buf[i] === b)) throw new HttpError(422, 'El archivo no coincide con su formato.', { adjunto: 'Archivo no válido.' });
-    if (!files) throw new HttpError(503, 'El almacenamiento de fotos todavía no está configurado.');
-    const clave = await files.put(buf, tipo, actor.id);
-    return { clave, tipo, tamano: buf.length, nombre: normalizeName(adj.nombre).slice(0, 120) || 'receta' };
-  }
-
   const promotoras = {
     async crearOperativo(actor, input) {
       permitir(esPromotora(actor), 'Solo las promotoras registran operativos.');
@@ -321,7 +300,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
         if (m) { vistos.add(m.id); lineas.push({ medicamentoId: m.id, medicamento: m.nombre, linea: m.linea ?? null, unidades }); }
       }
       if (Object.keys(e).length) invalido(e);
-      const adjunto = await guardarAdjunto(actor, input.adjunto);
+      const adjunto = await guardarAdjunto(files, actor, input.adjunto, 'receta');
       const r = await data.insert('recetas', {
         promotoraId: actor.id, operativoId: op.id, medicoId: med.id, fecha: op.fecha,
         provincia: op.provincia, municipio: op.municipio, items: lineas, adjunto,
