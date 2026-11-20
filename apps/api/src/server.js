@@ -2,9 +2,11 @@ import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { MemoryStore, PostgresStore } from './store.js';
 import { MemoryData, PgData } from './data.js';
-import { MemoryFiles, LocalFiles } from './files.js';
+import { MemoryFiles, crearArchivos } from './files.js';
 import { createAuthService, AuthError } from './auth.js';
 import { createComercial } from './comercial.js';
+import { createViaticos, COMBUSTIBLE_LABEL } from './viaticos.js';
+import { SinMapas, crearMapas } from './mapas.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -24,9 +26,10 @@ async function readJson(req, limit = MAX_BODY) {
 
 const publico = ({ passwordHash, ...u }) => u;
 
-export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), sessionSecret, allowedOrigins = [], now }) {
+export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), sessionSecret, allowedOrigins = [], now }) {
   const auth = createAuthService(store);
   const c = createComercial({ data, users: store, files, audit: (e) => store.addAudit(e), now });
+  const v = createViaticos({ data, users: store, files, mapas, audit: (e) => store.addAudit(e), now });
 
   function send(res, status, body, origin, raw) {
     const headers = { 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' };
@@ -99,6 +102,28 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', '/api/alertas/umbral', async ({ me, body }) => ({ item: await c.promotoras.configurarUmbral(me, body.umbral) }));
   ruta('GET', '/api/reportes/recetas', async ({ me, q }) => c.reporteRecetas(me, { mes: q.get('mes'), agrupar: q.get('agrupar') }));
 
+  // Rutas y viáticos
+  ruta('GET', '/api/viaticos/combustibles', () => ({ items: Object.entries(COMBUSTIBLE_LABEL).map(([value, label]) => ({ value, label })) }));
+  ruta('GET', '/api/viaticos/estado', () => ({ mapas: v.mapasActivo() }));
+  ruta('POST', '/api/viaticos/calcular-km', async ({ me, body }) => v.calcularKm(me, body));
+  ruta('GET', '/api/viaticos/representantes', async ({ me }) => ({ items: await v.listarRepresentantes(me) }));
+  ruta('GET', /^\/api\/viaticos\/perfiles\/([\w-]+)$/, async ({ me, p }) => ({ item: await v.verPerfil(me, p[1]) }));
+  ruta('POST', /^\/api\/viaticos\/perfiles\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await v.guardarPerfil(me, p[1], body) }));
+  ruta('GET', '/api/viaticos/precios', async ({ me }) => ({ items: await v.listarPrecios(me) }));
+  ruta('POST', '/api/viaticos/precios', async ({ me, body }) => [201, { item: await v.registrarPrecio(me, body) }]);
+  ruta('GET', '/api/viaticos/jornadas', async ({ me, q }) => ({ items: await v.listarJornadas(me, { representanteId: q.get('representanteId') || undefined, mes: q.get('mes') || undefined }) }));
+  ruta('POST', '/api/viaticos/jornadas', async ({ me, body }) => [201, { item: await v.crearJornada(me, body) }]);
+  ruta('POST', /^\/api\/viaticos\/jornadas\/([\w-]+)\/(realizada|cancelar|hospedaje)$/, async ({ me, p, body }) => ({ item: await v.actualizarJornada(me, p[1], p[2], body) }));
+  ruta('GET', '/api/viaticos/presupuesto', async ({ me, q }) => v.verPresupuesto(me, q.get('representanteId') || me.id, q.get('mes')));
+  ruta('POST', '/api/viaticos/presupuesto/solicitar', async ({ me, body }) => ({ item: await v.solicitar(me, body.mes) }));
+  ruta('GET', /^\/api\/viaticos\/presupuestos\/([\w-]+)$/, async ({ me, p }) => ({ item: await v.presupuestoPorId(me, p[1]) }));
+  ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p, body }) => ({ item: await v.decidirPresupuesto(me, p[1], p[2] === 'aprobar', body) }));
+  ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/desembolsos$/, async ({ me, p, body }) => ({ item: await v.desembolsar(me, p[1], body) }));
+  ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/gastos$/, async ({ me, p, body }) => [201, { item: await v.reportarGasto(me, p[1], body) }], { limite: MAX_BODY_ADJUNTO });
+  ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/gastos\/([\w-]+)\/(aceptar|rechazar)$/, async ({ me, p, body }) => ({ item: await v.revisarGasto(me, p[1], p[2], p[3] === 'aceptar', body.motivo) }));
+  ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/liquidar$/, async ({ me, p }) => ({ item: await v.liquidar(me, p[1]) }));
+  ruta('GET', '/api/viaticos/consolidado', async ({ me, q }) => v.consolidado(me, q.get('mes')));
+
   ruta('GET', /^\/api\/adjuntos\/([\w.-]+)$/, async ({ me, p }) => {
     const f = await files.get(p[1]);
     const gestion = ['administrador', 'gerencia', 'supervisor', 'finanzas'].includes(me.role) && me.status === 'activo';
@@ -142,6 +167,6 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   else { store = new MemoryStore(); data = new MemoryData(); console.warn('⚠ Sin DATABASE_URL: usando memoria (solo desarrollo, los datos se pierden).'); }
   const secret = SESSION_SECRET ?? (NODE_ENV === 'production' ? null : 'dev-only-secret-change-me-0123456789abcdef');
   if (!secret) { console.error('SESSION_SECRET es obligatorio.'); process.exit(1); }
-  const app = createApp({ store, data, files: new LocalFiles(UPLOAD_DIR), sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
+  const app = createApp({ store, data, files: crearArchivos(process.env, UPLOAD_DIR), mapas: crearMapas(), sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
   createServer(app).listen(PORT, () => console.log(`API FERSUAZ en :${PORT}`));
 }

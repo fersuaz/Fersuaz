@@ -1,5 +1,6 @@
 # DigitalOcean App Platform. El balanceador lo incluye App Platform.
-# instance_count sube hasta los 10 servidores previstos en la estructura tecnológica.
+# Los valores ${NOMBRE} los reemplaza GitHub Actions (digitalocean/app_action) con los GitHub Secrets
+# del mismo nombre; ${fersuaz-db.*} los resuelve DigitalOcean. Ningún secreto vive en este archivo.
 name: fersuaz-api
 region: nyc
 services:
@@ -13,15 +14,35 @@ services:
     run_command: npm start
     http_port: 8080
     instance_size_slug: apps-s-1vcpu-1gb
-    instance_count: 2
+    # Empieza con 1. Sube a 2 o más (hasta los 10 previstos) SOLO cuando Spaces esté configurado,
+    # porque sin Spaces cada servidor guarda los comprobantes en su propio disco.
+    instance_count: 1
     health_check: { http_path: /api/health }
     routes: [{ path: /api }]
     envs:
       - { key: NODE_ENV, value: production }
       - { key: DATABASE_URL, scope: RUN_TIME, value: "${fersuaz-db.DATABASE_URL}" }
       - { key: DATABASE_CA, scope: RUN_TIME, value: "${fersuaz-db.CA_CERT}" }
-      - { key: SESSION_SECRET, scope: RUN_TIME, type: SECRET }
+      - { key: SESSION_SECRET, scope: RUN_TIME, type: SECRET, value: "${SESSION_SECRET}" }
       - { key: ALLOWED_ORIGINS, scope: RUN_TIME, value: "https://fersuaz.net,https://www.fersuaz.net" }
+      # Opcionales: si están vacíos, los km se escriben a mano y los archivos van al disco local.
+      - { key: MAPS_API_KEY, scope: RUN_TIME, type: SECRET, value: "${MAPS_API_KEY}" }
+      - { key: SPACES_KEY, scope: RUN_TIME, type: SECRET, value: "${SPACES_KEY}" }
+      - { key: SPACES_SECRET, scope: RUN_TIME, type: SECRET, value: "${SPACES_SECRET}" }
+      - { key: SPACES_BUCKET, scope: RUN_TIME, value: fersuaz-archivos }
+      - { key: SPACES_REGION, scope: RUN_TIME, value: nyc3 }
+jobs:
+  # Aplica las migraciones nuevas antes de cada despliegue. Si una falla, el despliegue se detiene.
+  - name: migrar
+    kind: PRE_DEPLOY
+    github: { repo: fersuaz/Fersuaz, branch: main, deploy_on_push: false }
+    source_dir: apps/api
+    environment_slug: node-js
+    run_command: npm run migrar
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    envs:
+      - { key: DATABASE_URL, scope: RUN_TIME, value: "${fersuaz-db.DATABASE_URL}" }
+      - { key: DATABASE_CA, scope: RUN_TIME, value: "${fersuaz-db.CA_CERT}" }
 databases:
   - name: fersuaz-db
     engine: PG
