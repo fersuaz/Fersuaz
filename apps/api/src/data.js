@@ -15,7 +15,7 @@ export const COLECCIONES = {
   inventario: { tabla: 'inventario', campos: ['farmaciaId', 'medicamentoId', 'unidades', 'fechaCorte', 'registradoPor'], json: [] },
   configuracion: { tabla: 'configuracion', campos: ['clave', 'valor', 'actualizadoPor'], json: ['valor'] },
   perfiles: { tabla: 'perfiles_viatico', campos: ['representanteId', 'residencia', 'vehiculo', 'tarifaAlimentacion', 'reembolsoPorKm', 'actualizadoPor'], json: ['residencia', 'vehiculo'] },
-  precios: { tabla: 'precios_combustible', campos: ['combustible', 'precioGalon', 'vigenteDesde', 'registradoPor'], json: [] },
+  precios: { tabla: 'precios_combustible', campos: ['combustible', 'precioGalon', 'vigenteDesde', 'fuente', 'enlace', 'registradoPor'], json: [] },
   jornadas: { tabla: 'jornadas', campos: ['representanteId', 'fecha', 'paradas', 'kmEstimados', 'kmFuente', 'kmReales', 'conAlimentacion', 'hospedaje', 'peajes', 'estacionamiento', 'otros', 'estado'], json: ['paradas', 'hospedaje'] },
   establecimientos: { tabla: 'establecimientos', campos: ['tipo', 'nombre', 'provincia', 'municipio', 'sector', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'fuente', 'estado', 'creadoPor'], json: [] },
   zonas: { tabla: 'zonas_representante', campos: ['representanteId', 'provincias', 'actualizadoPor'], json: ['provincias'] },

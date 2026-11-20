@@ -298,7 +298,7 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     if (!filas.length) invalido({ archivo: 'El archivo no tiene filas para importar.' });
     if (errores.length) throw new HttpError(422, `Hay ${errores.length} fila(s) con errores. Corrígelas y vuelve a subir el archivo.`, { archivo: 'Hay filas con errores.' });
     for (const f of filas) await imp.guardar(actor, f);
-    await audit({ actorId: actor.id, action: 'importacion', entity: tipo, entityId: null, after: { archivo: nombre ?? null, resumen } });
+    await audit({ actorId: actor.id, action: 'importacion', entity: tipo, entityId: nombre ?? tipo, after: { archivo: nombre ?? null, resumen } });
     return { tipo, total: filas.length, resumen, errores: [], guardado: true };
   }
 

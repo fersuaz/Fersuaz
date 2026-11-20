@@ -13,7 +13,8 @@
     "crear-admin": "node src/cli/crear-admin.js",
     "migrar": "node src/cli/migrar.js",
     "cambiar-correo": "node src/cli/cambiar-correo.js",
-    "cambiar-clave": "node src/cli/cambiar-clave.js"
+    "cambiar-clave": "node src/cli/cambiar-clave.js",
+    "revisar-micm": "node src/cli/revisar-micm.js"
   },
   "optionalDependencies": {
     "pg": "^8.13.0"
