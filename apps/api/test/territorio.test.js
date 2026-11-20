@@ -197,3 +197,23 @@ test('PostgreSQL: columnas nuevas de territorio', { skip: !process.env.TEST_DATA
   assert.equal(m.precio, 99.5);
   await st.pool.end();
 });
+
+test('PostgreSQL: importar y precios del MICM dejan auditoría válida', { skip: !process.env.TEST_DATABASE_URL }, async () => {
+  const { PostgresStore } = await import('../src/store.js');
+  const { createTerritorio } = await import('../src/territorio.js');
+  const st = await PostgresStore.connect(process.env.TEST_DATABASE_URL);
+  const data = new PgData(st.pool);
+  const ger = await st.createUser({ fullName: 'Gerencia Ejemplo PG', email: `ger-pg-${Date.now()}@x.do`, phone: null, role: 'gerencia', position: null, passwordHash: 'x', status: 'activo' });
+  const t = createTerritorio({ data, users: st, audit: (e) => st.addAudit(e) });
+  const r = await t.importar(ger, 'establecimientos', { archivo: b64(`Tipo,Nombre,Provincia,Municipio\nHospital,Hospital PG ${Date.now()},Espaillat,Moca\n`), nombre: 'e.csv', confirmar: true });
+  assert.equal(r.guardado, true);
+  await st.pool.query("DELETE FROM precios_combustible WHERE vigente_desde = '2026-11-14'");
+  const { actualizarDesdeMicm, URL_AVISOS } = await import('../src/combustible-micm.js');
+  const fx = (f) => readFileSync(new URL(`./fixtures/${f}`, import.meta.url));
+  const f = async (u) => new Response(u === URL_AVISOS ? fx('listado-micm-ejemplo.html') : fx('aviso-ejemplo-libreoffice.pdf'));
+  const m = await actualizarDesdeMicm({ data, audit: (e) => st.addAudit(e), fetchImpl: f });
+  assert.equal(m.estado, 'registrado', m.mensaje);
+  const { rows } = await st.pool.query("SELECT fuente, count(*)::int n FROM precios_combustible WHERE vigente_desde='2026-11-14' GROUP BY fuente");
+  assert.deepEqual(rows, [{ fuente: 'micm', n: 5 }]);
+  await st.pool.end();
+});

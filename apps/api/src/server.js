@@ -8,6 +8,7 @@ import { createComercial } from './comercial.js';
 import { createViaticos, COMBUSTIBLE_LABEL } from './viaticos.js';
 import { SinMapas, crearMapas } from './mapas.js';
 import { createTerritorio } from './territorio.js';
+import { actualizarDesdeMicm } from './combustible-micm.js';
 import { SinLugares, crearLugares } from './lugares.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
@@ -28,7 +29,7 @@ async function readJson(req, limit = MAX_BODY) {
 
 const publico = ({ passwordHash, ...u }) => u;
 
-export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), sessionSecret, allowedOrigins = [], now }) {
+export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), micmFetch = fetch, sessionSecret, allowedOrigins = [], now }) {
   const t = createTerritorio({ data, users: store, audit: (e) => store.addAudit(e), now });
   const auth = createAuthService(store, { preregistro: { buscar: t.buscarPreregistro, confirmar: t.confirmarPreregistro } });
   const c = createComercial({ data, users: store, files, audit: (e) => store.addAudit(e), now });
@@ -163,6 +164,17 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', /^\/api\/viaticos\/perfiles\/([\w-]+)$/, async ({ me, p }) => ({ item: await v.verPerfil(me, p[1]) }));
   ruta('POST', /^\/api\/viaticos\/perfiles\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await v.guardarPerfil(me, p[1], body) }));
   ruta('GET', '/api/viaticos/precios', async ({ me }) => ({ items: await v.listarPrecios(me) }));
+  // Precios automáticos desde el aviso semanal del MICM
+  const puedePrecios = (me) => me?.status === 'activo' && ['administrador', 'gerencia', 'finanzas'].includes(me.role);
+  ruta('GET', '/api/viaticos/precios/micm', async ({ me }) => {
+    if (me?.status !== 'activo') throw new AuthError(403, 'No tienes permiso para esta acción.');
+    const [c] = await data.list('configuracion', { clave: 'micm_estado' });
+    return { item: c?.valor ?? null };
+  });
+  ruta('POST', '/api/viaticos/precios/micm', async ({ me }) => {
+    if (!puedePrecios(me)) throw new AuthError(403, 'Solo finanzas o la gerencia actualizan precios.');
+    return { item: await actualizarDesdeMicm({ data, audit: (e) => store.addAudit({ ...e, actorId: me.id }), fetchImpl: micmFetch, now: now ?? (() => new Date()) }) };
+  });
   ruta('POST', '/api/viaticos/precios', async ({ me, body }) => [201, { item: await v.registrarPrecio(me, body) }]);
   ruta('GET', '/api/viaticos/jornadas', async ({ me, q }) => ({ items: await v.listarJornadas(me, { representanteId: q.get('representanteId') || undefined, mes: q.get('mes') || undefined }) }));
   ruta('POST', '/api/viaticos/jornadas', async ({ me, body }) => [201, { item: await v.crearJornada(me, body) }]);
@@ -222,4 +234,11 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (!secret) { console.error('SESSION_SECRET es obligatorio.'); process.exit(1); }
   const app = createApp({ store, data, files: crearArchivos(process.env, UPLOAD_DIR), mapas: crearMapas(), lugares: crearLugares(), sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
   createServer(app).listen(PORT, () => console.log(`API FERSUAZ en :${PORT}`));
+  // Revisión automática del aviso semanal del MICM: al arrancar y cada 6 horas (desactivar con MICM_AUTO=off).
+  if (DATABASE_URL && process.env.MICM_AUTO !== 'off') {
+    const revisar = () => actualizarDesdeMicm({ data, audit: (e) => store.addAudit(e) })
+      .then((r) => console.log(`MICM: ${r.estado}. ${r.mensaje ?? ''}`)).catch((e) => console.error('MICM:', e.message));
+    setTimeout(revisar, 60_000).unref();
+    setInterval(revisar, 6 * 3600_000).unref();
+  }
 }

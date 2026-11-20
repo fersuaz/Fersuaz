@@ -539,22 +539,37 @@ V.perfiles = async () => {
 };
 
 V.precios = async () => {
-  const [{ items }, { items: combs }] = await Promise.all([api('GET', '/api/viaticos/precios'), api('GET', '/api/viaticos/combustibles')]);
+  const [{ items }, { items: combs }, { item: micm }] = await Promise.all([api('GET', '/api/viaticos/precios'), api('GET', '/api/viaticos/combustibles'), api('GET', '/api/viaticos/precios/micm')]);
+  const puede = ['administrador', 'gerencia', 'finanzas'].includes(yo.role);
   const bloques = [];
-  if (['administrador', 'gerencia', 'finanzas'].includes(yo.role)) {
+  const estadoMicm = h('div', { class: 'tarjeta' }, h('h2', {}, 'Actualización automática desde el MICM'),
+    h('p', { class: 'hint' }, 'Cada 6 horas se revisa el aviso semanal oficial del MICM. Un precio solo se registra si los componentes del aviso suman el precio oficial; si algo no cuadra, no se registra nada y se avisa aquí.'),
+    micm ? h('div', { class: `aviso ${micm.estado === 'error' ? 'error' : 'ok'}`, role: 'status' },
+      `${micm.estado === 'error' ? 'No se pudo actualizar' : micm.estado === 'al dia' ? 'Al día' : 'Actualizado'}: ${micm.mensaje ?? ''} Última revisión: ${new Date(micm.revisado).toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo', dateStyle: 'medium', timeStyle: 'short' }).replace(/\.$/, '')}.`,
+      micm.pdf ? [' ', h('a', { href: micm.pdf, target: '_blank', rel: 'noopener' }, micm.aviso ?? 'Ver aviso')] : null)
+      : h('p', {}, 'Todavía no se ha revisado el aviso del MICM.'),
+    puede ? h('div', { class: 'acciones' }, h('button', { class: 'btn-sec', type: 'button', onclick: async (ev) => {
+      ev.target.disabled = true; ev.target.textContent = 'Revisando el MICM…';
+      try { await api('POST', '/api/viaticos/precios/micm'); } catch (e) { alert(e.message); }
+      router();
+    } }, 'Revisar el MICM ahora')) : null);
+  bloques.push(estadoMicm);
+  if (puede) {
     const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar precio');
-    const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo precio'),
+    const f = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-top:1.25rem' }, h('h2', {}, 'Registrar a mano'),
+      h('p', { class: 'hint' }, 'Úsalo solo si el MICM no se pudo leer. Un precio registrado a mano no se sobrescribe.'),
       h('div', { class: 'form-fila' }, campo('combustible', 'Combustible', { options: combs.filter((c) => !['hibrido', 'electrico'].includes(c.value)) }),
         campo('precioGalon', 'Precio por galón RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }), campo('vigenteDesde', 'Vigente desde', { type: 'date', value: hoy() })),
       h('div', { class: 'acciones' }, b));
     f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/viaticos/precios', { combustible: f.combustible.value, precioGalon: f.precioGalon.value, vigenteDesde: f.vigenteDesde.value }))) router(); });
     bloques.push(f);
   }
-  bloques.push(tabla([{ t: 'Combustible', v: (p) => combs.find((c) => c.value === p.combustible)?.label ?? p.combustible }, { t: 'Precio por galón', num: true, v: (p) => RD(p.precioGalon) }, { t: 'Vigente desde', v: (p) => fecha(p.vigenteDesde) }],
-    items, ['Aún no hay precios registrados', 'Registra los precios oficiales semanales del MICM para que se calcule el combustible.']));
+  bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Historial de precios'),
+    tabla([{ t: 'Combustible', v: (p) => combs.find((c) => c.value === p.combustible)?.label ?? p.combustible }, { t: 'Precio por galón', num: true, v: (p) => RD(p.precioGalon) }, { t: 'Vigente desde', v: (p) => fecha(p.vigenteDesde) },
+      { t: 'Fuente', v: (p) => p.fuente === 'micm' ? h('a', { href: p.enlace, target: '_blank', rel: 'noopener' }, 'Aviso MICM') : 'Manual' }],
+    items, ['Aún no hay precios registrados', 'Se cargarán solos con el próximo aviso del MICM, o puedes revisarlo ahora.']));
   return vista('Precios de combustible', 'Cada jornada usa el precio vigente en su fecha. Los presupuestos ya aprobados no cambian.', ...bloques);
 };
-
 V.viaticos = async () => {
   const mes = mesDe();
   const r = await api('GET', `/api/viaticos/consolidado?mes=${mes}`);

@@ -96,7 +96,7 @@ export function createViaticos({ data, users, files, audit, mapas, now = () => n
     if ((await data.list('precios', { combustible: input.combustible })).some((x) => x.vigenteDesde === input.vigenteDesde)) {
       throw new HttpError(409, 'Ya hay un precio para ese combustible en esa fecha.', { vigenteDesde: 'Ya existe un precio con esa fecha.' });
     }
-    const out = await data.insert('precios', { combustible: input.combustible, precioGalon: r2(p), vigenteDesde: input.vigenteDesde, registradoPor: actor.id });
+    const out = await data.insert('precios', { combustible: input.combustible, precioGalon: r2(p), vigenteDesde: input.vigenteDesde, fuente: 'manual', registradoPor: actor.id });
     await audit({ actorId: actor.id, action: 'precio_combustible', entity: 'precio', entityId: out.id, after: out });
     return out;
   }
