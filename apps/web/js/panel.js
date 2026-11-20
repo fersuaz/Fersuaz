@@ -82,11 +82,59 @@ function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false 
   d.showModal();
   return new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok' ? (motivo ? motivo.value : true) : null), { once: true }));
 }
-const tabla = (cols, filas, vacio) => filas.length
-  ? h('div', { class: 'tabla-envoltura' }, h('table', { class: 'tabla' },
-      h('thead', {}, h('tr', {}, cols.map((c) => h('th', { scope: 'col', class: c.num ? 'num' : null }, c.t)))),
-      h('tbody', {}, filas.map((f) => h('tr', {}, cols.map((c) => h('td', { 'data-label': c.t, class: c.num ? 'num' : null }, h('span', { class: 'celda' }, c.v(f)))))))))
-  : h('div', { class: 'tarjeta vacio' }, h('strong', {}, vacio[0]), vacio[1]);
+const sinTilde = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+/** Texto buscable de una fila: sus valores (hasta dos niveles) y las celdas que son texto. */
+function textoFila(f, cols) {
+  const partes = [];
+  const juntar = (v, n) => { if (v == null) return; if (typeof v === 'string' || typeof v === 'number') partes.push(v); else if (n < 2 && typeof v === 'object') for (const x of Object.values(v)) juntar(x, n + 1); };
+  juntar(f, 0);
+  for (const c of cols) { try { const v = c.v(f); if (typeof v === 'string' || typeof v === 'number') partes.push(v); else if (v instanceof Node) partes.push(v.textContent); } catch { /* celda con acciones */ } }
+  return sinTilde(partes.join(' '));
+}
+/**
+ * Tabla. Con más de 25 filas agrega un buscador (sin importar tildes) y paginación de 25.
+ * La búsqueda revisa todas las filas, no solo la página visible.
+ */
+function tabla(cols, filas, vacio, { porPagina = 25 } = {}) {
+  if (!filas.length) return h('div', { class: 'tarjeta vacio' }, h('strong', {}, vacio[0]), vacio[1]);
+  const fila = (f) => h('tr', {}, cols.map((c) => h('td', { 'data-label': c.t, class: c.num ? 'num' : null }, h('span', { class: 'celda' }, c.v(f)))));
+  const cabeza = h('thead', {}, h('tr', {}, cols.map((c) => h('th', { scope: 'col', class: c.num ? 'num' : null }, c.t))));
+  if (filas.length <= porPagina) return h('div', { class: 'tabla-envoltura' }, h('table', { class: 'tabla' }, cabeza, h('tbody', {}, filas.map(fila))));
+  let indice = null; let lista = filas; let pagina = 1;
+  const cuerpo = h('tbody');
+  const estadoTxt = h('p', { class: 'tabla-estado', 'aria-live': 'polite' });
+  const pager = h('nav', { class: 'paginas', 'aria-label': 'Páginas de la tabla' });
+  const id = `buscar-${Math.random().toString(36).slice(2, 8)}`;
+  const buscador = h('input', { id, type: 'search', class: 'tabla-buscar', placeholder: 'Buscar por nombre, dirección, municipio…', autocomplete: 'off', enterkeyhint: 'search' });
+  const caja = h('div', { class: 'tabla-envoltura' }, h('table', { class: 'tabla' }, cabeza, cuerpo));
+  const boton = (texto, n, extra = {}) => h('button', { type: 'button', class: `pag${n === pagina ? ' actual' : ''}`, disabled: n < 1 || n > total() || undefined, 'aria-current': n === pagina ? 'page' : null, onclick: () => ir(n), ...extra }, texto);
+  const total = () => Math.max(1, Math.ceil(lista.length / porPagina));
+  function pintar() {
+    const ini = (pagina - 1) * porPagina;
+    const vis = lista.slice(ini, ini + porPagina);
+    cuerpo.replaceChildren(...(vis.length ? vis.map(fila) : [h('tr', {}, h('td', { colspan: cols.length, class: 'tabla-sin' }, 'Ningún resultado con esa búsqueda.'))]));
+    estadoTxt.textContent = lista.length ? `Mostrando ${fmtN.format(ini + 1)} a ${fmtN.format(ini + vis.length)} de ${fmtN.format(lista.length)}${lista.length !== filas.length ? ` (de ${fmtN.format(filas.length)} en total)` : ''}` : `0 de ${fmtN.format(filas.length)}`;
+    const t = total(); const nums = new Set([1, t, pagina - 1, pagina, pagina + 1].filter((n) => n >= 1 && n <= t));
+    const ordenados = [...nums].sort((a, b) => a - b); const botones = [];
+    ordenados.forEach((n, i) => { if (i && n - ordenados[i - 1] > 1) botones.push(h('span', { class: 'pag-puntos', 'aria-hidden': 'true' }, '…')); botones.push(boton(fmtN.format(n), n, { 'aria-label': `Página ${n}` })); });
+    pager.replaceChildren(boton('Anterior', pagina - 1), ...botones, boton('Siguiente', pagina + 1));
+    pager.hidden = t <= 1;
+  }
+  function ir(n) { pagina = Math.min(Math.max(1, n), total()); pintar(); caja.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
+  let espera;
+  buscador.addEventListener('input', () => {
+    clearTimeout(espera);
+    espera = setTimeout(() => {
+      const q = sinTilde(buscador.value).trim().split(/\s+/).filter(Boolean);
+      if (q.length && !indice) indice = filas.map((f) => textoFila(f, cols));
+      lista = q.length ? filas.filter((_, i) => q.every((w) => indice[i].includes(w))) : filas;
+      pagina = 1; pintar();
+    }, 150);
+  });
+  pintar();
+  return h('div', { class: 'tabla-larga' },
+    h('div', { class: 'tabla-barra' }, h('label', { for: id, class: 'sr-only' }, 'Buscar en la tabla'), buscador, estadoTxt), caja, pager);
+}
 const vista = (titulo, sub, ...contenido) => [h('h1', {}, titulo), sub ? h('p', { class: 'vista-sub' }, sub) : null, ...contenido];
 /** Marca bloques como una sección; `vistaS` las muestra con un control segmentado (una a la vez). */
 const S = (id, label, ...nodos) => ({ __sec: id, label, nodos: nodos.flat().filter(Boolean) });
