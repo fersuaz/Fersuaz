@@ -7,7 +7,7 @@ const CONSULTA = {
 };
 const CAMPOS = 'places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.businessStatus';
 
-export class SinLugares { activo = false; async buscar() { return []; } async detalle() { return null; } }
+export class SinLugares { activo = false; async buscar() { return []; } async pagina() { return { items: [], siguiente: null }; } async detalle() { return null; } }
 
 export class GooglePlaces {
   activo = true;
@@ -31,15 +31,17 @@ export class GooglePlaces {
       cerrado: p.businessStatus === 'CLOSED_PERMANENTLY',
     };
   }
-  /** Busca un tipo de establecimiento dentro de un municipio. */
-  async buscar({ tipo, municipio, provincia, texto }) {
+  /** Busca un tipo de establecimiento dentro de un municipio (primera página). */
+  async buscar(criterio) { return (await this.pagina(criterio)).items; }
+  /** Una página de resultados (hasta 20). `siguiente` trae el token de la próxima página, si la hay. */
+  async pagina({ tipo, municipio, provincia, texto }, pageToken) {
     const q = `${texto ? `${texto} ` : ''}${CONSULTA[tipo] ?? tipo} en ${municipio}, ${provincia}, República Dominicana`;
     const data = await this.#pedir('https://places.googleapis.com/v1/places:searchText', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'X-Goog-Api-Key': this.apiKey, 'X-Goog-FieldMask': CAMPOS },
-      body: JSON.stringify({ textQuery: q, languageCode: 'es', regionCode: 'DO', pageSize: 20 }),
+      headers: { 'content-type': 'application/json', 'X-Goog-Api-Key': this.apiKey, 'X-Goog-FieldMask': `${CAMPOS},nextPageToken` },
+      body: JSON.stringify({ textQuery: q, languageCode: 'es', regionCode: 'DO', pageSize: 20, ...(pageToken ? { pageToken } : {}) }),
     });
-    return (data.places ?? []).map(GooglePlaces.#lugar).filter((p) => !p.cerrado);
+    return { items: (data.places ?? []).map(GooglePlaces.#lugar).filter((p) => !p.cerrado), siguiente: data.nextPageToken || null };
   }
   /** Datos oficiales de un lugar por su id (se usa al agregar, para no confiar en lo que envía el navegador). */
   async detalle(placeId) {

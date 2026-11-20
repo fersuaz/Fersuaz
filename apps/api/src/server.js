@@ -13,6 +13,7 @@ import { SinCorreo, crearCorreo } from './correo.js';
 import { canApprove } from './roles.js';
 import { actualizarDesdeMicm } from './combustible-micm.js';
 import { SinLugares, crearLugares } from './lugares.js';
+import { createBarrido } from './barrido-google.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -32,7 +33,7 @@ async function readJson(req, limit = MAX_BODY) {
 
 const publico = ({ passwordHash, ...u }) => u;
 
-export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), correo = new SinCorreo(), sitio = 'https://fersuaz.net', micmFetch = fetch, sessionSecret, allowedOrigins = [], now }) {
+export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), correo = new SinCorreo(), sitio = 'https://fersuaz.net', micmFetch = fetch, barridoPausa, sessionSecret, allowedOrigins = [], now }) {
   const n = createNotificaciones({ data, users: store, correo, sitio });
   const avisar = (fn) => fn().catch((e) => console.error('Notificación:', e.message));
   const t = createTerritorio({ data, users: store, audit: (e) => store.addAudit(e), now });
@@ -68,6 +69,25 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
       return { item };
     }
     return { item: await t.crearEstablecimiento(me, { ...base, tipo: body.tipo }, { fuente: 'google', verificado: true }) };
+  }
+
+  // Registro automático desde Google Maps (recorre municipios y guarda lo que falte)
+  const barrido = createBarrido({
+    data, lugares, now: now ?? (() => new Date()), pausa: barridoPausa ?? 250, notificar: n.notificar, audit: (e) => store.addAudit(e),
+    guardar: (actor, tipo, l) => tipo === 'farmacia'
+      ? c.catalogo.crearFarmacia(actor, { nombre: l.nombre, provincia: l.provincia, municipio: l.municipio }, l, { revisado: true })
+      : t.crearEstablecimiento(actor, { nombre: l.nombre, tipo, provincia: l.provincia, municipio: l.municipio, direccion: l.direccion, telefono: l.telefono, lat: l.lat, lng: l.lng, placeId: l.placeId }, { fuente: 'google', verificado: true }),
+  });
+  const puedeBarrido = (me) => {
+    if (!me || me.status !== 'activo' || !['administrador', 'gerencia'].includes(me.role)) throw new AuthError(403, 'Solo la administración o la gerencia pueden usar el registro automático.');
+  };
+  function alcanceBarrido(src) {
+    const provincia = src.provincia || 'todas'; const municipio = src.municipio || null;
+    const { provincias, municipios, tipos } = t.division();
+    if (provincia !== 'todas' && !provincias.includes(provincia)) throw new AuthError(422, 'Elige una provincia oficial.');
+    if (municipio && (provincia === 'todas' || !municipios[provincia].includes(municipio))) throw new AuthError(422, 'Ese municipio no pertenece a la provincia.');
+    if (src.tipo !== 'farmacia' && !tipos[src.tipo]) throw new AuthError(422, 'Elige el tipo de establecimiento.');
+    return { tipo: src.tipo, provincia, municipio };
   }
 
   function send(res, status, body, origin, raw) {
@@ -184,6 +204,18 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/territorio/google/estado', () => ({ activo: lugares.activo }));
   ruta('GET', '/api/territorio/google/buscar', async ({ me, q }) => buscarGoogle(me, q));
   ruta('POST', '/api/territorio/google/agregar', async ({ me, body }) => [201, await agregarGoogle(me, body)]);
+  ruta('GET', '/api/territorio/google/barrido', async ({ me }) => { puedeBarrido(me); return { item: await barrido.estado() }; });
+  ruta('GET', '/api/territorio/google/barrido/estimar', async ({ me, q }) => {
+    puedeBarrido(me); const a = alcanceBarrido({ tipo: q.get('tipo'), provincia: q.get('provincia'), municipio: q.get('municipio') });
+    return { item: barrido.estimar(a) };
+  });
+  ruta('POST', '/api/territorio/google/barrido', async ({ me, body }) => {
+    puedeBarrido(me);
+    if (!lugares.activo) throw new AuthError(503, 'La búsqueda en Google Maps no está conectada todavía (falta MAPS_API_KEY).');
+    const a = alcanceBarrido(body ?? {});
+    try { return [202, { item: await barrido.iniciar(me, { ...a, continuar: body.continuar === true }) }]; }
+    catch (err) { throw new AuthError(err.status ?? 500, err.message); }
+  });
 
   // Rutas y viáticos
   ruta('GET', '/api/viaticos/combustibles', () => ({ items: Object.entries(COMBUSTIBLE_LABEL).map(([value, label]) => ({ value, label })) }));

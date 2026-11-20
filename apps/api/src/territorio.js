@@ -14,7 +14,7 @@ const sinAcentos = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '
 
 // Nombres comunes → nombre oficial
 const ALIAS_PROV = { montecristi: 'Monte Cristi', dn: 'Distrito Nacional', 'd n': 'Distrito Nacional', 'distrito': 'Distrito Nacional', salcedo: 'Hermanas Mirabal', baoruco: 'Bahoruco', 'santiago de los caballeros': 'Santiago', 'samana': 'Samaná' };
-const ALIAS_MUN = {
+export const ALIAS_MUN = {
   santiago: 'Santiago de los Caballeros', 'la vega': 'Concepción de La Vega', higuey: 'Salvaleón de Higüey', 'puerto plata': 'San Felipe de Puerto Plata',
   barahona: 'Santa Cruz de Barahona', 'el seibo': 'Santa Cruz de El Seibo', 'monte cristi': 'San Fernando de Monte Cristi', montecristi: 'San Fernando de Monte Cristi',
   samana: 'Santa Bárbara de Samaná', sabaneta: 'San Ignacio de Sabaneta', azua: 'Azua de Compostela', 'san juan': 'San Juan de la Maguana',

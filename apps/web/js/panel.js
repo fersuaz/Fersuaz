@@ -787,6 +787,58 @@ async function buscadorGoogle(tipos, alAgregar) {
   return f;
 }
 
+/** Registro automático: el sistema recorre los municipios y guarda lo que Google encuentre (solo administración y gerencia). */
+async function registroAutomatico(tipos) {
+  const [{ activo }, div, st] = await Promise.all([api('GET', '/api/territorio/google/estado'), division(), api('GET', '/api/territorio/google/barrido')]);
+  if (!activo) return null;
+  const ft = campo('tipo', 'Qué registrar', { options: tipos.map(([value, label]) => ({ value, label })), value: tipos[0][0] });
+  const fp = campo('provincia', 'Dónde', { options: [{ value: 'todas', label: 'Todo el país (158 municipios)' }, ...div.provincias.map((p) => ({ value: p, label: p }))], value: 'todas' });
+  const fm = campo('municipio', 'Municipio', { options: [], placeholder: 'Todos los municipios' });
+  const sp = fp.querySelector('select'); const sm = fm.querySelector('select');
+  const llenar = () => { const l = div.municipios[sp.value] ?? []; sm.replaceChildren(h('option', { value: '' }, 'Todos los municipios'), ...l.map((m) => h('option', { value: m }, m))); sm.disabled = !l.length; };
+  sp.addEventListener('change', llenar); llenar();
+  const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar automáticamente');
+  const panel = h('div', { 'aria-live': 'polite' });
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Registro automático desde Google Maps'),
+    h('p', { class: 'hint' }, 'El sistema recorre cada municipio, busca en Google Maps y guarda solo lo que falte, con dirección, teléfono y ubicación. No duplica lo ya registrado. Puedes salir de esta pantalla mientras trabaja; te avisa en la campana al terminar.'),
+    h('div', { class: 'form-fila' }, ft, fp, fm), h('div', { class: 'acciones' }, b), panel);
+  const nombreTipo = (t) => (tipos.find(([v]) => v === t)?.[1] ?? t).toLowerCase();
+  const pintar = (e) => {
+    if (!e) { panel.replaceChildren(); b.disabled = false; return; }
+    const zona = e.alcance.municipio ?? (e.alcance.provincia === 'todas' ? 'todo el país' : e.alcance.provincia);
+    const hechos = e.hechos?.length ?? 0;
+    const cifras = h('p', {}, `${fmtN.format(e.agregados)} nuevos · ${fmtN.format(e.existentes)} ya estaban · ${fmtN.format(e.consultas)} consultas a Google${e.descartados ? ` · ${fmtN.format(e.descartados)} de otra provincia (no se guardaron)` : ''}${e.errores ? ` · ${fmtN.format(e.errores)} con error` : ''}`);
+    const titulo = { en_curso: `Registrando ${nombreTipo(e.tipo)} en ${zona}…`, terminado: `Terminado: ${nombreTipo(e.tipo)} en ${zona}`, interrumpido: `Se interrumpió: ${nombreTipo(e.tipo)} en ${zona}`, error: `Se detuvo: ${nombreTipo(e.tipo)} en ${zona}` }[e.estado];
+    const partes = [h('strong', {}, titulo),
+      h('progress', { max: e.total, value: hechos, style: 'width:100%;height:.75rem;accent-color:var(--marino)', 'aria-label': 'Avance del registro' }),
+      h('p', { class: 'hint' }, `${fmtN.format(hechos)} de ${fmtN.format(e.total)} municipios${e.actual ? `. Ahora: ${e.actual}` : ''}`), cifras];
+    if (e.mensajes?.length && e.estado !== 'terminado') partes.push(h('p', { class: 'hint', style: 'color:var(--alerta)' }, e.mensajes.at(-1)));
+    if (['interrumpido', 'error'].includes(e.estado)) partes.push(h('button', { class: 'btn-sec', type: 'button', onclick: () => lanzar({ tipo: e.tipo, provincia: e.alcance.provincia, municipio: e.alcance.municipio, continuar: true }) }, 'Continuar donde quedó'));
+    panel.replaceChildren(h('div', { class: 'tarjeta', style: 'margin-top:1rem;background:var(--panel);display:grid;gap:.5rem' }, ...partes));
+    b.disabled = e.estado === 'en_curso';
+  };
+  const seguir = async () => {
+    if (!f.isConnected) return;
+    try { const { item } = await api('GET', '/api/territorio/google/barrido'); pintar(item); if (item?.estado === 'en_curso') setTimeout(seguir, 3000); } catch { setTimeout(seguir, 6000); }
+  };
+  async function lanzar(datos) {
+    try { const { item } = await api('POST', '/api/territorio/google/barrido', datos); pintar(item); setTimeout(seguir, 2000); }
+    catch (err) { const a = h('div', { role: 'status' }); estado(a, 'error', err.message); panel.replaceChildren(a); }
+  }
+  f.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const datos = { tipo: f.tipo.value, provincia: sp.value, municipio: sm.value || undefined };
+    const q = new URLSearchParams(Object.entries(datos).filter(([, v]) => v));
+    const est = await enviar(f, b, () => api('GET', `/api/territorio/google/barrido/estimar?${q}`));
+    if (!est) return;
+    const zona = datos.municipio ?? (datos.provincia === 'todas' ? 'todo el país' : datos.provincia);
+    const ok = await confirmar('Registrar automáticamente', `Se buscarán ${nombreTipo(datos.tipo)} en ${zona}: ${fmtN.format(est.item.municipios)} municipio(s), hasta ${fmtN.format(est.item.consultasMaximas)} consultas a Google (normalmente menos). Google cobra cada consulta según tu plan de Google Cloud.`, { okTexto: 'Empezar' });
+    if (ok) lanzar(datos);
+  });
+  pintar(st.item); if (st.item?.estado === 'en_curso') setTimeout(seguir, 3000);
+  return f;
+}
+
 V.catalogo = async () => {
   const ver = param('ver') || 'medicamentos';
   const seg = segmentos('Secciones del catálogo', [['medicamentos', 'Medicamentos'], ['farmacias', 'Farmacias'], ['medicos', 'Médicos']], ver, (id) => irA('catalogo', { ver: id }));
@@ -829,7 +881,7 @@ V.catalogo = async () => {
     bloques.push(h('div', { style: 'display:flex;justify-content:space-between;align-items:end;gap:1rem;flex-wrap:wrap;margin:1.5rem 0 .75rem' }, h('h2', { style: 'margin:0;font-size:1.2rem' }, `Farmacias (${fmtN.format(lista.length)})`), h('div', { style: 'min-width:14rem' }, filtro)),
       tabla([{ t: 'Nombre', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
         { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('farmacias', x.id) }, 'Validar') : '' }], lista, ['Aún no hay farmacias', 'Agrégalas a mano, impórtalas desde Excel o búscalas en Google Maps.']));
-    if (GESTION_T()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, importador('farmacias', 'Importar farmacias', 'Provincia y municipio deben ser oficiales. Las que ya existen en el mismo municipio no se duplican.', router), await buscadorGoogle([['farmacia', 'Farmacias']], null)));
+    if (GESTION_T()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, importador('farmacias', 'Importar farmacias', 'Provincia y municipio deben ser oficiales. Las que ya existen en el mismo municipio no se duplican.', router), await buscadorGoogle([['farmacia', 'Farmacias']], null), ES_GER() ? await registroAutomatico([['farmacia', 'Farmacias']]) : null));
   } else {
     const mds = await api('GET', '/api/catalogo/medicos');
     bloques.push(tabla([{ t: 'Nombre', v: (x) => x.nombre }, { t: 'Especialidad', v: (x) => x.especialidad }, { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
@@ -863,7 +915,7 @@ V.establecimientos = async () => {
     tabla([{ t: 'Nombre', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] }, { t: 'Tipo', v: (x) => div.tipos[x.tipo] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` },
       { t: 'Estado', v: (x) => chip(x.estado) }, { t: '', v: (x) => GESTION_T() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar(x) }, 'Validar') : '' }],
     items, ['No hay establecimientos con estos filtros', 'Regístralos aquí; tu supervisor también puede importarlos desde Excel.'])];
-  if (GESTION_T()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, importador('establecimientos', 'Importar clínicas, hospitales, UNAP y centros', 'Tipo, nombre, provincia y municipio son obligatorios. Los que ya existen en el mismo municipio no se duplican.', router), await buscadorGoogle(tipos, null)));
+  if (GESTION_T()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, importador('establecimientos', 'Importar clínicas, hospitales, UNAP y centros', 'Tipo, nombre, provincia y municipio son obligatorios. Los que ya existen en el mismo municipio no se duplican.', router), await buscadorGoogle(tipos, null), ES_GER() ? await registroAutomatico(tipos) : null));
   return vista('Establecimientos', 'Clínicas, hospitales, UNAP y centros de primer nivel por municipio. Se usan como paradas exactas de las jornadas.', ...bloques);
 };
 
