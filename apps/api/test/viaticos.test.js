@@ -357,3 +357,24 @@ test('panel de inicio: cada rol ve su resumen con cifras reales', async () => {
     assert.equal((await call('GET', '/api/usuarios/dependientes', null, t.gerente)).body.items[0].farmacia.nombre, 'Farmacia Ejemplo Central');
   } finally { server.close(); }
 });
+
+test('no es un centro de salud: se descarta, sale de zona y propuesta, y se puede restaurar', async () => {
+  const { server, call, t, id } = await setup();
+  try {
+    const data = setup.data;
+    const malo = await data.insert('establecimientos', { tipo: 'clinica', nombre: '5 de mayo #258', provincia: 'Espaillat', municipio: 'Moca', estado: 'validado', fuente: 'google' });
+    const rev = (await call('GET', '/api/territorio/establecimientos?ver=revisar', null, t.gerente)).body.items;
+    assert.deepEqual(rev.map((x) => x.nombre), ['5 de mayo #258']);
+    assert.equal((await call('POST', '/api/territorio/establecimientos/descartar', { ids: [malo.id] }, t.rep)).status, 403);
+    assert.equal((await call('POST', '/api/territorio/establecimientos/descartar', { ids: [] }, t.gerente)).status, 422);
+    const d = await call('POST', '/api/territorio/establecimientos/descartar', { ids: [malo.id, malo.id], motivo: 'Es una dirección (Ejemplo)' }, t.gerente);
+    assert.equal(d.body.item.descartados, 1);
+    assert.ok(!(await call('GET', '/api/territorio/establecimientos', null, t.gerente)).body.items.some((x) => x.id === malo.id));
+    assert.equal((await call('GET', '/api/territorio/establecimientos?ver=descartados', null, t.gerente)).body.items[0].descarteMotivo, 'Es una dirección (Ejemplo)');
+    assert.ok(!(await call('GET', `/api/territorio/zonas/${id.rep}/lugares`, null, t.rep)).body.establecimientos.some((x) => x.id === malo.id));
+    const c = await call('POST', '/api/cronogramas', { representanteId: id.rep, fechas: ['2026-11-23'], lugares: [{ refTipo: 'establecimiento', refId: malo.id }] }, t.admin);
+    assert.equal(c.status, 422, 'un descartado no se puede programar');
+    assert.equal((await call('POST', `/api/territorio/establecimientos/${malo.id}/restaurar`, null, t.gerente)).body.item.estado, 'validado');
+    assert.ok((await call('GET', `/api/territorio/zonas/${id.rep}/lugares`, null, t.rep)).body.establecimientos.some((x) => x.id === malo.id));
+  } finally { server.close(); }
+});

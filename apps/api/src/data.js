@@ -17,7 +17,7 @@ export const COLECCIONES = {
   perfiles: { tabla: 'perfiles_viatico', campos: ['representanteId', 'residencia', 'vehiculo', 'tarifaAlimentacion', 'reembolsoPorKm', 'topeCombustible', 'actualizadoPor'], json: ['residencia', 'vehiculo'] },
   precios: { tabla: 'precios_combustible', campos: ['combustible', 'precioGalon', 'vigenteDesde', 'fuente', 'enlace', 'registradoPor'], json: [] },
   jornadas: { tabla: 'jornadas', campos: ['representanteId', 'cronogramaId', 'fecha', 'paradas', 'kmEstimados', 'kmFuente', 'kmReales', 'conAlimentacion', 'hospedaje', 'peajes', 'estacionamiento', 'otros', 'estado'], json: ['paradas', 'hospedaje'] },
-  establecimientos: { tabla: 'establecimientos', campos: ['tipo', 'nombre', 'provincia', 'municipio', 'sector', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'fuente', 'estado', 'creadoPor'], json: [] },
+  establecimientos: { tabla: 'establecimientos', campos: ['tipo', 'nombre', 'provincia', 'municipio', 'sector', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'fuente', 'estado', 'creadoPor', 'descarteMotivo', 'descartadoPor'], json: [] },
   zonas: { tabla: 'zonas_representante', campos: ['representanteId', 'provincias', 'municipios', 'actualizadoPor'], json: ['provincias', 'municipios'] },
   hoteles: { tabla: 'hoteles', campos: ['nombre', 'provincia', 'municipio', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'calificacion', 'fuente', 'precioNoche', 'requisitos', 'notas', 'verificadoPor', 'verificadoEn', 'estado', 'creadoPor'], json: ['requisitos'] },
   preregistros: { tabla: 'preregistros', campos: ['email', 'nombre', 'telefono', 'posicion', 'provincias', 'estado', 'usuarioId', 'creadoPor'], json: ['provincias'] },

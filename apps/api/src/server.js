@@ -213,7 +213,9 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   // Territorio, establecimientos, zonas, pre-registro e importación
   ruta('GET', '/api/territorio/division', () => t.division(), { auth: false });
   ruta('GET', '/api/territorio/mis-provincias', async ({ me }) => { const z = await t.zonaActor(me); return { items: await t.provinciasDe(me), municipios: z?.municipios ?? null }; });
-  ruta('GET', '/api/territorio/establecimientos', async ({ me, q }) => ({ items: await t.listarEstablecimientos(me, { provincia: q.get('provincia') || undefined, municipio: q.get('municipio') || undefined, tipo: q.get('tipo') || undefined, q: q.get('q') || undefined }) }));
+  ruta('GET', '/api/territorio/establecimientos', async ({ me, q }) => ({ items: await t.listarEstablecimientos(me, { provincia: q.get('provincia') || undefined, municipio: q.get('municipio') || undefined, tipo: q.get('tipo') || undefined, q: q.get('q') || undefined, ver: q.get('ver') || undefined }) }));
+  ruta('POST', '/api/territorio/establecimientos/descartar', async ({ me, body }) => ({ item: await t.descartarEstablecimientos(me, body?.ids, body?.motivo) }));
+  ruta('POST', /^\/api\/territorio\/establecimientos\/([\w-]+)\/restaurar$/, async ({ me, p }) => ({ item: await t.restaurarEstablecimiento(me, p[1]) }));
   ruta('POST', '/api/territorio/establecimientos', async ({ me, body }) => [201, { item: await t.crearEstablecimiento(me, body) }]);
   ruta('POST', /^\/api\/territorio\/establecimientos\/([\w-]+)\/validar$/, async ({ me, p }) => ({ item: await t.validarEstablecimiento(me, p[1]) }));
   ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p }) => ({ item: await t.verZona(me, p[1]) }));
