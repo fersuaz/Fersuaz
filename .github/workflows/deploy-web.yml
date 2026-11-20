@@ -7,6 +7,7 @@ on:
     paths: ['apps/web/**', '.github/workflows/deploy-web.yml']
   pull_request:
     paths: ['apps/web/**']
+  workflow_dispatch:   # republicar a mano (por ejemplo, después de cambiar la variable API_URL)
 
 permissions:
   contents: read
