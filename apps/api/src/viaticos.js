@@ -107,7 +107,11 @@ export function createViaticos({ data, users, files, audit, mapas, now = () => n
 
   // ------------------------------------------------------------ jornadas (rutas)
   function validarJornada(input, e) {
-    const paradas = (Array.isArray(input.paradas) ? input.paradas : []).map((p) => ({ lugar: normalizeName(p.lugar), municipio: normalizeName(p.municipio), provincia: normalizeName(p.provincia) }));
+    const paradas = (Array.isArray(input.paradas) ? input.paradas : []).map((p) => ({
+      lugar: normalizeName(p.lugar), municipio: normalizeName(p.municipio), provincia: normalizeName(p.provincia),
+      ...(p.refId && ['establecimiento', 'farmacia'].includes(p.refTipo) ? { refTipo: p.refTipo, refId: String(p.refId) } : {}),
+      ...(Number.isFinite(p.lat) && Number.isFinite(p.lng) ? { lat: p.lat, lng: p.lng } : {}),
+    }));
     if (!paradas.length) e.paradas = 'Agrega al menos una parada.';
     paradas.forEach((p, i) => {
       if (!p.lugar) e[`paradas.${i}.lugar`] = 'Escribe el lugar.';
@@ -135,6 +139,7 @@ export function createViaticos({ data, users, files, audit, mapas, now = () => n
     permitir(esRep(actor), 'Solo los representantes planifican jornadas.');
     const e = {};
     if (!esFechaISO(input.fecha)) e.fecha = 'Elige la fecha de la jornada.';
+    input = await enriquecerParadas(input);
     let entrada = input;
     if (input.kmFuente === 'google') {
       // Los km "del mapa" se recalculan en el servidor: nunca se acepta la cifra que envía el navegador.
@@ -184,12 +189,28 @@ export function createViaticos({ data, users, files, audit, mapas, now = () => n
     }
     throw new HttpError(404, 'Acción no válida.');
   }
+  /** Las paradas elegidas del catálogo toman nombre, zona y coordenadas de la base, no del navegador. */
+  async function enriquecerParadas(input) {
+    if (!Array.isArray(input.paradas)) return input;
+    const paradas = [];
+    for (const p of input.paradas) {
+      const { lat, lng, ...resto } = p ?? {};
+      if (p?.refId && ['establecimiento', 'farmacia'].includes(p.refTipo)) {
+        const x = await data.get(p.refTipo === 'farmacia' ? 'farmacias' : 'establecimientos', p.refId);
+        if (!x) throw new HttpError(422, 'Una de las paradas ya no existe en el catálogo.');
+        paradas.push({ refTipo: p.refTipo, refId: x.id, lugar: x.nombre, municipio: x.municipio, provincia: x.provincia, ...(x.lat != null && x.lng != null ? { lat: Number(x.lat), lng: Number(x.lng) } : {}) });
+      } else paradas.push(resto);
+    }
+    return { ...input, paradas };
+  }
+
   /** Calcula km por carretera con el proveedor de mapas: residencia → paradas → residencia. */
   async function calcularKm(actor, input) {
     permitir(esRep(actor), 'Solo los representantes calculan sus rutas.');
     if (!mapas?.activo) throw new HttpError(503, 'El proveedor de mapas no está conectado. Escribe los km a mano.');
     const perfil = await perfilDe(actor.id);
     if (!perfil?.residencia?.municipio) throw new HttpError(409, 'Tu perfil no tiene residencia registrada. Pide a tu supervisor que la complete.');
+    input = await enriquecerParadas(input);
     const e = {}; const { paradas } = validarJornada({ ...input, kmEstimados: 0 }, e);
     delete e.kmEstimados;
     if (Object.keys(e).length) invalido(e);

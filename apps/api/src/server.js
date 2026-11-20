@@ -7,6 +7,8 @@ import { createAuthService, AuthError } from './auth.js';
 import { createComercial } from './comercial.js';
 import { createViaticos, COMBUSTIBLE_LABEL } from './viaticos.js';
 import { SinMapas, crearMapas } from './mapas.js';
+import { createTerritorio } from './territorio.js';
+import { SinLugares, crearLugares } from './lugares.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -26,10 +28,41 @@ async function readJson(req, limit = MAX_BODY) {
 
 const publico = ({ passwordHash, ...u }) => u;
 
-export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), sessionSecret, allowedOrigins = [], now }) {
-  const auth = createAuthService(store);
+export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), sessionSecret, allowedOrigins = [], now }) {
+  const t = createTerritorio({ data, users: store, audit: (e) => store.addAudit(e), now });
+  const auth = createAuthService(store, { preregistro: { buscar: t.buscarPreregistro, confirmar: t.confirmarPreregistro } });
   const c = createComercial({ data, users: store, files, audit: (e) => store.addAudit(e), now });
   const v = createViaticos({ data, users: store, files, mapas, audit: (e) => store.addAudit(e), now });
+
+  const GESTION_LUGARES = ['administrador', 'gerencia', 'supervisor'];
+  const sinAcento = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  async function buscarGoogle(me, q) {
+    if (!me || me.status !== 'activo' || !GESTION_LUGARES.includes(me.role)) throw new AuthError(403, 'No tienes permiso para esta acción.');
+    if (!lugares.activo) throw new AuthError(503, 'La búsqueda en Google Maps no está conectada todavía (falta MAPS_API_KEY).');
+    const { provincias, municipios, tipos } = t.division();
+    const provincia = q.get('provincia'); const municipio = q.get('municipio'); const tipo = q.get('tipo');
+    if (!provincias.includes(provincia) || !municipios[provincia].includes(municipio)) throw new AuthError(422, 'Elige provincia y municipio.');
+    if (tipo !== 'farmacia' && !tipos[tipo]) throw new AuthError(422, 'Elige el tipo de establecimiento.');
+    let res;
+    try { res = await lugares.buscar({ tipo, municipio, provincia, texto: (q.get('texto') || '').slice(0, 60) }); } catch (err) { throw new AuthError(502, err.message); }
+    const col = tipo === 'farmacia' ? 'farmacias' : 'establecimientos';
+    const existentes = await data.list(col, { municipio });
+    const ids = new Set(existentes.map((x) => x.placeId).filter(Boolean)); const nombres = new Set(existentes.map((x) => sinAcento(x.nombre)));
+    return { items: res.map((r) => ({ ...r, registrado: ids.has(r.placeId) || nombres.has(sinAcento(r.nombre)) })) };
+  }
+  async function agregarGoogle(me, body) {
+    if (!me || me.status !== 'activo' || !GESTION_LUGARES.includes(me.role)) throw new AuthError(403, 'No tienes permiso para esta acción.');
+    if (!lugares.activo) throw new AuthError(503, 'La búsqueda en Google Maps no está conectada todavía.');
+    let d;
+    try { d = await lugares.detalle(body.placeId); } catch (err) { throw new AuthError(502, err.message); }
+    if (!d) throw new AuthError(404, 'Google no encontró ese lugar.');
+    const base = { nombre: d.nombre, provincia: body.provincia, municipio: body.municipio, direccion: d.direccion, telefono: d.telefono, lat: d.lat, lng: d.lng, placeId: d.placeId };
+    if (body.tipo === 'farmacia') {
+      const item = await c.catalogo.crearFarmacia(me, { nombre: d.nombre, provincia: body.provincia, municipio: body.municipio }, d);
+      return { item };
+    }
+    return { item: await t.crearEstablecimiento(me, { ...base, tipo: body.tipo }, { fuente: 'google', verificado: true }) };
+  }
 
   function send(res, status, body, origin, raw) {
     const headers = { 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' };
@@ -57,7 +90,10 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
 
   ruta('GET', '/api/health', () => ({ ok: true }), { auth: false });
   ruta('GET', '/api/auth/options', () => ({ roles: SELF_REGISTERABLE.map((r) => ({ value: r, label: ROLE_LABELS[r] })), positions: POSITIONS }), { auth: false });
-  ruta('POST', '/api/auth/register', async ({ body }) => [201, { user: await auth.register(body), message: 'Solicitud recibida. Te avisaremos cuando la gerencia la apruebe.' }], { auth: false });
+  ruta('POST', '/api/auth/register', async ({ body }) => {
+    const user = await auth.register(body);
+    return [201, { user, message: user.status === 'activo' ? 'Tu cuenta ya está activa: la gerencia te había pre-registrado. Inicia sesión.' : 'Solicitud recibida. Te avisaremos cuando la gerencia la apruebe.' }];
+  }, { auth: false });
   ruta('POST', '/api/auth/login', async ({ body }) => {
     const user = await auth.login(body.email, body.password);
     return { user, token: signSession({ sub: user.id, role: user.role }, sessionSecret) };
@@ -101,6 +137,23 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/alertas', async ({ me, q }) => ({ umbral: await c.promotoras.umbral(), items: await c.promotoras.misAlertas(me, q.get('mes') || undefined) }));
   ruta('POST', '/api/alertas/umbral', async ({ me, body }) => ({ item: await c.promotoras.configurarUmbral(me, body.umbral) }));
   ruta('GET', '/api/reportes/recetas', async ({ me, q }) => c.reporteRecetas(me, { mes: q.get('mes'), agrupar: q.get('agrupar') }));
+
+  // Territorio, establecimientos, zonas, pre-registro e importación
+  ruta('GET', '/api/territorio/division', () => t.division(), { auth: false });
+  ruta('GET', '/api/territorio/mis-provincias', async ({ me }) => ({ items: await t.provinciasDe(me) }));
+  ruta('GET', '/api/territorio/establecimientos', async ({ me, q }) => ({ items: await t.listarEstablecimientos(me, { provincia: q.get('provincia') || undefined, municipio: q.get('municipio') || undefined, tipo: q.get('tipo') || undefined, q: q.get('q') || undefined }) }));
+  ruta('POST', '/api/territorio/establecimientos', async ({ me, body }) => [201, { item: await t.crearEstablecimiento(me, body) }]);
+  ruta('POST', /^\/api\/territorio\/establecimientos\/([\w-]+)\/validar$/, async ({ me, p }) => ({ item: await t.validarEstablecimiento(me, p[1]) }));
+  ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p }) => ({ item: await t.verZona(me, p[1]) }));
+  ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await t.asignarZona(me, p[1], body.provincias) }));
+  ruta('GET', '/api/territorio/preregistros', async ({ me }) => ({ items: await t.listarPreregistros(me) }));
+  ruta('POST', /^\/api\/territorio\/preregistros\/([\w-]+)\/anular$/, async ({ me, p }) => ({ item: await t.anularPreregistro(me, p[1]) }));
+  ruta('POST', /^\/api\/importar\/(medicamentos|farmacias|establecimientos|representantes)$/, async ({ me, p, body }) => t.importar(me, p[1], body), { limite: 12 * 1024 * 1024 });
+  ruta('GET', /^\/api\/catalogo\/medicamentos\/([\w-]+)\/precios$/, async ({ me, p }) => ({ items: await t.historialPrecio(me, p[1]) }));
+  // Búsqueda en Google Maps (solo gestión, cuesta por consulta)
+  ruta('GET', '/api/territorio/google/estado', () => ({ activo: lugares.activo }));
+  ruta('GET', '/api/territorio/google/buscar', async ({ me, q }) => buscarGoogle(me, q));
+  ruta('POST', '/api/territorio/google/agregar', async ({ me, body }) => [201, await agregarGoogle(me, body)]);
 
   // Rutas y viáticos
   ruta('GET', '/api/viaticos/combustibles', () => ({ items: Object.entries(COMBUSTIBLE_LABEL).map(([value, label]) => ({ value, label })) }));
@@ -167,6 +220,6 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   else { store = new MemoryStore(); data = new MemoryData(); console.warn('⚠ Sin DATABASE_URL: usando memoria (solo desarrollo, los datos se pierden).'); }
   const secret = SESSION_SECRET ?? (NODE_ENV === 'production' ? null : 'dev-only-secret-change-me-0123456789abcdef');
   if (!secret) { console.error('SESSION_SECRET es obligatorio.'); process.exit(1); }
-  const app = createApp({ store, data, files: crearArchivos(process.env, UPLOAD_DIR), mapas: crearMapas(), sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
+  const app = createApp({ store, data, files: crearArchivos(process.env, UPLOAD_DIR), mapas: crearMapas(), lugares: crearLugares(), sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
   createServer(app).listen(PORT, () => console.log(`API FERSUAZ en :${PORT}`));
 }

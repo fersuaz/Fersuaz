@@ -5,8 +5,8 @@ import { randomUUID } from 'node:crypto';
  * Cada una tiene tabla propia en PostgreSQL (migración 002). `json` = columnas JSONB.
  */
 export const COLECCIONES = {
-  medicamentos: { tabla: 'medicamentos', campos: ['nombre', 'linea', 'presentacion', 'activo'], json: [] },
-  farmacias: { tabla: 'farmacias', campos: ['nombre', 'provincia', 'municipio', 'sector', 'estado', 'creadoPor'], json: [] },
+  medicamentos: { tabla: 'medicamentos', campos: ['nombre', 'linea', 'presentacion', 'precio', 'activo'], json: [] },
+  farmacias: { tabla: 'farmacias', campos: ['nombre', 'provincia', 'municipio', 'sector', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'fuente', 'estado', 'creadoPor'], json: [] },
   medicos: { tabla: 'medicos', campos: ['nombre', 'especialidad', 'centro', 'provincia', 'municipio', 'estado', 'creadoPor'], json: [] },
   vouchers: { tabla: 'vouchers', campos: ['dependienteId', 'farmacia', 'referencia', 'fecha', 'periodo', 'items', 'total', 'estado', 'decididoPor', 'motivo'], json: ['items'] },
   cierres: { tabla: 'cierres_comision', campos: ['dependienteId', 'periodo', 'desde', 'hasta', 'ventas', 'porcentaje', 'comision', 'voucherIds', 'cerradoPor'], json: ['voucherIds'] },
@@ -17,6 +17,10 @@ export const COLECCIONES = {
   perfiles: { tabla: 'perfiles_viatico', campos: ['representanteId', 'residencia', 'vehiculo', 'tarifaAlimentacion', 'reembolsoPorKm', 'actualizadoPor'], json: ['residencia', 'vehiculo'] },
   precios: { tabla: 'precios_combustible', campos: ['combustible', 'precioGalon', 'vigenteDesde', 'registradoPor'], json: [] },
   jornadas: { tabla: 'jornadas', campos: ['representanteId', 'fecha', 'paradas', 'kmEstimados', 'kmFuente', 'kmReales', 'conAlimentacion', 'hospedaje', 'peajes', 'estacionamiento', 'otros', 'estado'], json: ['paradas', 'hospedaje'] },
+  establecimientos: { tabla: 'establecimientos', campos: ['tipo', 'nombre', 'provincia', 'municipio', 'sector', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'fuente', 'estado', 'creadoPor'], json: [] },
+  zonas: { tabla: 'zonas_representante', campos: ['representanteId', 'provincias', 'actualizadoPor'], json: ['provincias'] },
+  preregistros: { tabla: 'preregistros', campos: ['email', 'nombre', 'telefono', 'posicion', 'provincias', 'estado', 'usuarioId', 'creadoPor'], json: ['provincias'] },
+  preciosMedicamento: { tabla: 'precios_medicamento', campos: ['medicamentoId', 'precio', 'vigenteDesde', 'fuente', 'registradoPor'], json: [] },
   presupuestos: { tabla: 'presupuestos_viatico', campos: ['representanteId', 'mes', 'detalle', 'supuestos', 'total', 'estado', 'montoAprobado', 'aprobadoPor', 'motivo', 'desembolsos', 'gastos', 'liquidacion'], json: ['detalle', 'supuestos', 'desembolsos', 'gastos', 'liquidacion'] },
 };
 
@@ -65,7 +69,7 @@ export class PgData {
     for (const f of c.campos) {
       let v = r[snake(f)];
       if (v instanceof Date) v = v.toISOString().slice(0, 10);
-      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision', 'precioGalon', 'kmEstimados', 'kmReales', 'peajes', 'estacionamiento', 'otros', 'tarifaAlimentacion', 'reembolsoPorKm', 'montoAprobado'].includes(f)) v = Number(v);
+      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision', 'precioGalon', 'kmEstimados', 'kmReales', 'peajes', 'estacionamiento', 'otros', 'tarifaAlimentacion', 'reembolsoPorKm', 'montoAprobado', 'precio', 'lat', 'lng'].includes(f)) v = Number(v);
       out[f] = v;
     }
     return out;

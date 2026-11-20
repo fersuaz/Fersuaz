@@ -26,7 +26,8 @@ export class GoogleRoutes {
    */
   async ruta(origen, paradas, { regresar = true } = {}) {
     if (!paradas.length) throw new Error('No hay paradas para calcular.');
-    const pts = [origen, ...paradas, ...(regresar ? [origen] : [])].map((p) => ({ address: direccion(p) }));
+    const punto = (p) => (Number.isFinite(p.lat) && Number.isFinite(p.lng) ? { location: { latLng: { latitude: p.lat, longitude: p.lng } } } : { address: direccion(p) });
+    const pts = [origen, ...paradas, ...(regresar ? [origen] : [])].map(punto);
     const body = {
       origin: pts[0], destination: pts.at(-1), intermediates: pts.slice(1, -1),
       travelMode: 'DRIVE', routingPreference: 'TRAFFIC_UNAWARE', languageCode: 'es-419', regionCode: 'DO', units: 'METRIC',

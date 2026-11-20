@@ -6,6 +6,7 @@ import { calcularComisionVouchers, evaluarAlertaInventario } from './calculos.js
 import { esFechaISO, hoyRD, periodoDe, rangoDe } from './periodos.js';
 import { normalizeName } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
+import { provinciaOficial, municipioOficial } from './territorio.js';
 
 const GESTION = ['administrador', 'gerencia', 'supervisor', 'finanzas'];
 const esActivo = (u) => u && u.status === STATUS.ACTIVO;
@@ -64,19 +65,28 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
     },
     async listarMedicamentos() { return (await data.list('medicamentos')).filter((m) => m.activo); },
 
-    async crearFarmacia(actor, input) {
+    /** `google`: datos verificados en el servidor (coordenadas, place id); nunca vienen del navegador. */
+    async crearFarmacia(actor, input, google = null) {
       permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor']) || esVendedor(actor));
       const e = {};
-      const nombre = texto(e, 'nombre', input.nombre, { etiqueta: 'El nombre' });
-      const provincia = texto(e, 'provincia', input.provincia, { etiqueta: 'La provincia' });
-      const municipio = texto(e, 'municipio', input.municipio, { etiqueta: 'El municipio' });
+      const nombre = texto(e, 'nombre', input.nombre, { etiqueta: 'El nombre', max: 160 });
+      const provincia = provinciaOficial(input.provincia);
+      if (!provincia) e.provincia = 'Elige una provincia oficial.';
+      const municipio = provincia && municipioOficial(provincia, input.municipio);
+      if (provincia && !municipio) e.municipio = `Ese municipio no pertenece a ${provincia}.`;
       const sector = texto(e, 'sector', input.sector, { etiqueta: 'El sector', requerido: false });
+      const direccion = texto(e, 'direccion', input.direccion, { etiqueta: 'La dirección', requerido: false, max: 200 });
+      const telefono = texto(e, 'telefono', input.telefono, { etiqueta: 'El teléfono', requerido: false, max: 30 });
       if (Object.keys(e).length) invalido(e);
-      const dup = (await data.list('farmacias')).find((f) => f.nombre.toLowerCase() === nombre.toLowerCase() && f.municipio.toLowerCase() === municipio.toLowerCase());
+      const sin = (x) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const dup = (await data.list('farmacias')).find((f) => (sin(f.nombre) === sin(nombre) && f.municipio === municipio) || (google?.placeId && f.placeId === google.placeId));
       if (dup) throw new HttpError(409, 'Esa farmacia ya está registrada en ese municipio.', { nombre: 'Ya existe en ese municipio.' });
-      const estado = tieneRol(actor, ['administrador', 'gerencia']) ? 'validada' : 'pendiente';
-      const f = await data.insert('farmacias', { nombre, provincia, municipio, sector, estado, creadoPor: actor.id });
-      await audit({ actorId: actor.id, action: 'farmacia_creada', entity: 'farmacia', entityId: f.id, after: f });
+      const estado = tieneRol(actor, ['administrador', 'gerencia', 'supervisor']) ? 'validada' : 'pendiente';
+      const f = await data.insert('farmacias', {
+        nombre, provincia, municipio, sector, direccion: direccion ?? google?.direccion ?? null, telefono: telefono ?? google?.telefono ?? null,
+        lat: google?.lat ?? null, lng: google?.lng ?? null, placeId: google?.placeId ?? null, fuente: google ? 'google' : 'manual', estado, creadoPor: actor.id,
+      });
+      await audit({ actorId: actor.id, action: 'farmacia_creada', entity: 'farmacia', entityId: f.id, after: { nombre, municipio, fuente: f.fuente } });
       return f;
     },
     async listarFarmacias(where = {}) { return data.list('farmacias', where); },
