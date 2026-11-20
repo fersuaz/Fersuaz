@@ -64,7 +64,7 @@ try { const m = localStorage.getItem('fersuaz.email'); if (m) { login.email.valu
 login.addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = login.querySelector('button[type="submit"]');
-  if (!login.email.value.trim() || !login.password.value) return say('status-entrar', 'error', 'Escribe tu correo y tu contraseña.');
+  if (!login.email.value.trim() || !login.password.value) return say('status-entrar', 'error', 'Escribe tu correo o usuario y tu contraseña.');
   const base = apiBase() || (['localhost', '127.0.0.1'].includes(location.hostname) ? 'http://localhost:8080' : '');
   if (!base) return say('status-entrar', 'error', 'El inicio de sesión todavía no está conectado al servidor.');
   btn.disabled = true; btn.textContent = 'Entrando…';

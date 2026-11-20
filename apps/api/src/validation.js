@@ -74,3 +74,12 @@ export function validateRegistration(input = {}) {
       : null,
   };
 }
+
+/** Regla de contraseña (la misma del registro). Devuelve el mensaje de error o null. */
+export function errorClave(password) {
+  const p = String(password ?? '');
+  if (p.length < 10) return 'La contraseña necesita al menos 10 caracteres.';
+  if (!/[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(p) || !/\d/.test(p)) return 'La contraseña debe combinar letras y números.';
+  if (p.length > 200) return 'La contraseña es demasiado larga.';
+  return null;
+}

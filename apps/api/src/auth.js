@@ -1,4 +1,4 @@
-import { validateRegistration } from './validation.js';
+import { errorClave, validateRegistration } from './validation.js';
 import { hashPassword, verifyPassword } from './security.js';
 import { STATUS, canApprove } from './roles.js';
 
@@ -35,13 +35,28 @@ export function createAuthService(store, { preregistro, farmaciaPara } = {}) {
       return publicUser(user);
     },
 
+    /** Entra con el correo o con el usuario que creó el administrador (ej. jperez). */
     async login(email, password) {
-      const user = await store.findUserByEmail(String(email ?? '').trim().toLowerCase());
+      const id = String(email ?? '').trim().toLowerCase();
+      const user = id.includes('@') ? await store.findUserByEmail(id) : await store.findUserByUsername?.(id);
       const valid = user && (await verifyPassword(String(password ?? ''), user.passwordHash));
-      if (!valid) throw new AuthError(401, 'Correo o contraseña incorrectos.');
+      if (!valid) throw new AuthError(401, 'Correo, usuario o contraseña incorrectos.');
       if (user.status === STATUS.PENDIENTE) throw new AuthError(403, 'Tu cuenta espera aprobación de la gerencia.');
       if (user.status !== STATUS.ACTIVO) throw new AuthError(403, 'Tu cuenta no está activa. Contacta al administrador.');
       return publicUser(user);
+    },
+
+    /** Cambio de contraseña del propio usuario (obligatorio la primera vez si la creó el administrador). */
+    async cambiarMiClave(user, actual, nueva) {
+      if (!user) throw new AuthError(401, 'Inicia sesión.');
+      const u = await store.findUserById(user.id);
+      if (!(await verifyPassword(String(actual ?? ''), u.passwordHash))) throw new AuthError(422, 'Revisa los campos marcados.', { actual: 'La contraseña actual no es correcta.' });
+      const err = errorClave(nueva);
+      if (err) throw new AuthError(422, 'Revisa los campos marcados.', { nueva: err });
+      if (String(nueva) === String(actual)) throw new AuthError(422, 'Revisa los campos marcados.', { nueva: 'Elige una contraseña distinta de la temporal.' });
+      await store.updateUser(u.id, { passwordHash: await hashPassword(String(nueva)), debeCambiarClave: false });
+      await store.addAudit({ actorId: u.id, action: 'clave_cambiada', entity: 'user', entityId: u.id });
+      return { ok: true };
     },
 
     async decide(approver, userId, approve) {

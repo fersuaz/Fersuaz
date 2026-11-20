@@ -491,7 +491,7 @@ V.solicitudes = async () => {
 V.pronto = async () => vista('Tu panel', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay módulos para tu rol todavía'), 'Pide a la gerencia que revise los permisos de tu cuenta.'));
 
 // ---------------------------------------------------------------- vistas: rutas y viáticos
-const CAT = { combustible: 'Combustible', alimentacion: 'Alimentación', hospedaje: 'Hospedaje', peajes: 'Peajes', estacionamiento: 'Estacionamiento', otros: 'Otros' };
+const CAT = { combustible: 'Combustible', transporte: 'Transporte', alimentacion: 'Alimentación', hospedaje: 'Hospedaje', peajes: 'Peajes', estacionamiento: 'Estacionamiento', otros: 'Otros' };
 const EST_P = { sin_solicitud: 'Sin solicitud', borrador: 'Borrador', solicitado: 'Solicitado', aprobado: 'Aprobado', rechazado: 'Rechazado', desembolsado: 'Desembolsado', liquidado: 'Liquidado', planificada: 'Planificada', realizada: 'Realizada', cancelada: 'Cancelada', propuesto: 'Por autorizar', reportado: 'Por revisar', aceptado: 'Aceptado' };
 const chipP = (e) => h('span', { class: `chip ${({ aprobado: 'aprobado', liquidado: 'aprobado', realizada: 'aprobado', aceptado: 'aprobado', solicitado: 'pendiente', propuesto: 'pendiente', reportado: 'pendiente', desembolsado: 'ok', rechazado: 'rechazado', cancelada: 'anulado' })[e] ?? ''}` }, EST_P[e] ?? e);
 const mesDe = () => new URLSearchParams(location.hash.split('?')[1]).get('mes') || mesActual();
@@ -740,7 +740,7 @@ V.presupuesto = async () => {
     if (c.detalle) {
       for (const a of c.avisos ?? []) bloques.push(h('div', { class: 'aviso' }, a));
       bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Presupuesto calculado'), desglose(c.detalle, c.total),
-        h('p', { class: 'hint', style: 'margin-top:1rem' }, `${c.supuestos.jornadas} jornadas, ${fmtN.format(c.supuestos.km)} km (${c.supuestos.kmTipo}), ${c.supuestos.diasAlimentacion} días de alimentación a ${RD(c.supuestos.tarifaAlimentacion)}.${c.supuestos.reembolsoPorKm ? ` Reembolso de ${RD(c.supuestos.reembolsoPorKm)} por km.` : c.supuestos.galones ? ` ${fmtN.format(c.supuestos.galones)} galones a ${c.supuestos.rendimiento} km/gal.` : ''}${c.supuestos.tope != null ? ` Tope mensual de combustible: ${RD(c.supuestos.tope)} (${c.supuestos.topeFuente === 'representante' ? 'propio' : 'global'}).` : ''} Tu salario no forma parte de este presupuesto.`),
+        h('p', { class: 'hint', style: 'margin-top:1rem' }, c.supuestos.transportePublico ? `${c.supuestos.jornadas} jornadas en transporte público: ${c.supuestos.diasDentro} día(s) dentro de tu municipio (transporte ${RD(c.supuestos.tarifas.transporteDentro)} y comida ${RD(c.supuestos.tarifas.comidaDentro)} por día) y ${c.supuestos.diasFuera} día(s) fuera (transporte ${RD(c.supuestos.tarifas.transporteFuera)} y comida ${RD(c.supuestos.tarifas.comidaFuera)} por día).${c.supuestos.tope != null ? ` Tope mensual: ${RD(c.supuestos.tope)}.` : ''} Tu salario no forma parte de este presupuesto.` : `${c.supuestos.jornadas} jornadas, ${fmtN.format(c.supuestos.km)} km (${c.supuestos.kmTipo}), ${c.supuestos.diasAlimentacion} días de alimentación a ${RD(c.supuestos.tarifaAlimentacion)}.${c.supuestos.reembolsoPorKm ? ` Reembolso de ${RD(c.supuestos.reembolsoPorKm)} por km.` : c.supuestos.galones ? ` ${fmtN.format(c.supuestos.galones)} galones a ${c.supuestos.rendimiento} km/gal.` : ''}${c.supuestos.tope != null ? ` Tope mensual de combustible: ${RD(c.supuestos.tope)} (${c.supuestos.topeFuente === 'representante' ? 'propio' : 'global'}).` : ''} Tu salario no forma parte de este presupuesto.`),
         h('div', { class: 'acciones' }, h('button', { class: 'btn', disabled: c.faltan?.length > 0, onclick: async (ev) => {
           if (!(await confirmar('Solicitar viáticos', `Enviar a la gerencia el presupuesto de ${mes} por ${RD(c.total)}. Después no podrás cambiar las jornadas del mes.`, { okTexto: 'Solicitar' }))) return;
           ev.target.disabled = true; try { await api('POST', '/api/viaticos/presupuesto/solicitar', { mes }); } catch (e) { alert(e.message); } router();
@@ -779,8 +779,9 @@ V.perfiles = async () => {
   const lista = tabla([
     { t: 'Representante', v: (r) => [r.fullName, h('small', { style: 'display:block;color:var(--texto-2)' }, r.position ?? '')] },
     { t: 'Residencia', v: (r) => r.perfil ? `${r.perfil.residencia.municipio}, ${r.perfil.residencia.provincia}` : 'Sin perfil' },
-    { t: 'Vehículo', v: (r) => r.perfil ? `${r.perfil.vehiculo.propiedad === 'propio' ? 'Propio' : 'Asignado'}, ${combs.find((c) => c.value === r.perfil.vehiculo.combustible)?.label ?? ''}${r.perfil.vehiculo.rendimiento ? `, ${r.perfil.vehiculo.rendimiento} km/gal` : ''}` : '' },
-    { t: 'Comida/día', num: true, v: (r) => r.perfil ? RD(r.perfil.tarifaAlimentacion) : '' },
+    { t: 'Vehículo', v: (r) => !r.perfil ? '' : r.perfil.vehiculo.propiedad === 'ninguno' ? 'Transporte público' : [`${r.perfil.vehiculo.propiedad === 'propio' ? 'Propio' : 'Asignado'}${r.perfil.vehiculo.marca ? `, ${[r.perfil.vehiculo.marca, r.perfil.vehiculo.modelo, r.perfil.vehiculo.anio].filter(Boolean).join(' ')}` : ''}`,
+      h('small', { style: 'display:block;color:var(--texto-2)' }, `${combs.find((c) => c.value === r.perfil.vehiculo.combustible)?.label ?? ''}${r.perfil.vehiculo.rendimiento ? `, ${fmtN.format(r.perfil.vehiculo.rendimiento)} km/gal${r.perfil.vehiculo.rendimientoFuente === 'epa' ? ' (EPA)' : ''}` : ''}`)] },
+    { t: 'Comida/día', num: true, v: (r) => !r.perfil ? '' : r.perfil.vehiculo.propiedad === 'ninguno' ? 'Por zona' : RD(r.perfil.tarifaAlimentacion) },
     { t: 'Tope combustible', num: true, v: (r) => r.perfil?.topeCombustible ? RD(r.perfil.topeCombustible) : r.perfil ? 'Global' : '' },
     { t: '', v: (r) => puede ? h('a', { class: 'btn-sec btn-peq', href: `#perfiles?rep=${r.id}` }, r.perfil ? 'Editar' : 'Configurar') : '' },
   ], reps, ['Aún no hay representantes activos', 'Aparecen aquí cuando se aprueban sus cuentas.']);
@@ -793,31 +794,37 @@ V.perfiles = async () => {
         h('p', { class: 'hint' }, 'Se aplica a todos los representantes que no tengan un tope propio. El combustible se calcula por los km del cronograma; si pasa del tope, se presupuesta el tope y se avisa. Déjalo vacío para no usar tope.'),
         h('div', { class: 'form-fila' }, campo('monto', 'Tope mensual RD$', { type: 'number', min: 0, step: 0.01, value: tg.monto ?? '', inputmode: 'decimal' })), h('div', { class: 'acciones' }, bt));
       ft.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(ft, bt, () => api('POST', '/api/viaticos/tope-global', { monto: ft.monto.value || null }))) router(); });
-      bloques.push(S('tope', 'Tope global', ft));
+      const { item: tp } = await api('GET', '/api/viaticos/tarifas-publico');
+      const bp = h('button', { class: 'btn', type: 'submit' }, 'Guardar montos');
+      const fp = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Transporte público: montos globales por día'),
+        h('p', { class: 'hint' }, 'Para quienes no tienen vehículo. Cada día del cronograma cuenta como "dentro" si todas sus paradas están en su municipio de residencia, o "fuera" si va a otro municipio. Un representante puede tener montos propios en su perfil.'),
+        h('div', { class: 'form-fila' }, ...TARIFAS_PUB.map(([k, l]) => campo(k, `${l} RD$`, { type: 'number', min: 0, step: 0.01, value: tp[k] ?? '', inputmode: 'decimal' }))), h('div', { class: 'acciones' }, bp));
+      fp.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(fp, bp, () => api('POST', '/api/viaticos/tarifas-publico', Object.fromEntries(TARIFAS_PUB.map(([k]) => [k, fp.elements[k].value || null]))))) router(); });
+      bloques.push(S('tope', 'Montos globales', fp, ft));
     }
     return vistaS('perfiles', ['lista', 'tope'], 'Perfiles de viático', 'Vehículo, residencia, tarifa y tope de cada representante. La dirección exacta solo la ven la gerencia y el propio representante.', S('lista', 'Representantes', lista), ...bloques);
   }
-  const r = reps.find((x) => x.id === id); const pf = (await api('GET', `/api/viaticos/perfiles/${id}`)).item;
+  const r = reps.find((x) => x.id === id);
+  const [pf, div, { item: globales }] = await Promise.all([api('GET', `/api/viaticos/perfiles/${id}`).then((x) => x.item), division(), api('GET', '/api/viaticos/tarifas-publico')]);
+  const veh = formularioVehiculo(pf, combs, globales);
+  const res = residenciaCampos(div, pf?.residencia);
   const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar perfil');
   const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, r?.fullName ?? 'Representante'),
-    h('div', { class: 'form-fila' }, campo('residencia.provincia', 'Provincia de residencia', { value: pf?.residencia?.provincia ?? '' }), campo('residencia.municipio', 'Municipio de residencia', { value: pf?.residencia?.municipio ?? '' }),
-      campo('residencia.direccion', 'Dirección desde donde sale', { value: pf?.residencia?.direccion ?? '' }, '(restringida)')),
-    h('h2', { style: 'margin-top:1rem' }, 'Vehículo'),
-    h('div', { class: 'form-fila' }, campo('vehiculo.propiedad', 'Propiedad', { options: [{ value: 'asignado', label: 'Asignado por FERSUAZ' }, { value: 'propio', label: 'Propio' }], value: pf?.vehiculo?.propiedad }),
-      campo('vehiculo.combustible', 'Combustible', { options: combs, value: pf?.vehiculo?.combustible }), campo('vehiculo.rendimiento', 'Rendimiento real km/galón', { type: 'number', min: 1, step: 0.1, value: pf?.vehiculo?.rendimiento ?? '' }),
-      campo('vehiculo.marca', 'Marca', { value: pf?.vehiculo?.marca ?? '' }), campo('vehiculo.modelo', 'Modelo', { value: pf?.vehiculo?.modelo ?? '' }), campo('vehiculo.anio', 'Año', { type: 'number', value: pf?.vehiculo?.anio ?? '' }), campo('vehiculo.placa', 'Placa', { value: pf?.vehiculo?.placa ?? '' }, '(restringida)')),
-    h('h2', { style: 'margin-top:1rem' }, 'Viáticos'),
-    h('div', { class: 'form-fila' }, campo('tarifaAlimentacion', 'Alimentación por día RD$', { type: 'number', min: 0, step: 0.01, value: pf?.tarifaAlimentacion ?? '' }),
-      campo('reembolsoPorKm', 'Reembolso por km RD$', { type: 'number', min: 0, step: 0.01, value: pf?.reembolsoPorKm ?? '' }, '(solo vehículo propio; reemplaza al combustible)'),
+    h('div', { class: 'form-fila' }, res.fp, res.fm, campo('residencia.direccion', 'Dirección desde donde sale', { value: pf?.residencia?.direccion ?? '' }, '(restringida)')),
+    h('h3', { class: 'subtitulo-form' }, 'Vehículo'), veh.el,
+    h('h3', { class: 'subtitulo-form' }, 'Viáticos'),
+    h('div', { class: 'form-fila' }, h('div', { class: 'solo-vehiculo' }, campo('tarifaAlimentacion', 'Comida por día RD$', { type: 'number', min: 0, step: 0.01, value: pf?.tarifaAlimentacion ?? '' })),
+      h('div', { class: 'solo-vehiculo' }, campo('reembolsoPorKm', 'Reembolso por km RD$', { type: 'number', min: 0, step: 0.01, value: pf?.reembolsoPorKm ?? '' }, '(solo vehículo propio; reemplaza al combustible)')),
       campo('topeCombustible', 'Tope mensual de combustible o transporte RD$', { type: 'number', min: 0, step: 0.01, value: pf?.topeCombustible ?? '' }, '(vacío = usa el tope global)')),
     h('div', { class: 'acciones' }, b, h('a', { class: 'btn-sec', href: '#perfiles' }, 'Volver')));
   f.addEventListener('submit', async (e) => {
     e.preventDefault(); const g = (k) => f.elements[k].value;
-    const body = { residencia: { provincia: g('residencia.provincia'), municipio: g('residencia.municipio'), direccion: g('residencia.direccion') },
-      vehiculo: { propiedad: g('vehiculo.propiedad'), combustible: g('vehiculo.combustible'), rendimiento: g('vehiculo.rendimiento'), marca: g('vehiculo.marca'), modelo: g('vehiculo.modelo'), anio: g('vehiculo.anio'), placa: g('vehiculo.placa') },
-      tarifaAlimentacion: g('tarifaAlimentacion'), reembolsoPorKm: g('reembolsoPorKm'), topeCombustible: g('topeCombustible') };
+    const body = { residencia: { provincia: res.sp.value, municipio: res.sm.value, direccion: g('residencia.direccion') }, ...veh.valores(f),
+      tarifaAlimentacion: veh.tiene() ? g('tarifaAlimentacion') : '', reembolsoPorKm: veh.tiene() ? g('reembolsoPorKm') : '', topeCombustible: g('topeCombustible') };
     if (await enviar(f, b, () => api('POST', `/api/viaticos/perfiles/${id}`, body))) location.hash = '#perfiles';
   });
+  const sincronizar = () => f.querySelectorAll('.solo-vehiculo').forEach((x) => { x.hidden = !veh.tiene(); });
+  veh.el.addEventListener('change', sincronizar); sincronizar();
   return vista('Perfil de viático', null, f);
 };
 
@@ -1212,9 +1219,158 @@ V.hoteles = async () => {
   return vistaS('hoteles', ['lista', 'google', 'auto'], 'Hoteles', 'Para el hospedaje de los representantes. Google Maps trae los hoteles; la administración confirma precio y requisitos: servicios básicos, aire, agua, cama cómoda, higiene, parqueo y seguridad. Se recomienda el más económico que cumple todo.', ...bloques);
 };
 
+// ---------------------------------------------------------------- vehículo del representante (EPA o a mano) o transporte público
+const TIPOS_VEH = [['carro', 'Carro'], ['jeepeta', 'Jeepeta'], ['camioneta', 'Camioneta'], ['motocicleta', 'Motocicleta']];
+const TARIFAS_PUB = [['transporteDentro', 'Transporte por día dentro de su municipio'], ['comidaDentro', 'Comida por día dentro de su municipio'], ['transporteFuera', 'Transporte por día fuera de su municipio'], ['comidaFuera', 'Comida por día fuera de su municipio']];
+/**
+ * Campos del vehículo. Con vehículo: año, marca, modelo y versión desde FuelEconomy.gov (EPA) completan el
+ * rendimiento en km por galón; si no aparece (p. ej., motocicleta o modelo que no se vende en EE. UU.), se escribe a mano.
+ * Sin vehículo: transporte público, con montos propios opcionales (vacío = monto global).
+ */
+function formularioVehiculo(pf, combs, globales) {
+  const v = pf?.vehiculo ?? {};
+  let tiene = v.propiedad ? v.propiedad !== 'ninguno' : true;
+  let epaId = v.epaId ?? null; let fuente = v.rendimientoFuente ?? (v.epaId ? 'epa' : 'manual');
+  const radio = (valor, texto, detalle) => h('label', { class: 'opcion-tarjeta' }, h('input', { type: 'radio', name: 'tieneVehiculo', value: valor, checked: (valor === 'si') === tiene }), h('span', {}, h('strong', {}, texto), h('small', {}, detalle)));
+  const eleccion = h('div', { class: 'opciones-tarjeta', role: 'radiogroup', 'aria-label': '¿Tiene vehículo?' },
+    radio('si', 'Tiene vehículo', 'Se calcula el combustible por los km del cronograma.'), radio('no', 'No tiene vehículo', 'Transporte público: transporte y comida por día, dentro o fuera de su municipio.'));
+
+  // --- con vehículo
+  const fProp = campo('vehiculo.propiedad', 'Propiedad', { options: [{ value: 'asignado', label: 'Asignado por FERSUAZ' }, { value: 'propio', label: 'Propio' }], value: v.propiedad && v.propiedad !== 'ninguno' ? v.propiedad : 'asignado' });
+  const fTipo = campo('vehiculo.tipo', 'Tipo de vehículo', { options: TIPOS_VEH.map(([value, label]) => ({ value, label })), value: v.tipo ?? 'carro' });
+  const sAnio = h('select', { id: 'epa-anio' }, h('option', { value: '' }, 'Año'));
+  const sMarca = h('select', { id: 'epa-marca', disabled: true }, h('option', { value: '' }, 'Marca'));
+  const sModelo = h('select', { id: 'epa-modelo', disabled: true }, h('option', { value: '' }, 'Modelo'));
+  const sVersion = h('select', { id: 'epa-version', disabled: true }, h('option', { value: '' }, 'Versión (motor y transmisión)'));
+  const lab = (id, t) => h('label', { for: id }, t);
+  const epaNota = h('p', { class: 'hint', 'aria-live': 'polite' });
+  const manualCaja = h('input', { type: 'checkbox', id: 'veh-manual', checked: Boolean(v.marca) && !v.epaId });
+  const fMarca = campo('vehiculo.marca', 'Marca', { value: v.marca ?? '' }); const fModelo = campo('vehiculo.modelo', 'Modelo', { value: v.modelo ?? '' });
+  const fAnio = campo('vehiculo.anio', 'Año', { type: 'number', min: 1980, max: Number(hoy().slice(0, 4)) + 1, value: v.anio ?? '', inputmode: 'numeric' });
+  const manual = h('div', { class: 'form-fila', hidden: !manualCaja.checked }, fMarca, fModelo, fAnio);
+  const fComb = campo('vehiculo.combustible', 'Combustible', { options: combs, value: v.combustible });
+  const fRend = campo('vehiculo.rendimiento', 'Kilómetros por galón', { type: 'number', min: 1, step: 0.1, value: v.rendimiento ?? '', inputmode: 'decimal' });
+  const fPlaca = campo('vehiculo.placa', 'Placa', { value: v.placa ?? '' }, '(restringida)');
+  fRend.querySelector('input').addEventListener('input', () => { fuente = 'manual'; epaNota.textContent = 'Rendimiento escrito a mano.'; });
+  const epa = h('div', { class: 'epa', hidden: manualCaja.checked },
+    h('p', { class: 'hint' }, 'Elige año, marca, modelo y versión: el sistema completa los kilómetros por galón con el dato oficial de FuelEconomy.gov (EPA). Puedes ajustarlo al rendimiento real.'),
+    h('div', { class: 'epa-fila' }, h('div', { class: 'field' }, lab('epa-anio', 'Año'), sAnio), h('div', { class: 'field' }, lab('epa-marca', 'Marca'), sMarca), h('div', { class: 'field' }, lab('epa-modelo', 'Modelo'), sModelo), h('div', { class: 'field epa-version' }, lab('epa-version', 'Versión'), sVersion)));
+  const llenar = (sel, items, vacio) => { sel.replaceChildren(h('option', { value: '' }, vacio), ...items.map((x) => (typeof x === 'string' ? h('option', { value: x }, x) : h('option', { value: x.id }, x.texto)))); sel.disabled = !items.length; };
+  const fallo = (e) => { epaNota.textContent = `${e.message} Marca "No está en la lista" para escribirlo a mano.`; };
+  let cargado = false;
+  async function cargarAnios() {
+    if (cargado) return; cargado = true;
+    try { llenar(sAnio, (await api('GET', '/api/vehiculos/anios')).items, 'Año'); if (v.anio && !manualCaja.checked) sAnio.value = String(v.anio); } catch (e) { fallo(e); }
+  }
+  sAnio.addEventListener('change', async () => { llenar(sMarca, [], 'Marca'); llenar(sModelo, [], 'Modelo'); llenar(sVersion, [], 'Versión (motor y transmisión)'); if (!sAnio.value) return; try { llenar(sMarca, (await api('GET', `/api/vehiculos/marcas?anio=${sAnio.value}`)).items, 'Marca'); } catch (e) { fallo(e); } });
+  sMarca.addEventListener('change', async () => { llenar(sModelo, [], 'Modelo'); llenar(sVersion, [], 'Versión (motor y transmisión)'); if (!sMarca.value) return; try { llenar(sModelo, (await api('GET', `/api/vehiculos/modelos?anio=${sAnio.value}&marca=${encodeURIComponent(sMarca.value)}`)).items, 'Modelo'); } catch (e) { fallo(e); } });
+  sModelo.addEventListener('change', async () => {
+    llenar(sVersion, [], 'Versión (motor y transmisión)'); if (!sModelo.value) return;
+    try { const vs = (await api('GET', `/api/vehiculos/versiones?anio=${sAnio.value}&marca=${encodeURIComponent(sMarca.value)}&modelo=${encodeURIComponent(sModelo.value)}`)).items; llenar(sVersion, vs, 'Versión (motor y transmisión)'); if (vs.length === 1) { sVersion.value = vs[0].id; sVersion.dispatchEvent(new Event('change')); } } catch (e) { fallo(e); }
+  });
+  sVersion.addEventListener('change', async () => {
+    if (!sVersion.value) return;
+    try {
+      const f = (await api('GET', `/api/vehiculos/ficha/${sVersion.value}`)).item;
+      fRend.querySelector('input').value = f.kmPorGalon; epaId = f.id; fuente = 'epa';
+      if (f.combustible && combs.some((c) => c.value === f.combustible)) fComb.querySelector('select').value = f.hibrido ? 'hibrido' : f.combustible;
+      fMarca.querySelector('input').value = f.marca; fModelo.querySelector('input').value = f.modelo; fAnio.querySelector('input').value = f.anio;
+      epaNota.textContent = `${f.marca} ${f.modelo} ${f.anio} (${f.motor}): ${fmtN.format(f.mpgCombinado)} millas por galón combinado según la EPA = ${fmtN.format(f.kmPorGalon)} km por galón.${f.kmPorGalonCiudad ? ` En ciudad: ${fmtN.format(f.kmPorGalonCiudad)} km por galón.` : ''}`;
+    } catch (e) { fallo(e); }
+  });
+  manualCaja.addEventListener('change', () => { manual.hidden = !manualCaja.checked; epa.hidden = manualCaja.checked; if (manualCaja.checked) { epaId = null; fuente = 'manual'; } else cargarAnios(); });
+  if (v.epaId) epaNota.textContent = `Rendimiento de FuelEconomy.gov (EPA): ${[v.marca, v.modelo, v.anio].filter(Boolean).join(' ')}, ${fmtN.format(v.rendimiento)} km por galón.`;
+  const conVehiculo = h('div', { class: 'grupo-vehiculo' }, h('div', { class: 'form-fila' }, fProp, fTipo), epa,
+    h('label', { class: 'check' }, manualCaja, h('span', {}, 'No está en la lista (motocicleta o modelo que no se vende en EE. UU.): escribirlo a mano')), manual, epaNota,
+    h('div', { class: 'form-fila' }, fComb, fRend, fPlaca));
+
+  // --- sin vehículo: transporte público
+  const pub = pf?.publico ?? {};
+  const sinVehiculo = h('div', { class: 'grupo-vehiculo' }, h('p', { class: 'hint' }, 'Montos por día. Déjalos vacíos para usar los montos globales; escribe uno solo si este representante tiene un monto distinto. "Dentro" es su municipio de residencia; "fuera", cualquier otro municipio del cronograma.'),
+    h('div', { class: 'form-fila' }, ...TARIFAS_PUB.map(([k, l]) => campo(`publico.${k}`, l, { type: 'number', min: 0, step: 0.01, value: pub[k] ?? '', inputmode: 'decimal', placeholder: globales?.[k] != null ? `Global: ${RD(globales[k])}` : 'Sin monto global' }))));
+  const pintar = () => { conVehiculo.hidden = !tiene; sinVehiculo.hidden = tiene; if (tiene && !manualCaja.checked) cargarAnios(); };
+  eleccion.addEventListener('change', (e) => { tiene = e.target.value === 'si'; pintar(); });
+  pintar();
+  return {
+    el: h('div', {}, eleccion, conVehiculo, sinVehiculo),
+    valores(f) {
+      const g = (k) => f.elements[k]?.value ?? '';
+      if (!tiene) return { vehiculo: { propiedad: 'ninguno' }, publico: Object.fromEntries(TARIFAS_PUB.map(([k]) => [k, g(`publico.${k}`) || null])) };
+      return { vehiculo: { propiedad: g('vehiculo.propiedad'), tipo: g('vehiculo.tipo'), combustible: g('vehiculo.combustible'), rendimiento: g('vehiculo.rendimiento'),
+        marca: g('vehiculo.marca'), modelo: g('vehiculo.modelo'), anio: g('vehiculo.anio'), placa: g('vehiculo.placa'), epaId, rendimientoFuente: fuente } };
+    },
+    tiene: () => tiene,
+  };
+}
+
+/** Selector de provincia y municipio oficiales (residencia). */
+function residenciaCampos(div, valor) {
+  const z = selectorZona(div.provincias, div.municipios, { provincia: valor?.provincia ?? '', municipio: valor?.municipio ?? '', prefijo: 'res' });
+  z.fp.querySelector('label').textContent = 'Provincia donde vive'; z.fm.querySelector('label').textContent = 'Municipio donde vive';
+  z.sp.name = 'residencia.provincia'; z.sm.name = 'residencia.municipio';
+  return z;
+}
+
+/** Alta de representante por la administración: crea usuario y clave temporal, zona, residencia y vehículo. */
+async function altaRepresentante(div) {
+  const [{ items: combs }, { item: globales }] = await Promise.all([api('GET', '/api/viaticos/combustibles'), api('GET', '/api/viaticos/tarifas-publico')]);
+  const veh = formularioVehiculo(null, combs, globales);
+  const res = residenciaCampos(div, null);
+  const provs = h('div', { class: 'provincias provincias-zona' }, div.provincias.map((p) => h('label', {}, h('input', { type: 'checkbox', name: 'prov', value: p }), p)));
+  const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar representante');
+  const salida = h('div', { 'aria-live': 'polite' });
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo representante'),
+    h('p', { class: 'hint' }, 'El sistema crea su usuario y una contraseña temporal. Al entrar por primera vez, el representante elige su propia contraseña.'),
+    h('div', { class: 'form-fila' }, campo('nombre', 'Nombre', { autocomplete: 'off' }), campo('apellido', 'Apellido', { autocomplete: 'off' }),
+      campo('posicion', 'Posición', { options: ['Visitador', 'PVC', 'Vendedor', 'Promotora'].map((x) => ({ value: x, label: x })), placeholder: 'Elige la posición' }),
+      campo('telefono', 'Teléfono', { inputmode: 'tel', autocomplete: 'off' }, '(opcional)'), campo('correo', 'Correo', { type: 'email', autocomplete: 'off' }, '(opcional, para recuperar su clave)')),
+    h('h3', { class: 'subtitulo-form' }, 'Dónde vive'), h('div', { class: 'form-fila' }, res.fp, res.fm),
+    h('h3', { class: 'subtitulo-form' }, 'Provincias que visitará'), h('p', { class: 'hint' }, 'Con esto se conectan sus municipios, farmacias, hospitales, clínicas, UNAP y hoteles. Si solo visita algunos municipios, ajústalo después en "Editar zona".'),
+    h('p', { class: 'error', dataset: { for: 'provincias' } }), provs,
+    h('h3', { class: 'subtitulo-form' }, 'Vehículo'), veh.el,
+    h('div', { class: 'form-fila solo-vehiculo' }, campo('tarifaAlimentacion', 'Comida por día RD$', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal' })),
+    h('div', { class: 'acciones' }, b), salida);
+  const sincronizar = () => f.querySelectorAll('.solo-vehiculo').forEach((x) => { x.hidden = !veh.tiene(); });
+  veh.el.addEventListener('change', sincronizar); sincronizar();
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = { nombre: f.nombre.value, apellido: f.apellido.value, posicion: f.posicion.value, telefono: f.telefono.value, correo: f.correo.value,
+      residencia: { provincia: res.sp.value, municipio: res.sm.value }, provincias: [...f.querySelectorAll('[name=prov]:checked')].map((x) => x.value),
+      tarifaAlimentacion: veh.tiene() ? f.tarifaAlimentacion.value : '', ...veh.valores(f) };
+    const r = await enviar(f, b, () => api('POST', '/api/representantes', body));
+    if (!r) return;
+    const copiar = h('button', { type: 'button', class: 'btn-sec' }, 'Copiar usuario y clave');
+    copiar.addEventListener('click', async () => { try { await navigator.clipboard.writeText(`Usuario: ${r.representante.usuario}\nContraseña temporal: ${r.claveTemporal}`); copiar.textContent = 'Copiado'; } catch { copiar.textContent = 'Cópialo a mano'; } });
+    salida.replaceChildren(h('div', { class: 'credenciales', role: 'status' }, h('h3', {}, `${r.representante.nombre} quedó registrado`),
+      h('dl', {}, h('div', {}, h('dt', {}, 'Usuario'), h('dd', {}, r.representante.usuario)), h('div', {}, h('dt', {}, 'Contraseña temporal'), h('dd', {}, r.claveTemporal))),
+      h('p', {}, 'Entrégale estos datos en persona o por un medio seguro. Esta contraseña no se volverá a mostrar; si la pierde, genera una nueva desde la lista de representantes. Al entrar, deberá cambiarla.'),
+      h('div', { class: 'acciones' }, copiar, h('a', { class: 'btn', href: `#representantes?rep=${r.representante.id}&sec=lugares` }, 'Ver su zona'))));
+    salida.scrollIntoView({ block: 'nearest' });
+  });
+  return f;
+}
+
+/** Primera entrada con contraseña temporal: debe elegir la suya antes de usar el panel. */
+function vistaCambioClave() {
+  const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar mi contraseña');
+  const f = h('form', { class: 'tarjeta cambio-clave', novalidate: true }, h('h2', {}, 'Elige tu contraseña'),
+    h('p', { class: 'hint' }, 'Entraste con una contraseña temporal. Escribe una nueva de al menos 10 caracteres, con letras y números.'),
+    campo('actual', 'Contraseña temporal', { type: 'password', autocomplete: 'current-password' }),
+    campo('nueva', 'Nueva contraseña', { type: 'password', autocomplete: 'new-password' }),
+    campo('repetir', 'Repite la nueva contraseña', { type: 'password', autocomplete: 'new-password' }),
+    h('div', { class: 'acciones' }, b));
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (f.nueva.value !== f.repetir.value) { const st = f.querySelector('.aviso') ?? f.appendChild(h('div', { class: 'aviso', role: 'status' })); estado(st, 'error', 'Las contraseñas nuevas no coinciden.'); return; }
+    if (await enviar(f, b, () => api('POST', '/api/auth/cambiar-clave', { actual: f.actual.value, nueva: f.nueva.value }))) location.reload();
+  });
+  return [h('h1', {}, `Hola, ${yo.fullName.split(' ')[0]}`), h('p', { class: 'vista-sub' }, `Tu usuario es ${yo.username ?? yo.email}.`), f];
+}
+
 V.representantes = async () => {
   const ver = param('ver') || 'zonas';
-  const seg = segmentos('Representantes', [['zonas', 'Zonas por representante'], ['preregistro', 'Pre-registro por Excel']], ver, (id) => irA('representantes', { ver: id }));
+  const seg = segmentos('Representantes', [...(ES_GER() ? [['nuevo', 'Nuevo representante']] : []), ['zonas', 'Zonas por representante'], ['preregistro', 'Pre-registro por Excel']], ver, (id) => irA('representantes', { ver: id }));
+  if (ver === 'nuevo' && ES_GER()) return vista('Representantes', 'Registra a cada Promotora, Visitador, Vendedor o PVC: su usuario se crea solo y su zona, cronograma, km, combustible y viáticos quedan conectados.', seg, await altaRepresentante(await division()));
   if (ver === 'preregistro') {
     const { items } = await api('GET', '/api/territorio/preregistros');
     const anular = async (p) => { if (await confirmar('Anular pre-registro', `${p.nombre} ya no quedará aprobado automáticamente al registrarse.`, { okTexto: 'Anular' })) { try { await api('POST', `/api/territorio/preregistros/${p.id}/anular`); } catch (e) { alert(e.message); } router(); } };
@@ -1267,11 +1423,19 @@ V.representantes = async () => {
     return vistaS('representantes', ['zona', 'lugares'], 'Zona del representante', `${r?.fullName ?? ''}: posición, provincias y municipios que visita. De aquí salen sus lugares, su cronograma, los km, el combustible y sus viáticos.`, S('zona', 'Zona y posición', f), S('lugares', `Lugares de su zona (${fmtN.format(lz.farmacias.length + lz.establecimientos.length)})`, lugares));
   }
   const zonas = await Promise.all(reps.map((r) => api('GET', `/api/territorio/zonas/${r.id}`).then((z) => z.item).catch(() => ({ provincias: [], municipios: {} }))));
+  const nuevaClave = async (r) => {
+    if (!(await confirmar('Nueva contraseña temporal', `Se generará una contraseña temporal para ${r.fullName}. La actual dejará de funcionar y deberá cambiarla al entrar.`, { okTexto: 'Generar' }))) return;
+    try {
+      const x = await api('POST', `/api/representantes/${r.id}/clave`);
+      $('#dialogo-titulo').textContent = 'Contraseña temporal'; $('#dialogo-cuerpo').replaceChildren(h('dl', { class: 'credenciales-lista' }, h('dt', {}, 'Usuario'), h('dd', {}, x.usuario), h('dt', {}, 'Contraseña temporal'), h('dd', {}, x.claveTemporal)), h('p', { class: 'hint' }, 'No se volverá a mostrar. Entrégala por un medio seguro.'));
+      $('#dialogo-ok').textContent = 'Listo'; $('#dialogo').showModal();
+    } catch (e) { alert(e.message); }
+  };
   const texto = (z) => z.provincias.map((p) => (z.municipios?.[p]?.length ? `${p} (${z.municipios[p].join(', ')})` : p)).join('; ');
   return vista('Representantes', 'Asigna a cada representante su posición y las provincias o municipios que visita.', seg,
     tabla([{ t: 'Representante', v: (r) => [r.fullName, h('small', { style: 'display:block;color:var(--texto-2)' }, r.position ?? '')] },
       { t: 'Zona', v: (r) => texto(zonas[reps.indexOf(r)]) || 'Sin asignar' },
-      { t: '', v: (r) => GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, 'Editar zona') : '' }], reps, ['Aún no hay representantes activos', 'Impórtalos en "Pre-registro por Excel".']));
+      { t: '', v: (r) => [GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, 'Editar zona') : null, ES_GER() ? h('button', { class: 'btn-enlace', onclick: () => nuevaClave(r) }, 'Nueva clave') : null] }], reps, ['Aún no hay representantes activos', 'Impórtalos en "Pre-registro por Excel".']));
 };
 
 
@@ -1625,6 +1789,7 @@ $('#salir').addEventListener('click', salir);
   $('#perfil').setAttribute('aria-label', `Tu cuenta: ${yo.fullName}`);
   iniciarMenu();
   $('#usuario-rol').textContent = `${ROLES[yo.role]}${yo.position ? `, ${yo.position}` : ''}`;
+  if (yo.debeCambiarClave) { $('#menu').replaceChildren(); $('#menu-pie').hidden = true; $('#campana-caja').hidden = true; $('#vista').replaceChildren(...vistaCambioClave()); return; }
   secciones = menuPara(yo);
   addEventListener('hashchange', router);
   router();
