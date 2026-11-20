@@ -52,16 +52,8 @@ Resultado: cada PR publica una vista previa propia; cada merge a `main` publica 
 
 ## 4. DigitalOcean — API, base de datos, archivos
 
-1. Databases → Create → PostgreSQL → nombre `fersuaz-db`. Ejecuta `apps/api/migrations/001_users_audit.sql`.
-2. API → Tokens → Generate (lectura y escritura). En GitHub → Secrets: `DIGITALOCEAN_ACCESS_TOKEN`.
-3. Apps → Create App → desde GitHub `fersuaz/Fersuaz` → o con `doctl apps create --spec .do/app.yaml`.
-4. En la App → Settings → variables: `SESSION_SECRET` (64 caracteres aleatorios: `openssl rand -hex 32`).
-5. Domains → `api.fersuaz.net`; en Cloudflare crea el CNAME que DigitalOcean te indique.
-6. En GitHub → Settings → Variables: `API_URL = https://api.fersuaz.net` (la web lo inyecta al desplegar).
-7. Spaces (fase de recetas y comprobantes): Spaces → Create → `fersuaz-archivos`, privado; claves en variables de la App.
-8. GitHub → Settings → Environments → `production` → exige tu aprobación antes de cada despliegue de la API.
-
-Escala: `instance_count` en `.do/app.yaml` (hasta los 10 servidores previstos); App Platform incluye el balanceador.
+Pasos completos, en orden, en **[PUESTA-EN-LINEA.md](PUESTA-EN-LINEA.md)**: base `fersuaz-db`, token, `SESSION_SECRET`,
+primer despliegue (las migraciones se aplican solas), primer administrador, `api.fersuaz.net`, Spaces y mapas.
 
 ## 5. Higgsfield — imágenes y video de lujo para la página
 
