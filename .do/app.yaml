@@ -31,6 +31,12 @@ services:
       - { key: SPACES_SECRET, scope: RUN_TIME, type: SECRET, value: "${SPACES_SECRET}" }
       - { key: SPACES_BUCKET, scope: RUN_TIME, value: fersuaz-archivos }
       - { key: SPACES_REGION, scope: RUN_TIME, value: nyc3 }
+      # Correos con Amazon SES (opcionales: sin ellos, solo hay notificaciones en la campana)
+      - { key: SES_ACCESS_KEY, scope: RUN_TIME, type: SECRET, value: "${SES_ACCESS_KEY}" }
+      - { key: SES_SECRET_KEY, scope: RUN_TIME, type: SECRET, value: "${SES_SECRET_KEY}" }
+      - { key: SES_REGION, scope: RUN_TIME, value: "${SES_REGION}" }
+      - { key: SES_REMITENTE, scope: RUN_TIME, value: "${SES_REMITENTE}" }
+      - { key: SITIO_URL, scope: RUN_TIME, value: "https://fersuaz-web.pages.dev" }
 jobs:
   # Aplica las migraciones nuevas antes de cada despliegue. Si una falla, el despliegue se detiene.
   - name: migrar

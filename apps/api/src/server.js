@@ -8,6 +8,9 @@ import { createComercial } from './comercial.js';
 import { createViaticos, COMBUSTIBLE_LABEL } from './viaticos.js';
 import { SinMapas, crearMapas } from './mapas.js';
 import { createTerritorio } from './territorio.js';
+import { createNotificaciones } from './notificaciones.js';
+import { SinCorreo, crearCorreo } from './correo.js';
+import { canApprove } from './roles.js';
 import { actualizarDesdeMicm } from './combustible-micm.js';
 import { SinLugares, crearLugares } from './lugares.js';
 import { signSession, verifySession } from './security.js';
@@ -29,11 +32,13 @@ async function readJson(req, limit = MAX_BODY) {
 
 const publico = ({ passwordHash, ...u }) => u;
 
-export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), micmFetch = fetch, sessionSecret, allowedOrigins = [], now }) {
+export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), correo = new SinCorreo(), sitio = 'https://fersuaz.net', micmFetch = fetch, sessionSecret, allowedOrigins = [], now }) {
+  const n = createNotificaciones({ data, users: store, correo, sitio });
+  const avisar = (fn) => fn().catch((e) => console.error('Notificación:', e.message));
   const t = createTerritorio({ data, users: store, audit: (e) => store.addAudit(e), now });
   const auth = createAuthService(store, { preregistro: { buscar: t.buscarPreregistro, confirmar: t.confirmarPreregistro } });
   const c = createComercial({ data, users: store, files, audit: (e) => store.addAudit(e), now });
-  const v = createViaticos({ data, users: store, files, mapas, audit: (e) => store.addAudit(e), now });
+  const v = createViaticos({ data, users: store, files, mapas, notificar: n.notificar, audit: (e) => store.addAudit(e), now });
 
   const GESTION_LUGARES = ['administrador', 'gerencia', 'supervisor'];
   const sinAcento = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -93,6 +98,10 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/auth/options', () => ({ roles: SELF_REGISTERABLE.map((r) => ({ value: r, label: ROLE_LABELS[r] })), positions: POSITIONS }), { auth: false });
   ruta('POST', '/api/auth/register', async ({ body }) => {
     const user = await auth.register(body);
+    if (user.status !== 'activo') {
+      const roles = ['administrador', 'gerencia', 'supervisor'].filter((r) => canApprove(r, user.role));
+      avisar(() => n.notificarRoles(roles, { tipo: 'solicitud', titulo: 'Nueva solicitud de cuenta', texto: `${user.fullName} pidió acceso como ${user.role}${user.position ? ` (${user.position})` : ''}.`, enlace: '#solicitudes' }));
+    }
     return [201, { user, message: user.status === 'activo' ? 'Tu cuenta ya está activa: la gerencia te había pre-registrado. Inicia sesión.' : 'Solicitud recibida. Te avisaremos cuando la gerencia la apruebe.' }];
   }, { auth: false });
   ruta('POST', '/api/auth/login', async ({ body }) => {
@@ -103,7 +112,13 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/auth/pending', async ({ me }) => ({
     pending: (await store.listUsersByStatus('pendiente_aprobacion')).map(publico).filter((u) => u.id !== me.id),
   }));
-  ruta('POST', /^\/api\/auth\/requests\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p }) => ({ user: await auth.decide(me, p[1], p[2] === 'aprobar') }));
+  ruta('POST', /^\/api\/auth\/requests\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p }) => {
+    const user = await auth.decide(me, p[1], p[2] === 'aprobar');
+    avisar(() => n.notificar(user.id, user.status === 'activo'
+      ? { tipo: 'cuenta', titulo: 'Tu cuenta fue aprobada', texto: 'Ya puedes iniciar sesión en FERSUAZ.NET con tu correo y contraseña.' }
+      : { tipo: 'cuenta', titulo: 'Tu solicitud no fue aprobada', texto: 'Si crees que es un error, comunícate con tu supervisor o la gerencia.' }));
+    return { user };
+  });
 
   // Catálogos
   ruta('GET', '/api/catalogo/medicamentos', async () => ({ items: await c.catalogo.listarMedicamentos() }));
@@ -117,7 +132,11 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   // Dependientes: vouchers y comisiones
   ruta('GET', '/api/vouchers', async ({ me, q }) => ({ items: await c.vouchers.listar(me, { estado: q.get('estado') || undefined, dependienteId: q.get('dependienteId') || undefined }) }));
   ruta('POST', '/api/vouchers', async ({ me, body }) => [201, { item: await c.vouchers.crear(me, body) }]);
-  ruta('POST', /^\/api\/vouchers\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p, body }) => ({ item: await c.vouchers.decidir(me, p[1], p[2] === 'aprobar', body.motivo) }));
+  ruta('POST', /^\/api\/vouchers\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p, body }) => {
+    const item = await c.vouchers.decidir(me, p[1], p[2] === 'aprobar', body.motivo);
+    avisar(() => n.notificar(item.dependienteId, { tipo: 'voucher', titulo: item.estado === 'aprobado' ? 'Voucher aprobado' : 'Voucher rechazado', texto: `Tu voucher ${item.referencia} fue ${item.estado}${item.motivo ? `: ${item.motivo}` : '.'}`, enlace: '#misVouchers' }));
+    return { item };
+  });
   ruta('POST', /^\/api\/vouchers\/([\w-]+)\/anular$/, async ({ me, p }) => ({ item: await c.vouchers.anular(me, p[1]) }));
   ruta('GET', '/api/comisiones/config', async ({ me }) => c.comisiones.verConfig(me));
   ruta('POST', '/api/comisiones/config', async ({ me, body }) => ({ item: await c.comisiones.configurar(me, body) }));
@@ -138,6 +157,16 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/alertas', async ({ me, q }) => ({ umbral: await c.promotoras.umbral(), items: await c.promotoras.misAlertas(me, q.get('mes') || undefined) }));
   ruta('POST', '/api/alertas/umbral', async ({ me, body }) => ({ item: await c.promotoras.configurarUmbral(me, body.umbral) }));
   ruta('GET', '/api/reportes/recetas', async ({ me, q }) => c.reporteRecetas(me, { mes: q.get('mes'), agrupar: q.get('agrupar') }));
+
+  // Cronogramas (los crea y aprueba el administrador)
+  ruta('GET', '/api/cronogramas', async ({ me, q }) => ({ items: await v.listarCronogramas(me, { representanteId: q.get('representanteId') || undefined, mes: q.get('mes') || undefined }) }));
+  ruta('POST', '/api/cronogramas', async ({ me, body }) => [201, { items: await v.crearCronograma(me, body) }]);
+  ruta('POST', /^\/api\/cronogramas\/([\w-]+)\/anular$/, async ({ me, p, body }) => ({ item: await v.anularCronograma(me, p[1], body.motivo) }));
+  ruta('GET', /^\/api\/cronogramas\/([\w-]+)\/ruta$/, async ({ me, p }) => v.vistaPreviaRuta(me, p[1]));
+  // Notificaciones (campana)
+  ruta('GET', '/api/notificaciones', async ({ me, q }) => n.listar(me, { limite: q.get('limite') }));
+  ruta('POST', '/api/notificaciones/leer-todas', async ({ me }) => n.marcarTodas(me));
+  ruta('POST', /^\/api\/notificaciones\/([\w-]+)\/leer$/, async ({ me, p }) => ({ item: await n.marcar(me, p[1]) }));
 
   // Territorio, establecimientos, zonas, pre-registro e importación
   ruta('GET', '/api/territorio/division', () => t.division(), { auth: false });
@@ -180,10 +209,23 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', '/api/viaticos/jornadas', async ({ me, body }) => [201, { item: await v.crearJornada(me, body) }]);
   ruta('POST', /^\/api\/viaticos\/jornadas\/([\w-]+)\/(realizada|cancelar|hospedaje)$/, async ({ me, p, body }) => ({ item: await v.actualizarJornada(me, p[1], p[2], body) }));
   ruta('GET', '/api/viaticos/presupuesto', async ({ me, q }) => v.verPresupuesto(me, q.get('representanteId') || me.id, q.get('mes')));
-  ruta('POST', '/api/viaticos/presupuesto/solicitar', async ({ me, body }) => ({ item: await v.solicitar(me, body.mes) }));
+  ruta('POST', '/api/viaticos/presupuesto/solicitar', async ({ me, body }) => {
+    const item = await v.solicitar(me, body.mes);
+    avisar(() => n.notificarRoles(['administrador', 'gerencia'], { tipo: 'viaticos', titulo: 'Presupuesto de viáticos por aprobar', texto: `${me.fullName} solicitó el presupuesto de ${item.mes}.`, enlace: `#viatico?rep=${me.id}&mes=${item.mes}` }));
+    return { item };
+  });
   ruta('GET', /^\/api\/viaticos\/presupuestos\/([\w-]+)$/, async ({ me, p }) => ({ item: await v.presupuestoPorId(me, p[1]) }));
-  ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p, body }) => ({ item: await v.decidirPresupuesto(me, p[1], p[2] === 'aprobar', body) }));
-  ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/desembolsos$/, async ({ me, p, body }) => ({ item: await v.desembolsar(me, p[1], body) }));
+  ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p, body }) => {
+    const item = await v.decidirPresupuesto(me, p[1], p[2] === 'aprobar', body);
+    avisar(() => n.notificar(item.representanteId, { tipo: 'viaticos', titulo: item.estado === 'aprobado' ? 'Viáticos aprobados' : 'Viáticos rechazados', texto: item.estado === 'aprobado' ? `Tu presupuesto de ${item.mes} fue aprobado.` : `Tu presupuesto de ${item.mes} fue rechazado: ${item.motivo}`, enlace: `#presupuesto?mes=${item.mes}` }));
+    if (item.estado === 'aprobado') avisar(() => n.notificarRoles(['finanzas'], { tipo: 'viaticos', titulo: 'Viáticos por desembolsar', texto: `El presupuesto de ${item.mes} está aprobado y espera desembolso.`, enlace: `#viatico?rep=${item.representanteId}&mes=${item.mes}` }));
+    return { item };
+  });
+  ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/desembolsos$/, async ({ me, p, body }) => {
+    const item = await v.desembolsar(me, p[1], body);
+    avisar(() => n.notificar(item.representanteId, { tipo: 'viaticos', titulo: 'Desembolso registrado', texto: `Finanzas registró un desembolso de tus viáticos de ${item.mes}.`, enlace: `#presupuesto?mes=${item.mes}` }));
+    return { item };
+  });
   ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/gastos$/, async ({ me, p, body }) => [201, { item: await v.reportarGasto(me, p[1], body) }], { limite: MAX_BODY_ADJUNTO });
   ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/gastos\/([\w-]+)\/(aceptar|rechazar)$/, async ({ me, p, body }) => ({ item: await v.revisarGasto(me, p[1], p[2], p[3] === 'aceptar', body.motivo) }));
   ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/liquidar$/, async ({ me, p }) => ({ item: await v.liquidar(me, p[1]) }));
@@ -232,7 +274,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   else { store = new MemoryStore(); data = new MemoryData(); console.warn('⚠ Sin DATABASE_URL: usando memoria (solo desarrollo, los datos se pierden).'); }
   const secret = SESSION_SECRET ?? (NODE_ENV === 'production' ? null : 'dev-only-secret-change-me-0123456789abcdef');
   if (!secret) { console.error('SESSION_SECRET es obligatorio.'); process.exit(1); }
-  const app = createApp({ store, data, files: crearArchivos(process.env, UPLOAD_DIR), mapas: crearMapas(), lugares: crearLugares(), sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
+  const app = createApp({ store, data, files: crearArchivos(process.env, UPLOAD_DIR), mapas: crearMapas(), lugares: crearLugares(), correo: crearCorreo(), sitio: process.env.SITIO_URL || 'https://fersuaz-web.pages.dev', sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
   createServer(app).listen(PORT, () => console.log(`API FERSUAZ en :${PORT}`));
   // Revisión automática del aviso semanal del MICM: al arrancar y cada 6 horas (desactivar con MICM_AUTO=off).
   if (DATABASE_URL && process.env.MICM_AUTO !== 'off') {

@@ -17,10 +17,11 @@ async function setup() {
   let store, data;
   if (PG) {
     pg ??= await PostgresStore.connect(PG);
-    await pg.pool.query('TRUNCATE presupuestos_viatico, jornadas, precios_combustible, perfiles_viatico, configuracion, inventario, recetas, operativos, cierres_comision, vouchers, medicos, farmacias, medicamentos, audit_logs, users CASCADE');
+    await pg.pool.query('TRUNCATE notificaciones, cronogramas, zonas_representante, establecimientos, presupuestos_viatico, jornadas, precios_combustible, perfiles_viatico, configuracion, inventario, recetas, operativos, cierres_comision, vouchers, medicos, farmacias, medicamentos, audit_logs, users CASCADE');
     store = pg; data = new PgData(pg.pool);
   } else { store = new MemoryStore(); data = new MemoryData(); }
   const server = createServer(createApp({ store, data, files: new MemoryFiles(), sessionSecret: SECRET, now: NOW })).listen(0);
+  setup.data = data;
   const url = `http://127.0.0.1:${server.address().port}`;
   const call = async (method, path, body, token) => {
     const r = await fetch(url + path, { method, headers: { 'content-type': 'application/json', ...(token && { authorization: `Bearer ${token}` }) }, body: body && JSON.stringify(body) });
@@ -28,7 +29,7 @@ async function setup() {
   };
   const t = {}; const id = {};
   for (const [k, props] of Object.entries({
-    gerente: { role: 'gerencia' }, finanzas: { role: 'finanzas' }, supervisor: { role: 'supervisor' },
+    admin: { role: 'administrador' }, gerente: { role: 'gerencia' }, finanzas: { role: 'finanzas' }, supervisor: { role: 'supervisor' },
     rep: { role: 'representante', position: 'Visitador' }, rep2: { role: 'representante', position: 'Vendedor' }, dep: { role: 'dependiente' },
   })) {
     const pw = `clave${k}12345`;
@@ -36,7 +37,21 @@ async function setup() {
     id[k] = u.id;
     t[k] = (await call('POST', '/api/auth/login', { email: `${k}@x.do`, password: pw })).body.token;
   }
-  return { server, call, t, id };
+  // Ejemplo: un hospital en Moca y las provincias de cada representante, para programar cronogramas.
+  const est = await data.insert('establecimientos', { tipo: 'hospital', nombre: 'Hospital Regional (Ejemplo)', provincia: 'Espaillat', municipio: 'Moca', estado: 'validado', fuente: 'manual' });
+  for (const r of ['rep', 'rep2']) await call('POST', `/api/territorio/zonas/${id[r]}`, { provincias: ['Espaillat'] }, t.gerente);
+  /** El administrador programa el día y el representante crea su jornada desde ese cronograma. */
+  const planificar = async (body, token) => {
+    const quien = Object.keys(t).find((k) => t[k] === token);
+    let cid = null;
+    if (id[quien] && body.fecha) {
+      const c = await call('POST', '/api/cronogramas', { representanteId: id[quien], fechas: [body.fecha], lugares: [{ refTipo: 'establecimiento', refId: est.id }] }, t.admin);
+      cid = c.body.items?.[0]?.id ?? (await call('GET', `/api/cronogramas?representanteId=${id[quien]}`, null, t.admin)).body.items.find((x) => x.fecha === body.fecha)?.id;
+    }
+    const { fecha, paradas, ...resto } = body;
+    return call('POST', '/api/viaticos/jornadas', { ...resto, cronogramaId: cid }, token);
+  };
+  return { server, call, t, id, planificar, est };
 }
 
 const PERFIL = {
@@ -47,7 +62,7 @@ const PERFIL = {
 const jornada = (fecha, km, extra = {}) => ({ fecha, kmEstimados: km, paradas: [{ lugar: 'Hospital Regional', municipio: 'Moca', provincia: 'Espaillat' }], ...extra });
 
 test('perfil: solo gestión lo configura; la dirección exacta es restringida', async () => {
-  const { server, call, t, id } = await setup();
+  const { server, call, t, id, planificar } = await setup();
   try {
     assert.equal((await call('POST', `/api/viaticos/perfiles/${id.rep}`, PERFIL, t.rep)).status, 403);
     assert.equal((await call('POST', `/api/viaticos/perfiles/${id.dep}`, PERFIL, t.gerente)).status, 404);
@@ -63,14 +78,14 @@ test('perfil: solo gestión lo configura; la dirección exacta es restringida', 
 });
 
 test('prompt maestro §13: 2,100 km, 35 km/gal, RD$250 → RD$15,000; comida 21 × RD$500; hotel 3 × RD$2,500; total RD$36,000', async () => {
-  const { server, call, t, id } = await setup();
+  const { server, call, t, id, planificar } = await setup();
   try {
     await call('POST', `/api/viaticos/perfiles/${id.rep}`, PERFIL, t.gerente);
     // presupuesto sin precio vigente: se dice qué falta
     for (let d = 1; d <= 21; d++) {
       const fecha = `2026-12-${String(d).padStart(2, '0')}`;
       const extra = d === 1 ? { peajes: 2000, otros: 1000, hospedaje: { noches: 3, tarifaNoche: 2500, motivo: 'Operativo en Puerto Plata' } } : {};
-      const r = await call('POST', '/api/viaticos/jornadas', jornada(fecha, 100, extra), t.rep);
+      const r = await planificar(jornada(fecha, 100, extra), t.rep);
       assert.equal(r.status, 201, JSON.stringify(r.body));
     }
     let p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-12', null, t.rep)).body;
@@ -96,14 +111,14 @@ test('prompt maestro §13: 2,100 km, 35 km/gal, RD$250 → RD$15,000; comida 21 
 });
 
 test('el precio aplicado es el vigente en la fecha de cada jornada', async () => {
-  const { server, call, t, id } = await setup();
+  const { server, call, t, id, planificar } = await setup();
   try {
     await call('POST', `/api/viaticos/perfiles/${id.rep}`, PERFIL, t.gerente);
     await call('POST', '/api/viaticos/precios', { combustible: 'gasoil_regular', precioGalon: 250, vigenteDesde: '2026-11-01' }, t.finanzas);
     await call('POST', '/api/viaticos/precios', { combustible: 'gasoil_regular', precioGalon: 280, vigenteDesde: '2026-11-15' }, t.finanzas);
     assert.equal((await call('POST', '/api/viaticos/precios', { combustible: 'gasoil_regular', precioGalon: 290, vigenteDesde: '2026-11-15' }, t.finanzas)).status, 409);
-    await call('POST', '/api/viaticos/jornadas', jornada('2026-11-10', 70), t.rep); // 2 gal × 250 = 500
-    await call('POST', '/api/viaticos/jornadas', jornada('2026-11-16', 70), t.rep); // 2 gal × 280 = 560
+    await planificar(jornada('2026-11-10', 70), t.rep); // 2 gal × 250 = 500
+    await planificar(jornada('2026-11-16', 70), t.rep); // 2 gal × 280 = 560
     const p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
     assert.equal(p.detalle.combustible, 1060);
     assert.equal(p.detalle.alimentacion, 1000);
@@ -111,15 +126,15 @@ test('el precio aplicado es el vigente en la fecha de cada jornada', async () =>
 });
 
 test('jornadas: una por día, cancelada no cuenta, sin comida si no hay desplazamiento, km reales solo en el pasado', async () => {
-  const { server, call, t, id } = await setup();
+  const { server, call, t, id, planificar } = await setup();
   try {
     await call('POST', `/api/viaticos/perfiles/${id.rep}`, PERFIL, t.gerente);
     await call('POST', '/api/viaticos/precios', { combustible: 'gasoil_regular', precioGalon: 250, vigenteDesde: '2026-01-01' }, t.finanzas);
-    assert.equal((await call('POST', '/api/viaticos/jornadas', jornada('2026-11-10', 35), t.dep)).status, 403);
-    const a = (await call('POST', '/api/viaticos/jornadas', jornada('2026-11-10', 35), t.rep)).body.item;
-    assert.equal((await call('POST', '/api/viaticos/jornadas', jornada('2026-11-10', 35), t.rep)).status, 409);
-    const b = (await call('POST', '/api/viaticos/jornadas', jornada('2026-11-11', 35, { conAlimentacion: false }), t.rep)).body.item;
-    const c = (await call('POST', '/api/viaticos/jornadas', jornada('2026-11-25', 35), t.rep)).body.item;
+    assert.equal((await planificar(jornada('2026-11-10', 35), t.dep)).status, 403);
+    const a = (await planificar(jornada('2026-11-10', 35), t.rep)).body.item;
+    assert.equal((await planificar(jornada('2026-11-10', 35), t.rep)).status, 409);
+    const b = (await planificar(jornada('2026-11-11', 35, { conAlimentacion: false }), t.rep)).body.item;
+    const c = (await planificar(jornada('2026-11-25', 35), t.rep)).body.item;
     assert.equal((await call('POST', `/api/viaticos/jornadas/${c.id}/cancelar`, {}, t.rep)).status, 200);
     assert.equal((await call('POST', `/api/viaticos/jornadas/${a.id}/realizada`, { kmReales: 41 }, t.rep)).status, 200);
     assert.equal((await call('POST', `/api/viaticos/jornadas/${c.id}/realizada`, { kmReales: 41 }, t.rep)).status, 409);
@@ -131,10 +146,10 @@ test('jornadas: una por día, cancelada no cuenta, sin comida si no hay desplaza
 });
 
 test('vehículo propio con reembolso por km: no se suma también el combustible', async () => {
-  const { server, call, t, id } = await setup();
+  const { server, call, t, id, planificar } = await setup();
   try {
     await call('POST', `/api/viaticos/perfiles/${id.rep}`, { ...PERFIL, vehiculo: { ...PERFIL.vehiculo, propiedad: 'propio' }, reembolsoPorKm: 12 }, t.gerente);
-    await call('POST', '/api/viaticos/jornadas', jornada('2026-11-10', 100), t.rep);
+    await planificar(jornada('2026-11-10', 100), t.rep);
     const p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
     assert.deepEqual(p.faltan, []); // no necesita precio de combustible
     assert.equal(p.detalle.combustible, 1200); assert.equal(p.supuestos.reembolsoPorKm, 12);
@@ -142,28 +157,28 @@ test('vehículo propio con reembolso por km: no se suma también el combustible'
 });
 
 test('eléctrico: no se calcula con galones; se dice que falta el método energético', async () => {
-  const { server, call, t, id } = await setup();
+  const { server, call, t, id, planificar } = await setup();
   try {
     await call('POST', `/api/viaticos/perfiles/${id.rep}`, { ...PERFIL, vehiculo: { propiedad: 'asignado', combustible: 'electrico' } }, t.gerente);
-    await call('POST', '/api/viaticos/jornadas', jornada('2026-11-10', 100), t.rep);
+    await planificar(jornada('2026-11-10', 100), t.rep);
     const p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
     assert.ok(p.faltan.some((f) => f.includes('eléctrico')));
   } finally { server.close(); }
 });
 
 test('flujo completo: solicitar, aprobar, desembolsar, comprobantes, liquidar; nada se borra', async () => {
-  const { server, call, t, id } = await setup();
+  const { server, call, t, id, planificar } = await setup();
   try {
     await call('POST', `/api/viaticos/perfiles/${id.rep}`, PERFIL, t.gerente);
     await call('POST', '/api/viaticos/precios', { combustible: 'gasoil_regular', precioGalon: 250, vigenteDesde: '2026-01-01' }, t.finanzas);
-    await call('POST', '/api/viaticos/jornadas', jornada('2026-11-10', 70, { peajes: 100 }), t.rep);
-    await call('POST', '/api/viaticos/jornadas', jornada('2026-11-12', 70), t.rep);
+    await planificar(jornada('2026-11-10', 70, { peajes: 100 }), t.rep);
+    await planificar(jornada('2026-11-12', 70), t.rep);
     // total: combustible 1,000 + comida 1,000 + peajes 100 = 2,100
     const sol = await call('POST', '/api/viaticos/presupuesto/solicitar', { mes: '2026-11' }, t.rep);
     assert.equal(sol.status, 200); assert.equal(sol.body.item.total, 2100);
     const pid = sol.body.item.id;
     assert.equal((await call('POST', '/api/viaticos/presupuesto/solicitar', { mes: '2026-11' }, t.rep)).status, 409);
-    assert.equal((await call('POST', '/api/viaticos/jornadas', jornada('2026-11-14', 10), t.rep)).status, 409); // mes bloqueado
+    assert.equal((await planificar(jornada('2026-11-14', 10), t.rep)).status, 409); // mes bloqueado
 
     assert.equal((await call('POST', `/api/viaticos/presupuestos/${pid}/aprobar`, {}, t.finanzas)).status, 403);
     assert.equal((await call('POST', `/api/viaticos/presupuestos/${pid}/aprobar`, { montoAprobado: 3000 }, t.gerente)).status, 422);

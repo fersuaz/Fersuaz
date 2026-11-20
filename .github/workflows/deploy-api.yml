@@ -27,6 +27,10 @@ jobs:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
           SPACES_KEY: ${{ secrets.SPACES_KEY }}
           SPACES_SECRET: ${{ secrets.SPACES_SECRET }}
+          SES_ACCESS_KEY: ${{ secrets.SES_ACCESS_KEY }}
+          SES_SECRET_KEY: ${{ secrets.SES_SECRET_KEY }}
+          SES_REGION: ${{ vars.SES_REGION || 'us-east-1' }}
+          SES_REMITENTE: ${{ vars.SES_REMITENTE }}
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
           app_spec_location: .do/app.yaml
