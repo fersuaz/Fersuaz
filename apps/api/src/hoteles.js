@@ -1,0 +1,121 @@
+// Hoteles para el hospedaje de los representantes. No se visitan: se usan para el viático de hospedaje.
+// Google Maps aporta nombre, dirección, teléfono, ubicación y calificación; el precio por noche y los
+// requisitos (aire, agua, cama, higiene, parqueo, seguridad) los confirma la administración.
+import { AuthError as HttpError } from './auth.js';
+import { STATUS } from './roles.js';
+import { provinciaOficial, municipioOficial } from './territorio.js';
+import { normalizeName } from './validation.js';
+
+export const REQUISITOS = Object.freeze({
+  basicos: 'Servicios básicos (luz y baño privado)',
+  aire: 'Aire acondicionado',
+  agua: 'Agua corriente',
+  cama: 'Cama cómoda',
+  higiene: 'Buena higiene',
+  parqueo: 'Parqueo',
+  seguridad: 'Zona y acceso seguros',
+});
+const CLAVES = Object.keys(REQUISITOS);
+const sin = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const r2 = (n) => Math.round(n * 100) / 100;
+
+/** Qué requisitos le faltan a un hotel (los no confirmados cuentan como faltantes). */
+export function requisitosFaltantes(h) { return CLAVES.filter((k) => h?.requisitos?.[k] !== true); }
+export const cumpleTodo = (h) => requisitosFaltantes(h).length === 0;
+
+/**
+ * Elige el hotel recomendado: activo, con precio confirmado y que cumple todos los requisitos.
+ * Prefiere el mismo municipio; si no hay, la misma provincia. Entre esos, el más económico;
+ * a igual precio, el de mejor calificación. Devuelve { hotel, alcance } o null.
+ */
+export function elegirHotel(hoteles, provincia, municipio) {
+  const aptos = hoteles.filter((h) => h.estado !== 'inactivo' && h.provincia === provincia && Number(h.precioNoche) > 0 && cumpleTodo(h));
+  const orden = (a, b) => Number(a.precioNoche) - Number(b.precioNoche) || (Number(b.calificacion) || 0) - (Number(a.calificacion) || 0) || a.nombre.localeCompare(b.nombre, 'es');
+  const mismo = aptos.filter((h) => h.municipio === municipio).sort(orden);
+  if (municipio && mismo.length) return { hotel: mismo[0], alcance: 'municipio' };
+  const prov = aptos.sort(orden);
+  return prov.length ? { hotel: prov[0], alcance: 'provincia' } : null;
+}
+
+export function createHoteles({ data, audit, now = () => new Date() }) {
+  const activo = (a) => a?.status === STATUS.ACTIVO;
+  const gestion = (a) => activo(a) && ['administrador', 'gerencia'].includes(a.role);
+  const permitir = (ok, msg = 'No tienes permiso para esta acción.') => { if (!ok) throw new HttpError(403, msg); };
+  const invalido = (fields) => { throw new HttpError(422, 'Revisa los campos marcados.', fields); };
+  const vista = (h) => ({ ...h, faltan: requisitosFaltantes(h), cumple: cumpleTodo(h) });
+
+  async function crear(actor, input, { fuente = 'manual' } = {}) {
+    permitir(gestion(actor), 'Solo la administración o la gerencia registran hoteles.');
+    const e = {};
+    const nombre = normalizeName(input.nombre);
+    if (nombre.length < 2) e.nombre = 'Escribe el nombre del hotel.';
+    const provincia = provinciaOficial(input.provincia);
+    if (!provincia) e.provincia = 'Elige una provincia oficial.';
+    const municipio = provincia && municipioOficial(provincia, input.municipio);
+    if (provincia && !municipio) e.municipio = `Ese municipio no pertenece a ${provincia}.`;
+    if (Object.keys(e).length) invalido(e);
+    const todos = await data.list('hoteles', { municipio });
+    if (todos.some((h) => (input.placeId && h.placeId === input.placeId) || sin(h.nombre) === sin(nombre))) throw new HttpError(409, `${nombre} ya está registrado en ${municipio}.`, { nombre: 'Ya existe en este municipio.' });
+    const ok = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
+    const h = await data.insert('hoteles', {
+      nombre, provincia, municipio, direccion: normalizeName(input.direccion) || null, telefono: normalizeName(input.telefono) || null,
+      lat: fuente === 'google' ? ok(input.lat) : null, lng: fuente === 'google' ? ok(input.lng) : null, placeId: fuente === 'google' ? input.placeId ?? null : null,
+      calificacion: fuente === 'google' ? ok(input.calificacion) : null, fuente, precioNoche: null, requisitos: {}, notas: null, estado: 'activo', creadoPor: actor.id,
+    });
+    await audit({ actorId: actor.id, action: 'hotel_creado', entity: 'hotel', entityId: h.id, after: { nombre, municipio, fuente } });
+    return vista(h);
+  }
+
+  async function listar(actor, { provincia, municipio } = {}) {
+    permitir(activo(actor));
+    let xs = await data.list('hoteles', municipio ? { municipio } : {});
+    if (provincia) xs = xs.filter((h) => h.provincia === provincia);
+    if (!gestion(actor)) xs = xs.filter((h) => h.estado !== 'inactivo');
+    return xs.map(vista).sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es') || (Number(a.precioNoche) || 1e9) - (Number(b.precioNoche) || 1e9));
+  }
+
+  /** La administración confirma precio por noche y requisitos. Queda auditado (antes y después). */
+  async function actualizar(actor, id, input) {
+    permitir(gestion(actor), 'Solo la administración o la gerencia confirman precio y requisitos.');
+    const h = await data.get('hoteles', id);
+    if (!h) throw new HttpError(404, 'El hotel no existe.');
+    const e = {}; const cambios = {};
+    if (input.precioNoche !== undefined) {
+      const p = input.precioNoche === null || input.precioNoche === '' ? null : Number(input.precioNoche);
+      if (p !== null && (!Number.isFinite(p) || p <= 0 || p > 100000)) e.precioNoche = 'Escribe el precio por noche en RD$.';
+      else cambios.precioNoche = p === null ? null : r2(p);
+    }
+    if (input.requisitos !== undefined) {
+      cambios.requisitos = Object.fromEntries(CLAVES.map((k) => [k, input.requisitos?.[k] === true]));
+    }
+    if (input.notas !== undefined) cambios.notas = normalizeName(input.notas).slice(0, 300) || null;
+    if (input.estado !== undefined) {
+      if (!['activo', 'inactivo'].includes(input.estado)) e.estado = 'Estado no válido.'; else cambios.estado = input.estado;
+    }
+    if (Object.keys(e).length) invalido(e);
+    if (!Object.keys(cambios).length) return vista(h);
+    const out = await data.update('hoteles', id, { ...cambios, verificadoPor: actor.id, verificadoEn: now().toISOString() });
+    await audit({ actorId: actor.id, action: 'hotel_verificado', entity: 'hotel', entityId: id,
+      before: { precioNoche: h.precioNoche ?? null, requisitos: h.requisitos ?? {}, estado: h.estado }, after: cambios });
+    return vista(out);
+  }
+
+  async function recomendado(actor, { provincia, municipio }) {
+    permitir(activo(actor));
+    const p = provinciaOficial(provincia);
+    if (!p) invalido({ provincia: 'Elige una provincia oficial.' });
+    const m = municipio ? municipioOficial(p, municipio) : null;
+    const r = elegirHotel(await data.list('hoteles'), p, m);
+    return r ? { hotel: vista(r.hotel), alcance: r.alcance } : null;
+  }
+
+  /** Para el hospedaje de una jornada: el hotel elegido debe cumplir todo y su precio sale de aquí, no del navegador. */
+  async function paraHospedaje(id) {
+    const h = await data.get('hoteles', String(id));
+    if (!h || h.estado === 'inactivo') throw new HttpError(422, 'Ese hotel no está disponible.', { 'hospedaje.hotelId': 'Elige otro hotel.' });
+    if (!(Number(h.precioNoche) > 0) || !cumpleTodo(h)) throw new HttpError(422, `${h.nombre} todavía no tiene precio y requisitos confirmados.`, { 'hospedaje.hotelId': 'Elige un hotel verificado.' });
+    return h;
+  }
+
+  return { crear, listar, actualizar, recomendado, paraHospedaje };
+}

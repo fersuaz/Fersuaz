@@ -41,6 +41,18 @@ export function calcularHospedaje({ noches, tarifaNoche, cargos = 0 }) {
   return round2(noches * tarifaNoche + cargos);
 }
 
+/**
+ * Tope mensual de combustible o transporte. Lo calculado por km se paga hasta el tope;
+ * lo que pase del tope queda como excedente (no se paga, se avisa). Sin tope, se paga lo calculado.
+ */
+export function aplicarTope({ calculado, tope }) {
+  requireNumber('Combustible calculado', calculado);
+  if (tope == null) return { aplicado: round2(calculado), excedente: 0, topado: false };
+  requireNumber('Tope', tope, { allowZero: false });
+  const aplicado = Math.min(calculado, tope);
+  return { aplicado: round2(aplicado), excedente: round2(calculado - aplicado), topado: calculado > tope };
+}
+
 const CATEGORIAS = ['combustible', 'alimentacion', 'hospedaje', 'peajes', 'estacionamiento', 'otros'];
 
 /** Suma categorías de presupuesto. El salario no es una categoría y se rechaza. */

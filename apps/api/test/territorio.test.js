@@ -177,7 +177,7 @@ test('Google Maps: registro automático de una provincia, sin duplicar y descart
   try {
     assert.equal((await call('POST', '/api/territorio/google/barrido', { tipo: 'farmacia', provincia: 'Espaillat' }, tok.sup)).status, 403);
     assert.equal((await call('POST', '/api/territorio/google/barrido', { tipo: 'farmacia', provincia: 'Espaillat', municipio: 'Bonao' }, tok.ger)).status, 422);
-    assert.deepEqual((await call('GET', '/api/territorio/google/barrido/estimar?tipo=farmacia&provincia=Espaillat', null, tok.ger)).body.item, { municipios: 5, consultasMaximas: 15 });
+    assert.deepEqual((await call('GET', '/api/territorio/google/barrido/estimar?tipo=farmacia&provincia=Espaillat', null, tok.ger)).body.item, { municipios: 5, tipos: 1, consultasMaximas: 15 });
     assert.equal((await call('GET', '/api/territorio/google/barrido/estimar?tipo=farmacia', null, tok.ger)).body.item.municipios, 158);
     assert.equal((await call('POST', '/api/territorio/google/barrido', { tipo: 'farmacia', provincia: 'Espaillat' }, tok.ger)).status, 202);
     const e = await esperar();

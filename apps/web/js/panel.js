@@ -379,10 +379,19 @@ V.jornadas = async () => {
     const c = crons.find((x) => x.id === cronId);
     const r = await api('GET', `/api/cronogramas/${cronId}/ruta`);
     const boton = h('button', { class: 'btn', type: 'submit' }, 'Crear mi jornada');
+    const fin = r.paradas.at(-1);
+    const [{ items: hotelesProv }, { item: rec }] = await Promise.all([
+      api('GET', `/api/hoteles?provincia=${encodeURIComponent(fin.provincia)}`).catch(() => ({ items: [] })),
+      api('GET', `/api/hoteles/recomendado?provincia=${encodeURIComponent(fin.provincia)}&municipio=${encodeURIComponent(fin.municipio)}`).catch(() => ({ item: null }))]);
+    const aptos = hotelesProv.filter((x) => x.cumple && x.precioNoche);
+    const inicial = rec?.hotel?.id ?? (aptos.length ? '' : 'otro');
+    const selHotel = campo('hospedaje.hotelId', 'Hotel', { options: [...aptos.map((x) => ({ value: x.id, label: `${x.nombre} (${x.municipio}), ${RD(x.precioNoche)} por noche${rec?.hotel?.id === x.id ? ', recomendado' : ''}` })), { value: 'otro', label: 'Otro hotel (lo escribo yo)' }], value: inicial, placeholder: 'Elige el hotel' });
+    const manual = h('div', { class: 'form-fila', hidden: inicial !== 'otro' }, campo('hospedaje.hotel', 'Nombre del hotel'), campo('hospedaje.tarifaNoche', 'Tarifa por noche RD$', { type: 'number', min: 0, step: 0.01 }));
+    selHotel.querySelector('select').addEventListener('change', (e) => { manual.hidden = e.target.value !== 'otro'; });
     const hosp = h('details', { class: 'tarjeta', style: 'background:var(--canvas)' }, h('summary', { style: 'cursor:pointer;font-weight:600;color:var(--marino)' }, '¿Necesitas hotel? La gerencia debe autorizarlo'),
-      h('div', { class: 'form-fila', style: 'margin-top:1rem' }, campo('hospedaje.noches', 'Noches', { type: 'number', min: 1, step: 1, inputmode: 'numeric' }), campo('hospedaje.tarifaNoche', 'Tarifa por noche RD$', { type: 'number', min: 0, step: 0.01 }),
-        campo('hospedaje.cargos', 'Impuestos y cargos RD$', { type: 'number', min: 0, step: 0.01, value: 0 }), campo('hospedaje.hotel', 'Hotel', {}, '(si lo sabes)')),
-      campo('hospedaje.motivo', 'Motivo del hospedaje'));
+      h('p', { class: 'hint', style: 'margin-top:1rem' }, rec ? `Recomendado: ${rec.hotel.nombre}, el más económico ${rec.alcance === 'municipio' ? `en ${fin.municipio}` : `de ${fin.provincia}`} que cumple servicios básicos, aire, agua, cama cómoda, higiene, parqueo y seguridad. El precio sale del hotel verificado.` : `Aún no hay hoteles verificados en ${fin.provincia}. Puedes escribir uno; la gerencia lo revisará.`),
+      h('div', { class: 'form-fila' }, selHotel, campo('hospedaje.noches', 'Noches', { type: 'number', min: 1, step: 1, inputmode: 'numeric', value: 1 }), campo('hospedaje.cargos', 'Impuestos y cargos RD$', { type: 'number', min: 0, step: 0.01, value: 0 })),
+      manual, campo('hospedaje.motivo', 'Motivo del hospedaje'));
     const form = h('form', { class: 'tarjeta', novalidate: true },
       h('h2', {}, `Ruta del ${fecha(r.fecha)}`),
       h('p', { class: 'hint' }, r.optimizado ? 'Ordenada por distancia para que recorras menos y gastes menos combustible.' : r.km != null ? 'Ruta calculada por carretera.' : 'El mapa aún no está conectado: se respeta el orden del cronograma y escribes los km por carretera.'),
@@ -397,7 +406,9 @@ V.jornadas = async () => {
       e.preventDefault();
       const g = (k) => form.elements[k]?.value;
       const body = { cronogramaId: cronId, kmEstimados: g('kmEstimados'), peajes: g('peajes'), estacionamiento: g('estacionamiento'), otros: g('otros'), conAlimentacion: form.conAlimentacion.checked,
-        hospedaje: hosp.open && g('hospedaje.noches') ? { noches: Number(g('hospedaje.noches')), tarifaNoche: g('hospedaje.tarifaNoche'), cargos: g('hospedaje.cargos'), hotel: g('hospedaje.hotel'), motivo: g('hospedaje.motivo') } : null };
+        hospedaje: hosp.open && g('hospedaje.noches') ? (g('hospedaje.hotelId') && g('hospedaje.hotelId') !== 'otro'
+          ? { hotelId: g('hospedaje.hotelId'), noches: Number(g('hospedaje.noches')), cargos: g('hospedaje.cargos'), motivo: g('hospedaje.motivo') }
+          : { noches: Number(g('hospedaje.noches')), tarifaNoche: g('hospedaje.tarifaNoche'), cargos: g('hospedaje.cargos'), hotel: g('hospedaje.hotel'), motivo: g('hospedaje.motivo') }) : null };
       if (await enviar(form, boton, () => api('POST', '/api/viaticos/jornadas', body))) irA('jornadas', { mes });
     });
     return vista('Crear jornada', 'Los lugares y el día los programó el administrador. El sistema calcula el recorrido, el combustible y los viáticos.', form);
@@ -422,6 +433,66 @@ V.jornadas = async () => {
   return vista('Mis jornadas', 'Tu cronograma lo programa el administrador; desde cada día creas tu jornada y el sistema calcula la ruta y los viáticos.', ...bloques);
 };
 
+/** Propuesta automática del mes (solo administrador): el sistema reparte los lugares de la zona; el admin ajusta y aprueba. */
+async function propuestaMes(rep, mes, div) {
+  const fpd = campo('porDia', 'Lugares por día', { type: 'number', min: 1, max: 15, step: 1, value: 8, inputmode: 'numeric' });
+  const sab = h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'sabados' }), h('span', {}, 'Incluir sábados'));
+  const b = h('button', { class: 'btn', type: 'submit' }, 'Proponer el mes');
+  const salida = h('div', { 'aria-live': 'polite' });
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Propuesta automática del mes'),
+    h('p', { class: 'hint' }, 'El sistema reparte las farmacias, hospitales, clínicas y UNAP de su zona que aún no tienen día este mes, en los días laborables libres. Empieza por su municipio de residencia y agrupa por cercanía para gastar menos combustible. Nada se guarda hasta que apruebes.'),
+    h('div', { class: 'form-fila' }, fpd), sab, h('div', { class: 'acciones' }, b), salida);
+  const etiqueta = (l) => (l.refTipo === 'farmacia' ? 'Farmacia' : div.tipos[l.tipo] ?? 'Centro');
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const r = await enviar(f, b, () => api('POST', '/api/cronogramas/propuesta', { representanteId: rep, mes, porDia: Number(f.porDia.value), sabados: f.sabados.checked }));
+    if (!r) return;
+    const p = r.item; const quitados = new Set(); const diasFuera = new Set();
+    if (!p.dias.length) {
+      salida.replaceChildren(h('div', { class: 'tarjeta vacio', style: 'margin-top:1rem' }, h('strong', {}, p.resumen.lugares ? 'No quedan días laborables libres este mes' : 'No hay lugares pendientes'),
+        p.resumen.lugares ? 'Elige el mes siguiente o anula algún día.' : 'Todos los lugares de su zona ya tienen día este mes, o su zona no tiene lugares registrados.'));
+      return;
+    }
+    const aprobar = h('button', { class: 'btn', type: 'button' }, `Aprobar ${p.dias.length} día(s)`);
+    const contar = () => {
+      const n = p.dias.filter((d) => !diasFuera.has(d.fecha) && d.lugares.some((l) => !quitados.has(`${d.fecha}|${l.refId}`))).length;
+      aprobar.textContent = `Aprobar ${n} día(s)`; aprobar.disabled = !n;
+    };
+    const tarjetas = p.dias.map((d) => {
+      const lista = h('ol', { class: 'propuesta-lugares' }, d.lugares.map((l) => {
+        const k = `${d.fecha}|${l.refId}`;
+        const li = h('li', {}, h('span', {}, h('strong', {}, l.lugar), h('small', {}, `${etiqueta(l)} · ${l.municipio}${l.lat == null ? ' · sin ubicación' : ''}`)),
+          h('button', { class: 'btn-enlace', type: 'button', 'aria-label': `Quitar ${l.lugar}`, onclick: (ev) => {
+            const fuera = !quitados.has(k); fuera ? quitados.add(k) : quitados.delete(k);
+            li.classList.toggle('quitado', fuera); ev.target.textContent = fuera ? 'Volver a poner' : 'Quitar'; contar();
+          } }, 'Quitar'));
+        return li;
+      }));
+      const muns = [...new Set(d.lugares.map((l) => l.municipio))].join(', ');
+      const art = h('article', { class: 'propuesta-dia' });
+      const caja = h('input', { type: 'checkbox', checked: true, onchange: (ev) => { ev.target.checked ? diasFuera.delete(d.fecha) : diasFuera.add(d.fecha); art.classList.toggle('quitado', !ev.target.checked); contar(); } });
+      art.append(h('label', { class: 'propuesta-cabeza' }, caja, h('span', {}, h('strong', {}, fecha(d.fecha)), h('small', {}, `${d.lugares.length} lugar(es) · ${muns}`))), lista);
+      return art;
+    });
+    aprobar.addEventListener('click', async () => {
+      const dias = p.dias.filter((d) => !diasFuera.has(d.fecha))
+        .map((d) => ({ fecha: d.fecha, lugares: d.lugares.filter((l) => !quitados.has(`${d.fecha}|${l.refId}`)).map(({ refTipo, refId }) => ({ refTipo, refId })) }))
+        .filter((d) => d.lugares.length);
+      if (!(await confirmar('Aprobar cronograma', `Se aprobarán ${dias.length} día(s) con ${dias.reduce((n, d) => n + d.lugares.length, 0)} lugares. El representante recibirá un aviso y podrá crear sus jornadas.`, { okTexto: 'Aprobar' }))) return;
+      aprobar.disabled = true; aprobar.textContent = 'Aprobando…';
+      try { await api('POST', '/api/cronogramas/lote', { representanteId: rep, dias }); router(); }
+      catch (err) { const a = h('div', { role: 'status' }); estado(a, 'error', err.message); salida.prepend(a); contar(); }
+    });
+    const avisos = [];
+    if (p.sinDia.length) avisos.push(`${fmtN.format(p.sinDia.length)} lugar(es) no caben en los días libres de este mes; quedarán para el próximo.`);
+    if (p.resumen.sinUbicacion) avisos.push(`${fmtN.format(p.resumen.sinUbicacion)} lugar(es) no tienen ubicación y van al final de su municipio.`);
+    if (p.sinResidencia) avisos.push('Este representante no tiene perfil de viático: el recorrido no empieza en su residencia.');
+    salida.replaceChildren(h('p', { class: 'hint', style: 'margin-top:1rem' }, `${fmtN.format(p.resumen.lugares)} lugares pendientes en ${fmtN.format(p.resumen.diasLibres)} días libres. Quita lo que no quieras antes de aprobar; el orden exacto de cada día lo calcula el mapa cuando el representante crea su jornada.`),
+      ...avisos.map((t) => h('div', { class: 'aviso' }, t)), h('div', { class: 'propuesta' }, tarjetas), h('div', { class: 'acciones' }, aprobar));
+  });
+  return f;
+}
+
 V.cronogramas = async () => {
   const mes = mesDe(); const rep = param('rep') || '';
   const [{ items: reps }, div] = await Promise.all([api('GET', '/api/viaticos/representantes'), division()]);
@@ -430,12 +501,12 @@ V.cronogramas = async () => {
   selRep.querySelector('select').addEventListener('change', (e) => irA('cronogramas', { mes, rep: e.target.value }));
   const bloques = [h('div', { class: 'form-fila' }, selRep, filtroMes(mes, 'cronogramas', () => `rep=${rep}`, { futuro: true }))];
   if (!rep) return vista('Cronogramas', 'Elige un representante para ver y programar sus días.', ...bloques);
-  const [{ item: zona }, { items: crons }, { items: farms }] = await Promise.all([api('GET', `/api/territorio/zonas/${rep}`), api('GET', `/api/cronogramas?representanteId=${rep}&mes=${mes}`), api('GET', '/api/catalogo/farmacias')]);
+  const [{ item: zona }, { items: crons }, lz] = await Promise.all([api('GET', `/api/territorio/zonas/${rep}`), api('GET', `/api/cronogramas?representanteId=${rep}&mes=${mes}`), api('GET', `/api/territorio/zonas/${rep}/lugares`)]);
   if (esAdmin) {
     if (!zona.provincias.length) bloques.push(h('div', { class: 'aviso error' }, 'Este representante no tiene provincias asignadas. ', h('a', { href: `#representantes?rep=${rep}` }, 'Asignar provincias')));
     else {
-      const ests = (await Promise.all(zona.provincias.map((p) => api('GET', `/api/territorio/establecimientos?provincia=${encodeURIComponent(p)}`)))).flatMap((x) => x.items);
-      const lugares = [...ests.map((x) => ({ ...x, refTipo: 'establecimiento', etiqueta: div.tipos[x.tipo] })), ...farms.filter((f) => zona.provincias.includes(f.provincia) && f.estado !== 'inactiva').map((x) => ({ ...x, refTipo: 'farmacia', etiqueta: 'Farmacia' }))]
+      bloques.push(await propuestaMes(rep, mes, div));
+      const lugares = [...lz.establecimientos.map((x) => ({ ...x, refTipo: 'establecimiento', etiqueta: div.tipos[x.tipo] })), ...lz.farmacias.map((x) => ({ ...x, refTipo: 'farmacia', etiqueta: 'Farmacia' }))]
         .sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
       // Días del mes como botones
       const [y, m] = mes.split('-').map(Number); const nDias = new Date(y, m, 0).getDate();
@@ -451,8 +522,8 @@ V.cronogramas = async () => {
       const lista = h('div', { class: 'lugares-lista' }, lugares.map((l) => h('label', { dataset: { mun: l.municipio } }, h('input', { type: 'checkbox', name: 'lugar', value: `${l.refTipo}:${l.id}` }), h('span', {}, l.nombre, h('small', {}, `${l.etiqueta} · ${l.municipio}, ${l.provincia}`)))));
       fmun.querySelector('select').addEventListener('change', (e) => lista.querySelectorAll('label').forEach((x) => { x.hidden = !!e.target.value && x.dataset.mun !== e.target.value; }));
       const b = h('button', { class: 'btn', type: 'submit' }, 'Aprobar cronograma');
-      const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Programar días'),
-        h('p', { class: 'hint' }, `Provincias de este representante: ${zona.provincias.join(', ')}. Elige los días y los lugares; el orden de visita lo calcula el sistema por distancia.`),
+      const f = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-top:1.25rem' }, h('h2', {}, 'Programar días a mano'),
+        h('p', { class: 'hint' }, `Zona: ${zona.provincias.map((p) => (zona.municipios?.[p]?.length ? `${p} (${zona.municipios[p].join(', ')})` : p)).join('; ')}. Elige los días y los lugares; el orden de visita lo calcula el sistema por distancia.`),
         h('p', { class: 'error', dataset: { for: 'fechas' } }), dias,
         lugares.length ? [fmun, h('p', { class: 'error', dataset: { for: 'lugares' } }), lista] : h('div', { class: 'aviso' }, 'No hay lugares registrados en sus provincias. ', h('a', { href: '#establecimientos' }, 'Registrar establecimientos')),
         campo('nota', 'Nota para el representante', {}, '(opcional)'), h('div', { class: 'acciones' }, b));
@@ -521,8 +592,9 @@ V.presupuesto = async () => {
   if (editable) {
     if (c.faltan?.length) bloques.push(h('div', { class: 'aviso' }, h('strong', {}, 'Para solicitar falta: '), c.faltan.join(' ')));
     if (c.detalle) {
+      for (const a of c.avisos ?? []) bloques.push(h('div', { class: 'aviso' }, a));
       bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Presupuesto calculado'), desglose(c.detalle, c.total),
-        h('p', { class: 'hint', style: 'margin-top:1rem' }, `${c.supuestos.jornadas} jornadas, ${fmtN.format(c.supuestos.km)} km (${c.supuestos.kmTipo}), ${c.supuestos.diasAlimentacion} días de alimentación a ${RD(c.supuestos.tarifaAlimentacion)}.${c.supuestos.reembolsoPorKm ? ` Reembolso de ${RD(c.supuestos.reembolsoPorKm)} por km.` : c.supuestos.galones ? ` ${fmtN.format(c.supuestos.galones)} galones a ${c.supuestos.rendimiento} km/gal.` : ''} Tu salario no forma parte de este presupuesto.`),
+        h('p', { class: 'hint', style: 'margin-top:1rem' }, `${c.supuestos.jornadas} jornadas, ${fmtN.format(c.supuestos.km)} km (${c.supuestos.kmTipo}), ${c.supuestos.diasAlimentacion} días de alimentación a ${RD(c.supuestos.tarifaAlimentacion)}.${c.supuestos.reembolsoPorKm ? ` Reembolso de ${RD(c.supuestos.reembolsoPorKm)} por km.` : c.supuestos.galones ? ` ${fmtN.format(c.supuestos.galones)} galones a ${c.supuestos.rendimiento} km/gal.` : ''}${c.supuestos.tope != null ? ` Tope mensual de combustible: ${RD(c.supuestos.tope)} (${c.supuestos.topeFuente === 'representante' ? 'propio' : 'global'}).` : ''} Tu salario no forma parte de este presupuesto.`),
         h('div', { class: 'acciones' }, h('button', { class: 'btn', disabled: c.faltan?.length > 0, onclick: async (ev) => {
           if (!(await confirmar('Solicitar viáticos', `Enviar a la gerencia el presupuesto de ${mes} por ${RD(c.total)}. Después no podrás cambiar las jornadas del mes.`, { okTexto: 'Solicitar' }))) return;
           ev.target.disabled = true; try { await api('POST', '/api/viaticos/presupuesto/solicitar', { mes }); } catch (e) { alert(e.message); } router();
@@ -563,9 +635,22 @@ V.perfiles = async () => {
     { t: 'Residencia', v: (r) => r.perfil ? `${r.perfil.residencia.municipio}, ${r.perfil.residencia.provincia}` : 'Sin perfil' },
     { t: 'Vehículo', v: (r) => r.perfil ? `${r.perfil.vehiculo.propiedad === 'propio' ? 'Propio' : 'Asignado'}, ${combs.find((c) => c.value === r.perfil.vehiculo.combustible)?.label ?? ''}${r.perfil.vehiculo.rendimiento ? `, ${r.perfil.vehiculo.rendimiento} km/gal` : ''}` : '' },
     { t: 'Comida/día', num: true, v: (r) => r.perfil ? RD(r.perfil.tarifaAlimentacion) : '' },
+    { t: 'Tope combustible', num: true, v: (r) => r.perfil?.topeCombustible ? RD(r.perfil.topeCombustible) : r.perfil ? 'Global' : '' },
     { t: '', v: (r) => puede ? h('a', { class: 'btn-sec btn-peq', href: `#perfiles?rep=${r.id}` }, r.perfil ? 'Editar' : 'Configurar') : '' },
   ], reps, ['Aún no hay representantes activos', 'Aparecen aquí cuando se aprueban sus cuentas.']);
-  if (!id || !puede) return vista('Perfiles de viático', 'Vehículo, residencia y tarifa de cada representante. La dirección exacta solo la ven la gerencia y el propio representante.', lista);
+  if (!id || !puede) {
+    const bloques = [];
+    if (ES_GER()) {
+      const { item: tg } = await api('GET', '/api/viaticos/tope-global');
+      const bt = h('button', { class: 'btn', type: 'submit' }, 'Guardar tope');
+      const ft = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-bottom:1.5rem' }, h('h2', {}, 'Tope mensual global de combustible o transporte'),
+        h('p', { class: 'hint' }, 'Se aplica a todos los representantes que no tengan un tope propio. El combustible se calcula por los km del cronograma; si pasa del tope, se presupuesta el tope y se avisa. Déjalo vacío para no usar tope.'),
+        h('div', { class: 'form-fila' }, campo('monto', 'Tope mensual RD$', { type: 'number', min: 0, step: 0.01, value: tg.monto ?? '', inputmode: 'decimal' })), h('div', { class: 'acciones' }, bt));
+      ft.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(ft, bt, () => api('POST', '/api/viaticos/tope-global', { monto: ft.monto.value || null }))) router(); });
+      bloques.push(ft);
+    }
+    return vista('Perfiles de viático', 'Vehículo, residencia, tarifa y tope de cada representante. La dirección exacta solo la ven la gerencia y el propio representante.', ...bloques, lista);
+  }
   const r = reps.find((x) => x.id === id); const pf = (await api('GET', `/api/viaticos/perfiles/${id}`)).item;
   const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar perfil');
   const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, r?.fullName ?? 'Representante'),
@@ -577,13 +662,14 @@ V.perfiles = async () => {
       campo('vehiculo.marca', 'Marca', { value: pf?.vehiculo?.marca ?? '' }), campo('vehiculo.modelo', 'Modelo', { value: pf?.vehiculo?.modelo ?? '' }), campo('vehiculo.anio', 'Año', { type: 'number', value: pf?.vehiculo?.anio ?? '' }), campo('vehiculo.placa', 'Placa', { value: pf?.vehiculo?.placa ?? '' }, '(restringida)')),
     h('h2', { style: 'margin-top:1rem' }, 'Viáticos'),
     h('div', { class: 'form-fila' }, campo('tarifaAlimentacion', 'Alimentación por día RD$', { type: 'number', min: 0, step: 0.01, value: pf?.tarifaAlimentacion ?? '' }),
-      campo('reembolsoPorKm', 'Reembolso por km RD$', { type: 'number', min: 0, step: 0.01, value: pf?.reembolsoPorKm ?? '' }, '(solo vehículo propio; reemplaza al combustible)')),
+      campo('reembolsoPorKm', 'Reembolso por km RD$', { type: 'number', min: 0, step: 0.01, value: pf?.reembolsoPorKm ?? '' }, '(solo vehículo propio; reemplaza al combustible)'),
+      campo('topeCombustible', 'Tope mensual de combustible o transporte RD$', { type: 'number', min: 0, step: 0.01, value: pf?.topeCombustible ?? '' }, '(vacío = usa el tope global)')),
     h('div', { class: 'acciones' }, b, h('a', { class: 'btn-sec', href: '#perfiles' }, 'Volver')));
   f.addEventListener('submit', async (e) => {
     e.preventDefault(); const g = (k) => f.elements[k].value;
     const body = { residencia: { provincia: g('residencia.provincia'), municipio: g('residencia.municipio'), direccion: g('residencia.direccion') },
       vehiculo: { propiedad: g('vehiculo.propiedad'), combustible: g('vehiculo.combustible'), rendimiento: g('vehiculo.rendimiento'), marca: g('vehiculo.marca'), modelo: g('vehiculo.modelo'), anio: g('vehiculo.anio'), placa: g('vehiculo.placa') },
-      tarifaAlimentacion: g('tarifaAlimentacion'), reembolsoPorKm: g('reembolsoPorKm') };
+      tarifaAlimentacion: g('tarifaAlimentacion'), reembolsoPorKm: g('reembolsoPorKm'), topeCombustible: g('topeCombustible') };
     if (await enviar(f, b, () => api('POST', `/api/viaticos/perfiles/${id}`, body))) location.hash = '#perfiles';
   });
   return vista('Perfil de viático', null, f);
@@ -915,13 +1001,53 @@ V.establecimientos = async () => {
     tabla([{ t: 'Nombre', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] }, { t: 'Tipo', v: (x) => div.tipos[x.tipo] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` },
       { t: 'Estado', v: (x) => chip(x.estado) }, { t: '', v: (x) => GESTION_T() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar(x) }, 'Validar') : '' }],
     items, ['No hay establecimientos con estos filtros', 'Regístralos aquí; tu supervisor también puede importarlos desde Excel.'])];
-  if (GESTION_T()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, importador('establecimientos', 'Importar clínicas, hospitales, UNAP y centros', 'Tipo, nombre, provincia y municipio son obligatorios. Los que ya existen en el mismo municipio no se duplican.', router), await buscadorGoogle(tipos, null), ES_GER() ? await registroAutomatico(tipos) : null));
+  if (GESTION_T()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, importador('establecimientos', 'Importar clínicas, hospitales, UNAP y centros', 'Tipo, nombre, provincia y municipio son obligatorios. Los que ya existen en el mismo municipio no se duplican.', router), await buscadorGoogle(tipos, null), ES_GER() ? await registroAutomatico([['salud', 'Hospitales, clínicas, UNAP y centros de primer nivel (todo junto)'], ...tipos]) : null));
   return vista('Establecimientos', 'Clínicas, hospitales, UNAP y centros de primer nivel por municipio. Se usan como paradas exactas de las jornadas.', ...bloques);
+};
+
+V.hoteles = async () => {
+  const [div, { items: reqs }] = await Promise.all([division(), api('GET', '/api/hoteles/requisitos')]);
+  const fprov = param('provincia') || ''; const fmun = param('municipio') || '';
+  const qs = new URLSearchParams(Object.entries({ provincia: fprov, municipio: fmun }).filter(([, v]) => v));
+  const [{ items }, rec] = await Promise.all([api('GET', `/api/hoteles?${qs}`), fprov ? api('GET', `/api/hoteles/recomendado?${qs}`).then((x) => x.item) : null]);
+  const fz = selectorZona(div.provincias, div.municipios, { provincia: fprov, municipio: fmun, prefijo: 'f' });
+  fz.sp.options[0].textContent = 'Todas las provincias'; if (fz.sp.value) fz.sm.options[0].textContent = 'Todos los municipios';
+  const aplicar = () => irA('hoteles', Object.fromEntries(Object.entries({ provincia: fz.sp.value, municipio: fz.sm.value }).filter(([, v]) => v)));
+  fz.sp.addEventListener('change', aplicar); fz.sm.addEventListener('change', aplicar);
+  const editar = async (x) => {
+    const d = $('#dialogo'); $('#dialogo-titulo').textContent = x.nombre;
+    const precio = h('input', { id: 'h-precio', type: 'number', min: 1, step: 0.01, inputmode: 'decimal', value: x.precioNoche ?? '', style: 'width:100%;border:1.5px solid var(--linea);border-radius:12px;padding:.7rem;font:inherit' });
+    const cajas = reqs.map((r) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: `req-${r.value}`, checked: x.requisitos?.[r.value] === true }), h('span', {}, r.label)));
+    const notas = h('textarea', { id: 'h-notas', rows: 2, style: 'width:100%;border:1.5px solid var(--linea);border-radius:12px;padding:.7rem;font:inherit' }, x.notas ?? '');
+    const inactivo = h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'h-inactivo', checked: x.estado === 'inactivo' }), h('span', {}, 'No usar este hotel'));
+    $('#dialogo-cuerpo').replaceChildren(h('p', { class: 'hint' }, `${x.municipio}, ${x.provincia}${x.telefono ? `. Teléfono ${x.telefono}` : ''}. Confirma el precio y marca solo lo que hayas verificado por llamada o visita.`),
+      h('label', { for: 'h-precio', class: 'hint' }, 'Precio por noche RD$'), precio, h('div', { style: 'display:grid;gap:.25rem;margin:.75rem 0' }, cajas), h('label', { for: 'h-notas', class: 'hint' }, 'Notas'), notas, inactivo);
+    $('#dialogo-ok').textContent = 'Guardar'; d.showModal();
+    const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
+    if (!ok) return;
+    const requisitos = Object.fromEntries(reqs.map((r) => [r.value, d.querySelector(`input[name="req-${r.value}"]`).checked]));
+    try { await api('POST', `/api/hoteles/${x.id}`, { precioNoche: precio.value || null, requisitos, notas: notas.value, estado: d.querySelector('input[name=h-inactivo]').checked ? 'inactivo' : 'activo' }); } catch (e) { alert(e.message); }
+    router();
+  };
+  const bloques = [];
+  if (rec) bloques.push(h('div', { class: 'tarjeta recomendado' }, h('h2', {}, 'Recomendado'), h('p', {}, h('strong', {}, rec.hotel.nombre), ` en ${rec.hotel.municipio}: ${RD(rec.hotel.precioNoche)} por noche. Es el más económico ${rec.alcance === 'municipio' ? 'del municipio' : 'de la provincia'} que cumple todos los requisitos.`)));
+  else if (fprov) bloques.push(h('div', { class: 'aviso' }, `Aún no hay un hotel verificado en ${fmun || fprov} que cumpla todos los requisitos.`));
+  bloques.push(h('div', { class: 'form-fila' }, fz.fp, fz.fm),
+    tabla([
+      { t: 'Hotel', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, [x.direccion, x.telefono].filter(Boolean).join('. '))] },
+      { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` },
+      { t: 'Calificación', num: true, v: (x) => x.calificacion != null ? `${fmtN.format(x.calificacion)} de 5` : '' },
+      { t: 'Por noche', num: true, v: (x) => x.precioNoche ? RD(x.precioNoche) : 'Sin confirmar' },
+      { t: 'Requisitos', v: (x) => x.estado === 'inactivo' ? h('span', { class: 'chip anulado' }, 'No usar') : x.cumple ? h('span', { class: 'chip validado' }, 'Cumple todo') : h('span', { class: 'chip pendiente', title: x.faltan.map((k) => reqs.find((r) => r.value === k)?.label).join(', ') }, `Faltan ${x.faltan.length}`) },
+      { t: '', v: (x) => ES_GER() ? h('button', { class: 'btn-sec btn-peq', onclick: () => editar(x) }, x.precioNoche ? 'Editar' : 'Confirmar') : '' },
+    ], items, ['No hay hoteles con estos filtros', ES_GER() ? 'Tráelos de Google Maps con el registro automático de abajo.' : 'La administración los registra y verifica.']));
+  if (ES_GER()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, await buscadorGoogle([['hotel', 'Hoteles']], null), await registroAutomatico([['hotel', 'Hoteles']])));
+  return vista('Hoteles', 'Para el hospedaje de los representantes. Google Maps trae los hoteles; la administración confirma precio y requisitos: servicios básicos, aire, agua, cama cómoda, higiene, parqueo y seguridad. Se recomienda el más económico que cumple todo.', ...bloques);
 };
 
 V.representantes = async () => {
   const ver = param('ver') || 'zonas';
-  const seg = segmentos('Representantes', [['zonas', 'Provincias por representante'], ['preregistro', 'Pre-registro por Excel']], ver, (id) => irA('representantes', { ver: id }));
+  const seg = segmentos('Representantes', [['zonas', 'Zonas por representante'], ['preregistro', 'Pre-registro por Excel']], ver, (id) => irA('representantes', { ver: id }));
   if (ver === 'preregistro') {
     const { items } = await api('GET', '/api/territorio/preregistros');
     const anular = async (p) => { if (await confirmar('Anular pre-registro', `${p.nombre} ya no quedará aprobado automáticamente al registrarse.`, { okTexto: 'Anular' })) { try { await api('POST', `/api/territorio/preregistros/${p.id}/anular`); } catch (e) { alert(e.message); } router(); } };
@@ -935,20 +1061,50 @@ V.representantes = async () => {
   const [{ items: reps }, div] = await Promise.all([api('GET', '/api/viaticos/representantes'), division()]);
   const id = param('rep');
   if (id) {
-    const r = reps.find((x) => x.id === id); const { item } = await api('GET', `/api/territorio/zonas/${id}`);
+    const r = reps.find((x) => x.id === id);
+    const [{ item }, lz] = await Promise.all([api('GET', `/api/territorio/zonas/${id}`), api('GET', `/api/territorio/zonas/${id}/lugares`)]);
     const marcadas = new Set(item.provincias);
-    const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar provincias');
-    const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, r?.fullName ?? 'Representante'), h('p', { class: 'hint' }, 'Marca las provincias que visita. Solo verá y registrará establecimientos en ellas.'),
-      h('div', { class: 'provincias' }, div.provincias.map((p) => h('label', {}, h('input', { type: 'checkbox', name: 'prov', value: p, checked: marcadas.has(p) }), p))),
+    const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar zona');
+    const pos = campo('posicion', 'Posición', { options: ['Visitador', 'PVC', 'Vendedor', 'Promotora'].map((x) => ({ value: x, label: x })), value: r?.position ?? '' });
+    const resumenMun = (n) => (n ? `Solo ${n} municipio(s)` : 'Toda la provincia (elegir municipios)');
+    const filas = div.provincias.map((p) => {
+      const elegidos = new Set(item.municipios?.[p] ?? []);
+      const muns = h('details', { class: 'prov-muns', hidden: !marcadas.has(p), open: elegidos.size > 0 },
+        h('summary', {}, resumenMun(elegidos.size)),
+        h('div', { class: 'prov-muns-lista' }, div.municipios[p].map((m) => h('label', {}, h('input', { type: 'checkbox', name: `mun:${p}`, value: m, checked: elegidos.has(m) }), m))));
+      muns.addEventListener('change', () => { muns.querySelector('summary').textContent = resumenMun(muns.querySelectorAll('input:checked').length); });
+      const caja = h('input', { type: 'checkbox', name: 'prov', value: p, checked: marcadas.has(p), onchange: (e) => { muns.hidden = !e.target.checked; } });
+      return h('div', { class: 'prov-item' }, h('label', {}, caja, p), muns);
+    });
+    const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, r?.fullName ?? 'Representante'),
+      h('div', { class: 'form-fila' }, pos),
+      h('p', { class: 'hint' }, 'Marca las provincias que visita. Si solo visita algunos municipios de una provincia, ábrela y márcalos; si no marcas ninguno, visita toda la provincia. Solo se le programan farmacias, hospitales, clínicas y UNAP de su zona.'),
+      h('p', { class: 'error', dataset: { for: 'municipios' } }),
+      h('div', { class: 'provincias provincias-zona' }, filas),
       h('div', { class: 'acciones' }, b, h('a', { class: 'btn-sec', href: '#representantes' }, 'Volver')));
-    f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', `/api/territorio/zonas/${id}`, { provincias: [...f.querySelectorAll('[name=prov]:checked')].map((x) => x.value) }))) irA('representantes', {}); });
-    return vista('Provincias del representante', null, f);
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const provincias = [...f.querySelectorAll('[name=prov]:checked')].map((x) => x.value);
+      const municipios = Object.fromEntries(provincias.map((p) => [p, [...f.querySelectorAll(`[name="mun:${p}"]:checked`)].map((x) => x.value)]).filter(([, ms]) => ms.length));
+      if (await enviar(f, b, () => api('POST', `/api/territorio/zonas/${id}`, { provincias, municipios, posicion: f.posicion.value || undefined }))) router();
+    });
+    const T = (n) => (n ? fmtN.format(n) : '');
+    const lugares = h('div', {}, h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, `Lugares de su zona (${fmtN.format(lz.farmacias.length + lz.establecimientos.length)})`),
+      tabla([{ t: 'Municipio', v: (x) => [x.municipio, h('small', { style: 'display:block;color:var(--texto-2)' }, x.provincia)] },
+        { t: 'Farmacias', num: true, v: (x) => T(x.farmacia) }, { t: 'Hospitales', num: true, v: (x) => T(x.hospital) }, { t: 'Clínicas', num: true, v: (x) => T(x.clinica) },
+        { t: 'UNAP', num: true, v: (x) => T(x.unap) }, { t: 'Primer nivel', num: true, v: (x) => T(x.cpn) },
+        { t: 'Sin ubicación', num: true, v: (x) => x.sinUbicacion ? h('span', { style: 'color:var(--alerta)' }, fmtN.format(x.sinUbicacion)) : '' }],
+      lz.resumen, ['Su zona aún no tiene lugares registrados', 'Usa el registro automático en Catálogo → Farmacias y en Establecimientos.']),
+      lz.resumen.length ? h('p', { class: 'hint' }, 'Los lugares sin ubicación no entran en el cálculo de distancia; regístralos desde Google Maps para tener km exactos.') : null,
+      lz.resumen.length && yo.role === 'administrador' ? h('div', { class: 'acciones' }, h('a', { class: 'btn', href: `#cronogramas?rep=${id}` }, 'Programar su cronograma')) : null);
+    return vista('Zona del representante', 'Posición, provincias y municipios que visita. De aquí salen sus lugares, su cronograma, los km, el combustible y sus viáticos.', f, lugares);
   }
-  const zonas = await Promise.all(reps.map((r) => api('GET', `/api/territorio/zonas/${r.id}`).then((z) => z.item.provincias).catch(() => [])));
-  return vista('Representantes', 'Asigna a cada representante las provincias que visita.', seg,
+  const zonas = await Promise.all(reps.map((r) => api('GET', `/api/territorio/zonas/${r.id}`).then((z) => z.item).catch(() => ({ provincias: [], municipios: {} }))));
+  const texto = (z) => z.provincias.map((p) => (z.municipios?.[p]?.length ? `${p} (${z.municipios[p].join(', ')})` : p)).join('; ');
+  return vista('Representantes', 'Asigna a cada representante su posición y las provincias o municipios que visita.', seg,
     tabla([{ t: 'Representante', v: (r) => [r.fullName, h('small', { style: 'display:block;color:var(--texto-2)' }, r.position ?? '')] },
-      { t: 'Provincias', v: (r) => zonas[reps.indexOf(r)].join(', ') || 'Sin asignar' },
-      { t: '', v: (r) => GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, 'Asignar provincias') : '' }], reps, ['Aún no hay representantes activos', 'Impórtalos en "Pre-registro por Excel".']));
+      { t: 'Zona', v: (r) => texto(zonas[reps.indexOf(r)]) || 'Sin asignar' },
+      { t: '', v: (r) => GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, 'Editar zona') : '' }], reps, ['Aún no hay representantes activos', 'Impórtalos en "Pre-registro por Excel".']));
 };
 
 // ---------------------------------------------------------------- menú por rol
@@ -964,7 +1120,7 @@ function menuPara(u) {
     s.push(['Dependientes', [['revisar', 'Vouchers por revisar'], ['comisiones', 'Comisiones']]]);
     s.push(['Promotoras', [['reportes', 'Reporte de recetas'], ['misRecetas', 'Recetas'], ['alertas', 'Alertas']]]);
     s.push(['Rutas y viáticos', [['viaticos', 'Presupuestos'], ['perfiles', 'Perfiles de viático'], ['precios', 'Precios de combustible'], ['viatico', null]]]);
-    s.push(['Territorio', [['cronogramas', 'Cronogramas'], ['establecimientos', 'Establecimientos'], ...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : [])]]);
+    s.push(['Territorio', [['cronogramas', 'Cronogramas'], ['establecimientos', 'Establecimientos'], ['hoteles', 'Hoteles'], ...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : [])]]);
     s.push(['Administración', [['inventario', 'Inventario'], ['catalogo', 'Catálogo'], ...(u.role !== 'finanzas' ? [['solicitudes', 'Solicitudes de cuenta']] : [])]]);
   }
   if (!s.length) s.push(['Mi trabajo', [['pronto', 'Inicio']]]);

@@ -14,6 +14,7 @@ import { canApprove } from './roles.js';
 import { actualizarDesdeMicm } from './combustible-micm.js';
 import { SinLugares, crearLugares } from './lugares.js';
 import { createBarrido } from './barrido-google.js';
+import { createHoteles, REQUISITOS } from './hoteles.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -39,7 +40,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const t = createTerritorio({ data, users: store, audit: (e) => store.addAudit(e), now });
   const auth = createAuthService(store, { preregistro: { buscar: t.buscarPreregistro, confirmar: t.confirmarPreregistro } });
   const c = createComercial({ data, users: store, files, audit: (e) => store.addAudit(e), now });
-  const v = createViaticos({ data, users: store, files, mapas, notificar: n.notificar, audit: (e) => store.addAudit(e), now });
+  const hoteles = createHoteles({ data, audit: (e) => store.addAudit(e), now: now ?? (() => new Date()) });
+  const v = createViaticos({ data, users: store, files, mapas, hoteles, notificar: n.notificar, audit: (e) => store.addAudit(e), now });
 
   const GESTION_LUGARES = ['administrador', 'gerencia', 'supervisor'];
   const sinAcento = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -49,10 +51,10 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     const { provincias, municipios, tipos } = t.division();
     const provincia = q.get('provincia'); const municipio = q.get('municipio'); const tipo = q.get('tipo');
     if (!provincias.includes(provincia) || !municipios[provincia].includes(municipio)) throw new AuthError(422, 'Elige provincia y municipio.');
-    if (tipo !== 'farmacia' && !tipos[tipo]) throw new AuthError(422, 'Elige el tipo de establecimiento.');
+    if (tipo !== 'farmacia' && tipo !== 'hotel' && !tipos[tipo]) throw new AuthError(422, 'Elige el tipo de establecimiento.');
     let res;
     try { res = await lugares.buscar({ tipo, municipio, provincia, texto: (q.get('texto') || '').slice(0, 60) }); } catch (err) { throw new AuthError(502, err.message); }
-    const col = tipo === 'farmacia' ? 'farmacias' : 'establecimientos';
+    const col = tipo === 'farmacia' ? 'farmacias' : tipo === 'hotel' ? 'hoteles' : 'establecimientos';
     const existentes = await data.list(col, { municipio });
     const ids = new Set(existentes.map((x) => x.placeId).filter(Boolean)); const nombres = new Set(existentes.map((x) => sinAcento(x.nombre)));
     return { items: res.map((r) => ({ ...r, registrado: ids.has(r.placeId) || nombres.has(sinAcento(r.nombre)) })) };
@@ -68,6 +70,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
       const item = await c.catalogo.crearFarmacia(me, { nombre: d.nombre, provincia: body.provincia, municipio: body.municipio }, d);
       return { item };
     }
+    if (body.tipo === 'hotel') return { item: await hoteles.crear(me, { ...base, calificacion: d.calificacion }, { fuente: 'google' }) };
     return { item: await t.crearEstablecimiento(me, { ...base, tipo: body.tipo }, { fuente: 'google', verificado: true }) };
   }
 
@@ -76,6 +79,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     data, lugares, now: now ?? (() => new Date()), pausa: barridoPausa ?? 250, notificar: n.notificar, audit: (e) => store.addAudit(e),
     guardar: (actor, tipo, l) => tipo === 'farmacia'
       ? c.catalogo.crearFarmacia(actor, { nombre: l.nombre, provincia: l.provincia, municipio: l.municipio }, l, { revisado: true })
+      : tipo === 'hotel' ? hoteles.crear(actor, l, { fuente: 'google' })
       : t.crearEstablecimiento(actor, { nombre: l.nombre, tipo, provincia: l.provincia, municipio: l.municipio, direccion: l.direccion, telefono: l.telefono, lat: l.lat, lng: l.lng, placeId: l.placeId }, { fuente: 'google', verificado: true }),
   });
   const puedeBarrido = (me) => {
@@ -86,7 +90,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     const { provincias, municipios, tipos } = t.division();
     if (provincia !== 'todas' && !provincias.includes(provincia)) throw new AuthError(422, 'Elige una provincia oficial.');
     if (municipio && (provincia === 'todas' || !municipios[provincia].includes(municipio))) throw new AuthError(422, 'Ese municipio no pertenece a la provincia.');
-    if (src.tipo !== 'farmacia' && !tipos[src.tipo]) throw new AuthError(422, 'Elige el tipo de establecimiento.');
+    if (!['farmacia', 'hotel', 'salud'].includes(src.tipo) && !tipos[src.tipo]) throw new AuthError(422, 'Elige el tipo de establecimiento.');
     return { tipo: src.tipo, provincia, municipio };
   }
 
@@ -181,6 +185,17 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   // Cronogramas (los crea y aprueba el administrador)
   ruta('GET', '/api/cronogramas', async ({ me, q }) => ({ items: await v.listarCronogramas(me, { representanteId: q.get('representanteId') || undefined, mes: q.get('mes') || undefined }) }));
   ruta('POST', '/api/cronogramas', async ({ me, body }) => [201, { items: await v.crearCronograma(me, body) }]);
+  ruta('POST', '/api/cronogramas/propuesta', async ({ me, body }) => ({ item: await v.proponerCronograma(me, body ?? {}) }));
+  ruta('POST', '/api/cronogramas/lote', async ({ me, body }) => [201, { items: await v.crearCronogramaLote(me, body ?? {}) }]);
+  // Hoteles (hospedaje): Google aporta los datos; la administración confirma precio y requisitos
+  ruta('GET', '/api/hoteles/requisitos', () => ({ items: Object.entries(REQUISITOS).map(([value, label]) => ({ value, label })) }));
+  ruta('GET', '/api/hoteles', async ({ me, q }) => ({ items: await hoteles.listar(me, { provincia: q.get('provincia') || undefined, municipio: q.get('municipio') || undefined }) }));
+  ruta('GET', '/api/hoteles/recomendado', async ({ me, q }) => ({ item: await hoteles.recomendado(me, { provincia: q.get('provincia'), municipio: q.get('municipio') || undefined }) }));
+  ruta('POST', '/api/hoteles', async ({ me, body }) => [201, { item: await hoteles.crear(me, body ?? {}) }]);
+  ruta('POST', /^\/api\/hoteles\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await hoteles.actualizar(me, p[1], body ?? {}) }));
+  // Tope mensual global de combustible / transporte
+  ruta('GET', '/api/viaticos/tope-global', async ({ me }) => { if (me?.status !== 'activo') throw new AuthError(403, 'No tienes permiso para esta acción.'); return { item: { monto: await v.verTopeGlobal() } }; });
+  ruta('POST', '/api/viaticos/tope-global', async ({ me, body }) => ({ item: await v.guardarTopeGlobal(me, body?.monto ?? null) }));
   ruta('POST', /^\/api\/cronogramas\/([\w-]+)\/anular$/, async ({ me, p, body }) => ({ item: await v.anularCronograma(me, p[1], body.motivo) }));
   ruta('GET', /^\/api\/cronogramas\/([\w-]+)\/ruta$/, async ({ me, p }) => v.vistaPreviaRuta(me, p[1]));
   // Notificaciones (campana)
@@ -190,12 +205,13 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
 
   // Territorio, establecimientos, zonas, pre-registro e importación
   ruta('GET', '/api/territorio/division', () => t.division(), { auth: false });
-  ruta('GET', '/api/territorio/mis-provincias', async ({ me }) => ({ items: await t.provinciasDe(me) }));
+  ruta('GET', '/api/territorio/mis-provincias', async ({ me }) => { const z = await t.zonaActor(me); return { items: await t.provinciasDe(me), municipios: z?.municipios ?? null }; });
   ruta('GET', '/api/territorio/establecimientos', async ({ me, q }) => ({ items: await t.listarEstablecimientos(me, { provincia: q.get('provincia') || undefined, municipio: q.get('municipio') || undefined, tipo: q.get('tipo') || undefined, q: q.get('q') || undefined }) }));
   ruta('POST', '/api/territorio/establecimientos', async ({ me, body }) => [201, { item: await t.crearEstablecimiento(me, body) }]);
   ruta('POST', /^\/api\/territorio\/establecimientos\/([\w-]+)\/validar$/, async ({ me, p }) => ({ item: await t.validarEstablecimiento(me, p[1]) }));
   ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p }) => ({ item: await t.verZona(me, p[1]) }));
-  ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await t.asignarZona(me, p[1], body.provincias) }));
+  ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await t.asignarZona(me, p[1], body ?? {}) }));
+  ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)\/lugares$/, async ({ me, p }) => t.lugaresDeZona(me, p[1]));
   ruta('GET', '/api/territorio/preregistros', async ({ me }) => ({ items: await t.listarPreregistros(me) }));
   ruta('POST', /^\/api\/territorio\/preregistros\/([\w-]+)\/anular$/, async ({ me, p }) => ({ item: await t.anularPreregistro(me, p[1]) }));
   ruta('POST', /^\/api\/importar\/(medicamentos|farmacias|establecimientos|representantes)$/, async ({ me, p, body }) => t.importar(me, p[1], body), { limite: 12 * 1024 * 1024 });

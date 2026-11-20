@@ -36,6 +36,12 @@ export function municipioOficial(provincia, v) {
   const alias = ALIAS_MUN[k];
   return alias && lista.includes(alias) ? alias : null;
 }
+/** ¿Ese municipio está dentro de la zona? Una provincia sin lista de municipios cubre todos los suyos. */
+export function dentroDeZona(zona, provincia, municipio) {
+  if (!zona?.provincias?.includes(provincia)) return false;
+  const ms = zona.municipios?.[provincia];
+  return !ms?.length || ms.includes(municipio);
+}
 export function tipoEstablecimiento(v) {
   const k = sinAcentos(v);
   if (TIPOS_ESTABLECIMIENTO[k]) return k;
@@ -73,26 +79,73 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
 
   // ------------------------------------------------------------ zonas
   async function zonaDe(repId) { return (await data.list('zonas', { representanteId: repId }))[0] ?? null; }
+  /** Zona del actor: null = sin límite (gestión); objeto { provincias, municipios } para representantes. */
+  async function zonaActor(actor) {
+    if (rol(actor, ['administrador', 'gerencia', 'supervisor', 'finanzas'])) return null;
+    if (esRep(actor)) return (await zonaDe(actor.id)) ?? { provincias: [], municipios: {} };
+    return { provincias: [], municipios: {} };
+  }
   async function provinciasDe(actor) {
     if (rol(actor, ['administrador', 'gerencia', 'supervisor', 'finanzas'])) return PROVINCIAS;
     if (esRep(actor)) return (await zonaDe(actor.id))?.provincias ?? [];
     return [];
   }
-  async function asignarZona(actor, repId, provincias) {
+  /**
+   * Asigna la zona de un representante: provincias completas o, dentro de una provincia, solo algunos municipios.
+   * `municipios` = { Provincia: ['Municipio', ...] }; una provincia sin lista (o lista vacía) cubre todos sus municipios.
+   * También permite cambiar su posición (Visitador, PVC, Vendedor, Promotora).
+   */
+  async function asignarZona(actor, repId, input = {}) {
     permitir(rol(actor, GESTION));
     const rep = await users.findUserById(repId);
     if (!rep || rep.role !== 'representante') throw new HttpError(404, 'El representante no existe.');
-    const lista = [...new Set((Array.isArray(provincias) ? provincias : []).map(provinciaOficial))];
+    const entrada = Array.isArray(input) ? { provincias: input } : input;
+    const lista = [...new Set((Array.isArray(entrada.provincias) ? entrada.provincias : []).map(provinciaOficial))];
     if (lista.includes(null)) invalido({ provincias: 'Hay provincias que no son oficiales.' });
+    const municipios = {};
+    for (const [p0, ms] of Object.entries(entrada.municipios ?? {})) {
+      const p = provinciaOficial(p0);
+      if (!p || !lista.includes(p) || !Array.isArray(ms) || !ms.length) continue;
+      const oficiales = [...new Set(ms.map((m) => municipioOficial(p, m)))];
+      if (oficiales.includes(null)) invalido({ municipios: `Hay municipios que no pertenecen a ${p}.` });
+      if (oficiales.length < DIVISION[p].length) municipios[p] = oficiales.sort((a, b) => a.localeCompare(b, 'es'));
+    }
+    let posicion = rep.position;
+    if (entrada.posicion !== undefined && entrada.posicion !== rep.position) {
+      if (!POSITIONS.includes(entrada.posicion)) invalido({ posicion: 'Elige la posición: Visitador, PVC, Vendedor o Promotora.' });
+      await users.updateUser(repId, { position: entrada.posicion });
+      await audit({ actorId: actor.id, action: 'posicion_cambiada', entity: 'user', entityId: repId, before: { posicion: rep.position }, after: { posicion: entrada.posicion } });
+      posicion = entrada.posicion;
+    }
     const antes = await zonaDe(repId);
-    const z = antes ? await data.update('zonas', antes.id, { provincias: lista, actualizadoPor: actor.id })
-      : await data.insert('zonas', { representanteId: repId, provincias: lista, actualizadoPor: actor.id });
-    await audit({ actorId: actor.id, action: 'zona_asignada', entity: 'user', entityId: repId, before: antes?.provincias ?? null, after: lista });
-    return z;
+    const datos = { provincias: lista, municipios, actualizadoPor: actor.id };
+    const z = antes ? await data.update('zonas', antes.id, datos) : await data.insert('zonas', { representanteId: repId, ...datos });
+    await audit({ actorId: actor.id, action: 'zona_asignada', entity: 'user', entityId: repId, before: antes ? { provincias: antes.provincias, municipios: antes.municipios ?? {} } : null, after: { provincias: lista, municipios } });
+    return { ...z, municipios: z.municipios ?? {}, posicion };
   }
   async function verZona(actor, repId) {
     permitir(actor.id === repId || rol(actor, [...GESTION, 'finanzas']));
-    return { representanteId: repId, provincias: (await zonaDe(repId))?.provincias ?? [] };
+    const z = await zonaDe(repId);
+    return { representanteId: repId, provincias: z?.provincias ?? [], municipios: z?.municipios ?? {} };
+  }
+  /** Farmacias y centros de salud que caen dentro de la zona del representante (lo que puede visitar). */
+  async function lugaresDeZona(actor, repId) {
+    permitir(actor.id === repId || rol(actor, [...GESTION, 'finanzas']));
+    const z = await zonaDe(repId);
+    if (!z?.provincias?.length) return { zona: { provincias: [], municipios: {} }, farmacias: [], establecimientos: [], resumen: [] };
+    const activo = (x) => !['inactivo', 'inactiva'].includes(x.estado);
+    const farmacias = (await data.list('farmacias')).filter((x) => activo(x) && dentroDeZona(z, x.provincia, x.municipio));
+    const establecimientos = (await data.list('establecimientos')).filter((x) => activo(x) && dentroDeZona(z, x.provincia, x.municipio));
+    const porMun = new Map();
+    for (const x of [...farmacias.map((f) => ({ ...f, tipo: 'farmacia' })), ...establecimientos]) {
+      const k = `${x.provincia}|${x.municipio}`;
+      const r = porMun.get(k) ?? { provincia: x.provincia, municipio: x.municipio, farmacia: 0, hospital: 0, clinica: 0, unap: 0, cpn: 0, otros: 0, sinUbicacion: 0 };
+      if (x.tipo in r) r[x.tipo]++; else r.otros++;
+      if (x.lat == null || x.lng == null) r.sinUbicacion++;
+      porMun.set(k, r);
+    }
+    const resumen = [...porMun.values()].sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es'));
+    return { zona: { provincias: z.provincias, municipios: z.municipios ?? {} }, farmacias, establecimientos, resumen };
   }
 
   // ------------------------------------------------------------ establecimientos
@@ -117,11 +170,11 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
 
   async function crearEstablecimiento(actor, input, { fuente = 'manual', verificado = false } = {}) {
     if (!verificado) input = { ...input, lat: null, lng: null, placeId: null };
-    const zona = await provinciasDe(actor);
+    const zona = await zonaActor(actor);
     permitir(rol(actor, GESTION) || esRep(actor), 'No puedes registrar establecimientos.');
     const e = {}; const d = validarEst(input, e);
     if (Object.keys(e).length) invalido(e);
-    permitir(zona.includes(d.provincia), 'Esa provincia no está asignada a tu zona.');
+    permitir(!zona || dentroDeZona(zona, d.provincia, d.municipio), 'Ese municipio no está asignado a tu zona.');
     const existentes = await data.list('establecimientos', { municipio: d.municipio });
     const dup = existentes.find((x) => claveLugar(x) === claveLugar(d) || (d.placeId && x.placeId === d.placeId));
     if (dup) throw new HttpError(409, `${dup.nombre} ya está registrado en ${dup.municipio}.`, { nombre: 'Ya existe en este municipio.' });
@@ -132,11 +185,11 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
   }
   async function listarEstablecimientos(actor, { provincia, municipio, tipo, q } = {}) {
     permitir(activo(actor));
-    const zona = await provinciasDe(actor);
+    const zona = await zonaActor(actor);
     const filtro = {};
     if (municipio) filtro.municipio = municipio;
     let xs = await data.list('establecimientos', filtro);
-    xs = xs.filter((x) => zona.includes(x.provincia) && (!provincia || x.provincia === provincia) && (!tipo || x.tipo === tipo) && x.estado !== 'inactivo');
+    xs = xs.filter((x) => (!zona || dentroDeZona(zona, x.provincia, x.municipio)) && (!provincia || x.provincia === provincia) && (!tipo || x.tipo === tipo) && x.estado !== 'inactivo');
     if (q) { const k = sinAcentos(q); xs = xs.filter((x) => sinAcentos(`${x.nombre} ${x.sector ?? ''} ${x.direccion ?? ''}`).includes(k)); }
     return xs.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
   }
@@ -309,7 +362,7 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
 
   return {
     division: () => ({ provincias: PROVINCIAS, municipios: DIVISION, tipos: TIPOS_ESTABLECIMIENTO }),
-    provinciasDe, asignarZona, verZona,
+    provinciasDe, zonaActor, asignarZona, verZona, lugaresDeZona,
     crearEstablecimiento, listarEstablecimientos, validarEstablecimiento,
     buscarPreregistro, confirmarPreregistro, listarPreregistros, anularPreregistro,
     importar, historialPrecio,

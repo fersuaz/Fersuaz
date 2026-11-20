@@ -17,7 +17,7 @@ async function setup() {
   let store, data;
   if (PG) {
     pg ??= await PostgresStore.connect(PG);
-    await pg.pool.query('TRUNCATE notificaciones, cronogramas, zonas_representante, establecimientos, presupuestos_viatico, jornadas, precios_combustible, perfiles_viatico, configuracion, inventario, recetas, operativos, cierres_comision, vouchers, medicos, farmacias, medicamentos, audit_logs, users CASCADE');
+    await pg.pool.query('TRUNCATE hoteles, notificaciones, cronogramas, zonas_representante, establecimientos, presupuestos_viatico, jornadas, precios_combustible, perfiles_viatico, configuracion, inventario, recetas, operativos, cierres_comision, vouchers, medicos, farmacias, medicamentos, audit_logs, users CASCADE');
     store = pg; data = new PgData(pg.pool);
   } else { store = new MemoryStore(); data = new MemoryData(); }
   const server = createServer(createApp({ store, data, files: new MemoryFiles(), sessionSecret: SECRET, now: NOW })).listen(0);
@@ -220,5 +220,104 @@ test('flujo completo: solicitar, aprobar, desembolsar, comprobantes, liquidar; n
     assert.equal(fila.total, 2100); assert.equal(fila.entregado, 2000); assert.equal(fila.justificado, 1000);
     assert.equal(cons.filas.find((f) => f.representanteId === id.rep2).estado, 'sin_solicitud');
     assert.equal((await call('GET', '/api/viaticos/consolidado?mes=2026-11', null, t.rep)).status, 403);
+  } finally { server.close(); }
+});
+
+test('tope mensual de combustible: global, por representante y con aviso', async () => {
+  const { server, call, t, id, planificar } = await setup();
+  try {
+    await call('POST', `/api/viaticos/perfiles/${id.rep}`, PERFIL, t.gerente);
+    await call('POST', '/api/viaticos/precios', { combustible: 'gasoil_regular', precioGalon: 250, vigenteDesde: '2026-11-01' }, t.finanzas);
+    await planificar(jornada('2026-11-23', 350), t.rep); await planificar(jornada('2026-11-24', 350), t.rep); // 700 km / 35 = 20 gal × 250 = 5,000
+    let p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
+    assert.equal(p.detalle.combustible, 5000); assert.equal(p.supuestos.tope, null); assert.deepEqual(p.avisos, []);
+    assert.equal((await call('POST', '/api/viaticos/tope-global', { monto: 4000 }, t.rep)).status, 403);
+    assert.equal((await call('POST', '/api/viaticos/tope-global', { monto: -5 }, t.gerente)).status, 422);
+    assert.equal((await call('POST', '/api/viaticos/tope-global', { monto: 4000 }, t.gerente)).body.item.monto, 4000);
+    p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
+    assert.equal(p.detalle.combustible, 4000); assert.equal(p.supuestos.combustibleCalculado, 5000);
+    assert.equal(p.supuestos.excedenteTope, 1000); assert.equal(p.supuestos.topeFuente, 'global'); assert.equal(p.avisos.length, 1);
+    assert.equal(p.total, 4000 + 1000, 'comida 2 × 500 más el combustible topado');
+    // El tope del representante manda sobre el global
+    await call('POST', `/api/viaticos/perfiles/${id.rep}`, { ...PERFIL, topeCombustible: 6000 }, t.gerente);
+    p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
+    assert.equal(p.detalle.combustible, 5000); assert.equal(p.supuestos.topeFuente, 'representante'); assert.deepEqual(p.avisos, []);
+    assert.ok((await call('POST', `/api/viaticos/perfiles/${id.rep}`, { ...PERFIL, topeCombustible: 0 }, t.gerente)).body.fields.topeCombustible);
+  } finally { server.close(); }
+});
+
+test('hoteles: la administración confirma precio y requisitos; se recomienda el más económico que cumple todo', async () => {
+  const { server, call, t, id, planificar } = await setup();
+  try {
+    const { items: reqs } = (await call('GET', '/api/hoteles/requisitos', null, t.rep)).body;
+    const todo = Object.fromEntries(reqs.map((r) => [r.value, true]));
+    assert.equal((await call('POST', '/api/hoteles', { nombre: 'Hotel Ejemplo A', provincia: 'Espaillat', municipio: 'Moca' }, t.rep)).status, 403);
+    const crear = async (nombre, precioNoche, requisitos) => {
+      const h = (await call('POST', '/api/hoteles', { nombre, provincia: 'Espaillat', municipio: 'Moca' }, t.admin)).body.item;
+      return (await call('POST', `/api/hoteles/${h.id}`, { precioNoche, requisitos }, t.admin)).body.item;
+    };
+    const a = await crear('Hotel Ejemplo A', 2000, todo);
+    const b = await crear('Hotel Ejemplo B', 1500, { ...todo, parqueo: false });
+    const c = await crear('Hotel Ejemplo C', 1800, todo);
+    assert.equal(b.cumple, false); assert.deepEqual(b.faltan, ['parqueo']); assert.equal(a.cumple, true);
+    assert.equal((await call('POST', '/api/hoteles', { nombre: 'hotel ejemplo a', provincia: 'Espaillat', municipio: 'Moca' }, t.admin)).status, 409);
+    assert.equal((await call('POST', `/api/hoteles/${a.id}`, { precioNoche: 1 }, t.rep)).status, 403);
+    const rec = (await call('GET', '/api/hoteles/recomendado?provincia=Espaillat&municipio=Moca', null, t.rep)).body.item;
+    assert.equal(rec.hotel.id, c.id); assert.equal(rec.alcance, 'municipio');
+    // En la jornada, el precio sale del hotel verificado y no del navegador
+    await call('POST', `/api/viaticos/perfiles/${id.rep}`, PERFIL, t.gerente);
+    const j = await planificar(jornada('2026-11-25', 100, { hospedaje: { hotelId: c.id, noches: 1, tarifaNoche: 1, motivo: 'Ruta de dos días (Ejemplo)' } }), t.rep);
+    assert.equal(j.status, 201, JSON.stringify(j.body));
+    assert.equal(j.body.item.hospedaje.tarifaNoche, 1800); assert.equal(j.body.item.hospedaje.hotel, 'Hotel Ejemplo C'); assert.equal(j.body.item.hospedaje.hotelId, c.id);
+    const mal = await planificar(jornada('2026-11-26', 100, { hospedaje: { hotelId: b.id, noches: 1, motivo: 'Ejemplo' } }), t.rep);
+    assert.equal(mal.status, 422);
+    const audit = (await call('GET', '/api/hoteles?provincia=Espaillat', null, t.admin)).body.items;
+    assert.equal(audit.length, 3);
+  } finally { server.close(); }
+});
+
+test('zona por municipio y posición: solo se programan lugares de los municipios asignados', async () => {
+  const { server, call, t, id } = await setup();
+  try {
+    const data = setup.data;
+    const gh = await data.insert('farmacias', { nombre: 'Farmacia Ejemplo Gaspar', provincia: 'Espaillat', municipio: 'Gaspar Hernández', estado: 'validada', fuente: 'manual' });
+    const z = await call('POST', `/api/territorio/zonas/${id.rep}`, { provincias: ['Espaillat'], municipios: { Espaillat: ['Moca'] }, posicion: 'PVC' }, t.gerente);
+    assert.equal(z.status, 200, JSON.stringify(z.body)); assert.deepEqual(z.body.item.municipios, { Espaillat: ['Moca'] }); assert.equal(z.body.item.posicion, 'PVC');
+    assert.equal((await call('POST', `/api/territorio/zonas/${id.rep}`, { provincias: ['Espaillat'], municipios: { Espaillat: ['Bonao'] } }, t.gerente)).status, 422);
+    assert.equal((await call('POST', `/api/territorio/zonas/${id.rep}`, { provincias: ['Espaillat'], posicion: 'Jefe' }, t.gerente)).status, 422);
+    const c = await call('POST', '/api/cronogramas', { representanteId: id.rep, fechas: ['2026-11-23'], lugares: [{ refTipo: 'farmacia', refId: gh.id }] }, t.admin);
+    assert.equal(c.status, 422); assert.match(c.body.fields.lugares, /Gaspar Hernández/);
+    const l = (await call('GET', `/api/territorio/zonas/${id.rep}/lugares`, null, t.rep)).body;
+    assert.equal(l.establecimientos.length, 1); assert.equal(l.farmacias.length, 0); assert.equal(l.resumen[0].hospital, 1);
+    assert.equal((await call('GET', `/api/territorio/zonas/${id.rep}/lugares`, null, t.rep2)).status, 403);
+    // Elegir todos los municipios equivale a la provincia completa
+    const todos = await call('POST', `/api/territorio/zonas/${id.rep}`, { provincias: ['Espaillat'], municipios: { Espaillat: ['Moca', 'Cayetano Germosén', 'Gaspar Hernández', 'Jamao al Norte', 'San Víctor'] } }, t.gerente);
+    assert.deepEqual(todos.body.item.municipios, {});
+  } finally { server.close(); }
+});
+
+test('propuesta del mes: reparte los lugares de la zona en días libres y se aprueba todo junto', async () => {
+  const { server, call, t, id } = await setup();
+  try {
+    const data = setup.data;
+    for (let i = 1; i <= 5; i++) await data.insert('farmacias', { nombre: `Farmacia Ejemplo ${i}`, provincia: 'Espaillat', municipio: 'Moca', lat: 19.39 + i / 1000, lng: -70.52, estado: 'validada', fuente: 'google' });
+    await call('POST', `/api/viaticos/perfiles/${id.rep}`, { ...PERFIL, residencia: { provincia: 'Espaillat', municipio: 'Moca' } }, t.gerente);
+    assert.equal((await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-11', porDia: 2 }, t.gerente)).status, 403);
+    assert.equal((await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-10', porDia: 2 }, t.admin)).status, 422);
+    const p = (await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-11', porDia: 2 }, t.admin)).body.item;
+    assert.equal(p.resumen.lugares, 6); assert.equal(p.resumen.diasLibres, 7); assert.equal(p.dias.length, 3);
+    assert.deepEqual(p.dias.map((d) => d.fecha), ['2026-11-20', '2026-11-23', '2026-11-24']);
+    // Un día con un lugar de fuera de la zona hace fallar todo el lote: no se guarda nada
+    const fuera = await data.insert('farmacias', { nombre: 'Farmacia Ejemplo Bonao', provincia: 'Monseñor Nouel', municipio: 'Bonao', estado: 'validada', fuente: 'manual' });
+    const dias = p.dias.map((d) => ({ fecha: d.fecha, lugares: d.lugares.map(({ refTipo, refId }) => ({ refTipo, refId })) }));
+    const malo = await call('POST', '/api/cronogramas/lote', { representanteId: id.rep, dias: [...dias, { fecha: '2026-11-25', lugares: [{ refTipo: 'farmacia', refId: fuera.id }] }] }, t.admin);
+    assert.equal(malo.status, 422);
+    assert.equal((await call('GET', `/api/cronogramas?representanteId=${id.rep}`, null, t.admin)).body.items.length, 0);
+    const ok = await call('POST', '/api/cronogramas/lote', { representanteId: id.rep, dias }, t.admin);
+    assert.equal(ok.status, 201); assert.equal(ok.body.items.length, 3);
+    const n = (await call('GET', '/api/notificaciones', null, t.rep)).body.items;
+    assert.ok(n.some((x) => /3 día/.test(x.texto)));
+    const otra = (await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-11', porDia: 2 }, t.admin)).body.item;
+    assert.equal(otra.resumen.lugares, 0, 'lo ya programado no se vuelve a proponer'); assert.equal(otra.resumen.diasLibres, 4);
   } finally { server.close(); }
 });

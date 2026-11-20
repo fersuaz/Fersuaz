@@ -69,9 +69,9 @@ export class PostgresStore {
   async updateUser(id, patch) {
     const { rows } = await this.pool.query(
       `UPDATE users SET status = COALESCE($2, status), approved_by = COALESCE($3, approved_by),
-       email = COALESCE($4, email), password_hash = COALESCE($5, password_hash),
+       email = COALESCE($4, email), password_hash = COALESCE($5, password_hash), position = COALESCE($6, position),
        updated_at = now() WHERE id = $1 RETURNING *`,
-      [id, patch.status ?? null, patch.approvedBy ?? null, patch.email ?? null, patch.passwordHash ?? null],
+      [id, patch.status ?? null, patch.approvedBy ?? null, patch.email ?? null, patch.passwordHash ?? null, patch.position ?? null],
     );
     return this.#map(rows[0]);
   }

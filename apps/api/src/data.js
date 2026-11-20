@@ -14,11 +14,12 @@ export const COLECCIONES = {
   recetas: { tabla: 'recetas', campos: ['promotoraId', 'operativoId', 'medicoId', 'fecha', 'provincia', 'municipio', 'items', 'adjunto'], json: ['items', 'adjunto'] },
   inventario: { tabla: 'inventario', campos: ['farmaciaId', 'medicamentoId', 'unidades', 'fechaCorte', 'registradoPor'], json: [] },
   configuracion: { tabla: 'configuracion', campos: ['clave', 'valor', 'actualizadoPor'], json: ['valor'] },
-  perfiles: { tabla: 'perfiles_viatico', campos: ['representanteId', 'residencia', 'vehiculo', 'tarifaAlimentacion', 'reembolsoPorKm', 'actualizadoPor'], json: ['residencia', 'vehiculo'] },
+  perfiles: { tabla: 'perfiles_viatico', campos: ['representanteId', 'residencia', 'vehiculo', 'tarifaAlimentacion', 'reembolsoPorKm', 'topeCombustible', 'actualizadoPor'], json: ['residencia', 'vehiculo'] },
   precios: { tabla: 'precios_combustible', campos: ['combustible', 'precioGalon', 'vigenteDesde', 'fuente', 'enlace', 'registradoPor'], json: [] },
   jornadas: { tabla: 'jornadas', campos: ['representanteId', 'cronogramaId', 'fecha', 'paradas', 'kmEstimados', 'kmFuente', 'kmReales', 'conAlimentacion', 'hospedaje', 'peajes', 'estacionamiento', 'otros', 'estado'], json: ['paradas', 'hospedaje'] },
   establecimientos: { tabla: 'establecimientos', campos: ['tipo', 'nombre', 'provincia', 'municipio', 'sector', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'fuente', 'estado', 'creadoPor'], json: [] },
-  zonas: { tabla: 'zonas_representante', campos: ['representanteId', 'provincias', 'actualizadoPor'], json: ['provincias'] },
+  zonas: { tabla: 'zonas_representante', campos: ['representanteId', 'provincias', 'municipios', 'actualizadoPor'], json: ['provincias', 'municipios'] },
+  hoteles: { tabla: 'hoteles', campos: ['nombre', 'provincia', 'municipio', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'calificacion', 'fuente', 'precioNoche', 'requisitos', 'notas', 'verificadoPor', 'verificadoEn', 'estado', 'creadoPor'], json: ['requisitos'] },
   preregistros: { tabla: 'preregistros', campos: ['email', 'nombre', 'telefono', 'posicion', 'provincias', 'estado', 'usuarioId', 'creadoPor'], json: ['provincias'] },
   preciosMedicamento: { tabla: 'precios_medicamento', campos: ['medicamentoId', 'precio', 'vigenteDesde', 'fuente', 'registradoPor'], json: [] },
   cronogramas: { tabla: 'cronogramas', campos: ['representanteId', 'fecha', 'lugares', 'nota', 'estado', 'motivo', 'creadoPor'], json: ['lugares'] },
@@ -71,7 +72,7 @@ export class PgData {
     for (const f of c.campos) {
       let v = r[snake(f)];
       if (v instanceof Date) v = v.toISOString().slice(0, 10);
-      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision', 'precioGalon', 'kmEstimados', 'kmReales', 'peajes', 'estacionamiento', 'otros', 'tarifaAlimentacion', 'reembolsoPorKm', 'montoAprobado', 'precio', 'lat', 'lng'].includes(f)) v = Number(v);
+      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision', 'precioGalon', 'kmEstimados', 'kmReales', 'peajes', 'estacionamiento', 'otros', 'tarifaAlimentacion', 'reembolsoPorKm', 'montoAprobado', 'precio', 'lat', 'lng', 'precioNoche', 'calificacion', 'topeCombustible'].includes(f)) v = Number(v);
       out[f] = v;
     }
     return out;
