@@ -19,6 +19,7 @@ services:
     envs:
       - { key: NODE_ENV, value: production }
       - { key: DATABASE_URL, scope: RUN_TIME, value: "${fersuaz-db.DATABASE_URL}" }
+      - { key: DATABASE_CA, scope: RUN_TIME, value: "${fersuaz-db.CA_CERT}" }
       - { key: SESSION_SECRET, scope: RUN_TIME, type: SECRET }
       - { key: ALLOWED_ORIGINS, scope: RUN_TIME, value: "https://fersuaz.net,https://www.fersuaz.net" }
 databases:

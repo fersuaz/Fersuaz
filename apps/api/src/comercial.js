@@ -1,0 +1,434 @@
+// Módulo comercial: dependientes (vouchers y comisiones) y promotoras (recetas e inventario).
+// Toda regla de permiso vive aquí, en el servidor.
+import { AuthError as HttpError } from './auth.js';
+import { STATUS } from './roles.js';
+import { calcularComisionVouchers, evaluarAlertaInventario } from './calculos.js';
+import { esFechaISO, hoyRD, periodoDe, rangoDe } from './periodos.js';
+import { normalizeName } from './validation.js';
+
+const GESTION = ['administrador', 'gerencia', 'supervisor', 'finanzas'];
+const esActivo = (u) => u && u.status === STATUS.ACTIVO;
+export const esPromotora = (u) => esActivo(u) && u.role === 'representante' && u.position === 'Promotora';
+export const esVendedor = (u) => esActivo(u) && u.role === 'representante' && u.position === 'Vendedor';
+export const esDependiente = (u) => esActivo(u) && u.role === 'dependiente';
+const tieneRol = (u, roles) => esActivo(u) && roles.includes(u.role);
+
+function permitir(cond, msg = 'No tienes permiso para esta acción.') { if (!cond) throw new HttpError(403, msg); }
+function invalido(fields) { throw new HttpError(422, 'Revisa los campos marcados.', fields); }
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+function texto(errors, campo, v, { min = 2, max = 120, requerido = true, etiqueta = 'Este campo' } = {}) {
+  const s = normalizeName(v);
+  if (!s) { if (requerido) errors[campo] = `${etiqueta} es obligatorio.`; return null; }
+  if (s.length < min) errors[campo] = `${etiqueta} es demasiado corto.`;
+  if (s.length > max) errors[campo] = `${etiqueta} no puede pasar de ${max} caracteres.`;
+  return s;
+}
+
+const TIPOS_ADJUNTO = {
+  'image/jpeg': [0xff, 0xd8, 0xff],
+  'image/png': [0x89, 0x50, 0x4e, 0x47],
+  'image/webp': [0x52, 0x49, 0x46, 0x46],
+  'application/pdf': [0x25, 0x50, 0x44, 0x46],
+};
+export const MAX_ADJUNTO = 5 * 1024 * 1024;
+
+export function createComercial({ data, users, files, audit, now = () => new Date() }) {
+  const hoy = () => hoyRD(now());
+
+  async function config(clave) {
+    const [c] = await data.list('configuracion', { clave });
+    return c ? c.valor : null;
+  }
+  async function setConfig(actor, clave, valor) {
+    const [c] = await data.list('configuracion', { clave });
+    const out = c ? await data.update('configuracion', c.id, { valor, actualizadoPor: actor.id })
+      : await data.insert('configuracion', { clave, valor, actualizadoPor: actor.id });
+    await audit({ actorId: actor.id, action: 'config_actualizada', entity: 'configuracion', entityId: clave, before: c?.valor ?? null, after: valor });
+    return out;
+  }
+
+  async function medicamentoActivo(id) {
+    const m = id && (await data.get('medicamentos', id));
+    return m && m.activo ? m : null;
+  }
+
+  // ------------------------------------------------------------ catálogos
+  const catalogo = {
+    async crearMedicamento(actor, input) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia']));
+      const e = {};
+      const nombre = texto(e, 'nombre', input.nombre, { etiqueta: 'El nombre' });
+      const linea = texto(e, 'linea', input.linea, { etiqueta: 'La línea', requerido: false });
+      const presentacion = texto(e, 'presentacion', input.presentacion, { etiqueta: 'La presentación', requerido: false });
+      if (Object.keys(e).length) invalido(e);
+      const dup = (await data.list('medicamentos')).find((m) => m.nombre.toLowerCase() === nombre.toLowerCase() && (m.presentacion ?? '') === (presentacion ?? ''));
+      if (dup) throw new HttpError(409, 'Ese medicamento ya está en el catálogo.', { nombre: 'Ya existe con esa presentación.' });
+      const m = await data.insert('medicamentos', { nombre, linea, presentacion, activo: true });
+      await audit({ actorId: actor.id, action: 'medicamento_creado', entity: 'medicamento', entityId: m.id, after: m });
+      return m;
+    },
+    async listarMedicamentos() { return (await data.list('medicamentos')).filter((m) => m.activo); },
+
+    async crearFarmacia(actor, input) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor']) || esVendedor(actor));
+      const e = {};
+      const nombre = texto(e, 'nombre', input.nombre, { etiqueta: 'El nombre' });
+      const provincia = texto(e, 'provincia', input.provincia, { etiqueta: 'La provincia' });
+      const municipio = texto(e, 'municipio', input.municipio, { etiqueta: 'El municipio' });
+      const sector = texto(e, 'sector', input.sector, { etiqueta: 'El sector', requerido: false });
+      if (Object.keys(e).length) invalido(e);
+      const dup = (await data.list('farmacias')).find((f) => f.nombre.toLowerCase() === nombre.toLowerCase() && f.municipio.toLowerCase() === municipio.toLowerCase());
+      if (dup) throw new HttpError(409, 'Esa farmacia ya está registrada en ese municipio.', { nombre: 'Ya existe en ese municipio.' });
+      const estado = tieneRol(actor, ['administrador', 'gerencia']) ? 'validada' : 'pendiente';
+      const f = await data.insert('farmacias', { nombre, provincia, municipio, sector, estado, creadoPor: actor.id });
+      await audit({ actorId: actor.id, action: 'farmacia_creada', entity: 'farmacia', entityId: f.id, after: f });
+      return f;
+    },
+    async listarFarmacias(where = {}) { return data.list('farmacias', where); },
+
+    async crearMedico(actor, input) {
+      permitir(tieneRol(actor, GESTION) || esPromotora(actor));
+      const e = {};
+      const nombre = texto(e, 'nombre', input.nombre, { etiqueta: 'El nombre', min: 3 });
+      const especialidad = texto(e, 'especialidad', input.especialidad, { etiqueta: 'La especialidad' });
+      const centro = texto(e, 'centro', input.centro, { etiqueta: 'El centro', requerido: false });
+      const provincia = texto(e, 'provincia', input.provincia, { etiqueta: 'La provincia' });
+      const municipio = texto(e, 'municipio', input.municipio, { etiqueta: 'El municipio' });
+      if (Object.keys(e).length) invalido(e);
+      const dup = (await data.list('medicos')).find((m) => m.nombre.toLowerCase() === nombre.toLowerCase() && m.municipio.toLowerCase() === municipio.toLowerCase());
+      if (dup) return dup; // mismo médico: se reutiliza, no se duplica
+      const estado = tieneRol(actor, ['administrador', 'gerencia']) ? 'validado' : 'pendiente';
+      const m = await data.insert('medicos', { nombre, especialidad, centro, provincia, municipio, estado, creadoPor: actor.id });
+      await audit({ actorId: actor.id, action: 'medico_creado', entity: 'medico', entityId: m.id, after: m });
+      return m;
+    },
+    async listarMedicos() { return data.list('medicos'); },
+
+    async validar(actor, col, id) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia']));
+      if (!['farmacias', 'medicos'].includes(col)) throw new HttpError(404, 'Ruta no encontrada.');
+      const r = await data.get(col, id);
+      if (!r) throw new HttpError(404, 'El registro no existe.');
+      const estado = col === 'farmacias' ? 'validada' : 'validado';
+      const out = await data.update(col, id, { estado });
+      await audit({ actorId: actor.id, action: 'registro_validado', entity: col, entityId: id, before: { estado: r.estado }, after: { estado } });
+      return out;
+    },
+  };
+
+  // ------------------------------------------------------------ comisiones
+  async function configComision(dependienteId) {
+    const global = await config('comision_global');
+    const propio = await config(`comision_dep_${dependienteId}`);
+    if (!global) return null;
+    return { periodo: global.periodo, porcentaje: propio?.porcentaje ?? global.porcentaje, origen: propio ? 'dependiente' : 'global' };
+  }
+  async function periodoCerrado(dependienteId, fecha) {
+    const cierres = await data.list('cierres', { dependienteId });
+    return cierres.find((c) => fecha >= c.desde && fecha <= c.hasta) ?? null;
+  }
+
+  const comisiones = {
+    async configurar(actor, input) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia', 'finanzas']));
+      const e = {};
+      const pct = Number(input.porcentaje);
+      if (!Number.isFinite(pct) || pct < 0 || pct > 100) e.porcentaje = 'Escribe un porcentaje entre 0 y 100.';
+      if (input.dependienteId) {
+        const d = await users.findUserById(input.dependienteId);
+        if (!d || d.role !== 'dependiente') e.dependienteId = 'Ese dependiente no existe.';
+        if (Object.keys(e).length) invalido(e);
+        return setConfig(actor, `comision_dep_${input.dependienteId}`, { porcentaje: round2(pct) });
+      }
+      if (!['quincenal', 'mensual'].includes(input.periodo)) e.periodo = 'Elige quincenal o mensual.';
+      if (Object.keys(e).length) invalido(e);
+      return setConfig(actor, 'comision_global', { porcentaje: round2(pct), periodo: input.periodo });
+    },
+    async verConfig(actor) {
+      permitir(tieneRol(actor, GESTION));
+      const global = await config('comision_global');
+      const deps = (await users.listUsers()).filter((u) => u.role === 'dependiente');
+      const propios = [];
+      for (const d of deps) {
+        const c = await config(`comision_dep_${d.id}`);
+        if (c) propios.push({ dependienteId: d.id, nombre: d.fullName, porcentaje: c.porcentaje });
+      }
+      return { global, propios };
+    },
+
+    async resumen(actor, dependienteId, clavePeriodo) {
+      const propio = esDependiente(actor) && actor.id === dependienteId;
+      permitir(propio || tieneRol(actor, GESTION));
+      const cfg = await configComision(dependienteId);
+      if (!cfg) return { configurado: false, mensaje: 'La gerencia todavía no ha configurado el porcentaje ni el período de comisión.' };
+      const rango = clavePeriodo ? rangoDe(clavePeriodo) : periodoDe(hoy(), cfg.periodo);
+      const todos = (await data.list('vouchers', { dependienteId })).filter((v) => v.fecha >= rango.desde && v.fecha <= rango.hasta);
+      const aprobados = todos.filter((v) => v.estado === 'aprobado');
+      const calc = aprobados.length ? calcularComisionVouchers(aprobados, cfg.porcentaje) : { ventas: 0, comision: 0, porMedicamento: {} };
+      const cierre = (await data.list('cierres', { dependienteId })).find((c) => c.periodo === rango.clave) ?? null;
+      return {
+        configurado: true, periodo: rango, porcentaje: cfg.porcentaje, origen: cfg.origen, tipo: cfg.periodo,
+        ventasAprobadas: calc.ventas, comision: calc.comision, porMedicamento: calc.porMedicamento,
+        vouchers: { aprobados: aprobados.length, pendientes: todos.filter((v) => v.estado === 'pendiente').length, rechazados: todos.filter((v) => v.estado === 'rechazado').length },
+        cierre,
+      };
+    },
+
+    async cerrar(actor, dependienteId, clavePeriodo) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia', 'finanzas']), 'Solo finanzas o la gerencia pueden cerrar un período.');
+      const d = await users.findUserById(dependienteId);
+      if (!d || d.role !== 'dependiente') throw new HttpError(404, 'Ese dependiente no existe.');
+      const cfg = await configComision(dependienteId);
+      if (!cfg) throw new HttpError(409, 'Configura primero el porcentaje y el período de comisión.');
+      const rango = rangoDe(clavePeriodo);
+      if (rango.hasta >= hoy()) throw new HttpError(409, 'El período todavía no ha terminado.');
+      if ((await data.list('cierres', { dependienteId })).some((c) => c.periodo === rango.clave)) throw new HttpError(409, 'Ese período ya está cerrado.');
+      const vs = (await data.list('vouchers', { dependienteId })).filter((v) => v.fecha >= rango.desde && v.fecha <= rango.hasta);
+      if (vs.some((v) => v.estado === 'pendiente')) throw new HttpError(409, 'Hay vouchers pendientes de revisar en ese período.');
+      const aprobados = vs.filter((v) => v.estado === 'aprobado');
+      const calc = aprobados.length ? calcularComisionVouchers(aprobados, cfg.porcentaje) : { ventas: 0, comision: 0 };
+      const c = await data.insert('cierres', {
+        dependienteId, periodo: rango.clave, desde: rango.desde, hasta: rango.hasta,
+        ventas: calc.ventas, porcentaje: cfg.porcentaje, comision: calc.comision, voucherIds: aprobados.map((v) => v.id), cerradoPor: actor.id,
+      });
+      await audit({ actorId: actor.id, action: 'periodo_cerrado', entity: 'cierre', entityId: c.id, after: c });
+      return c;
+    },
+    async listarCierres(actor, dependienteId) {
+      permitir((esDependiente(actor) && actor.id === dependienteId) || tieneRol(actor, GESTION));
+      return data.list('cierres', dependienteId ? { dependienteId } : {});
+    },
+  };
+
+  // ------------------------------------------------------------ vouchers
+  const vouchers = {
+    async crear(actor, input) {
+      permitir(esDependiente(actor), 'Solo los dependientes de farmacia cargan vouchers.');
+      const e = {};
+      const referencia = texto(e, 'referencia', input.referencia, { etiqueta: 'El número de voucher', min: 1, max: 40 });
+      if (!esFechaISO(input.fecha)) e.fecha = 'Elige la fecha del voucher.';
+      else if (input.fecha > hoy()) e.fecha = 'La fecha no puede ser futura.';
+      const items = Array.isArray(input.items) ? input.items : [];
+      if (!items.length) e.items = 'Agrega al menos un medicamento.';
+      const lineas = [];
+      for (const [i, it] of items.entries()) {
+        const med = await medicamentoActivo(it.medicamentoId);
+        const cantidad = Number(it.cantidad); const monto = Number(it.monto);
+        if (!med) e[`items.${i}.medicamentoId`] = 'Elige un medicamento del catálogo.';
+        if (!Number.isInteger(cantidad) || cantidad < 1) e[`items.${i}.cantidad`] = 'La cantidad debe ser un número entero mayor que cero.';
+        if (!Number.isFinite(monto) || monto <= 0) e[`items.${i}.monto`] = 'Escribe el monto en RD$, mayor que cero.';
+        if (med) lineas.push({ medicamentoId: med.id, medicamento: med.nombre, cantidad, monto: round2(monto) });
+      }
+      if (Object.keys(e).length) invalido(e);
+      const ref = referencia.toLowerCase();
+      if ((await data.list('vouchers', { dependienteId: actor.id })).some((v) => v.referencia.toLowerCase() === ref && v.estado !== 'anulado')) {
+        throw new HttpError(409, 'Ya cargaste un voucher con ese número.', { referencia: 'Ese número de voucher ya está registrado.' });
+      }
+      if (await periodoCerrado(actor.id, input.fecha)) throw new HttpError(409, 'Ese período de comisión ya está cerrado.', { fecha: 'El período de esa fecha ya se cerró.' });
+      const v = await data.insert('vouchers', {
+        dependienteId: actor.id, farmacia: actor.pharmacy ?? null, referencia, fecha: input.fecha,
+        items: lineas, total: round2(lineas.reduce((s, l) => s + l.monto, 0)), estado: 'pendiente',
+      });
+      await audit({ actorId: actor.id, action: 'voucher_cargado', entity: 'voucher', entityId: v.id, after: { total: v.total } });
+      return v;
+    },
+    async listar(actor, filtro = {}) {
+      if (esDependiente(actor)) return data.list('vouchers', { dependienteId: actor.id, ...(filtro.estado ? { estado: filtro.estado } : {}) });
+      permitir(tieneRol(actor, GESTION));
+      const where = {}; if (filtro.estado) where.estado = filtro.estado; if (filtro.dependienteId) where.dependienteId = filtro.dependienteId;
+      const vs = await data.list('vouchers', where);
+      const nombres = Object.fromEntries((await users.listUsers()).map((u) => [u.id, u.fullName]));
+      return vs.map((v) => ({ ...v, dependiente: nombres[v.dependienteId] ?? '' }));
+    },
+    async decidir(actor, id, aprobar, motivo) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor', 'finanzas']), 'No tienes permiso para revisar vouchers.');
+      const v = await data.get('vouchers', id);
+      if (!v) throw new HttpError(404, 'El voucher no existe.');
+      if (v.estado !== 'pendiente') throw new HttpError(409, 'Este voucher ya fue revisado.');
+      if (await periodoCerrado(v.dependienteId, v.fecha)) throw new HttpError(409, 'Ese período de comisión ya está cerrado.');
+      const m = normalizeName(motivo);
+      if (!aprobar && m.length < 3) throw new HttpError(422, 'Explica por qué se rechaza.', { motivo: 'Escribe el motivo del rechazo.' });
+      const estado = aprobar ? 'aprobado' : 'rechazado';
+      const out = await data.update('vouchers', id, { estado, decididoPor: actor.id, motivo: aprobar ? null : m });
+      await audit({ actorId: actor.id, action: `voucher_${estado}`, entity: 'voucher', entityId: id, before: { estado: v.estado }, after: { estado } });
+      return out;
+    },
+    async anular(actor, id) {
+      const v = await data.get('vouchers', id);
+      if (!v) throw new HttpError(404, 'El voucher no existe.');
+      permitir(esDependiente(actor) && v.dependienteId === actor.id);
+      if (v.estado !== 'pendiente') throw new HttpError(409, 'Solo puedes anular un voucher que todavía no se ha revisado.');
+      const out = await data.update('vouchers', id, { estado: 'anulado' });
+      await audit({ actorId: actor.id, action: 'voucher_anulado', entity: 'voucher', entityId: id, before: { estado: 'pendiente' }, after: { estado: 'anulado' } });
+      return out;
+    },
+  };
+
+  // ------------------------------------------------------------ promotoras
+  async function guardarAdjunto(actor, adj) {
+    if (!adj) return null;
+    const tipo = String(adj.tipo ?? '');
+    const firma = TIPOS_ADJUNTO[tipo];
+    if (!firma) throw new HttpError(422, 'La foto debe ser JPG, PNG, WEBP o PDF.', { adjunto: 'Formato no permitido.' });
+    let buf;
+    try { buf = Buffer.from(String(adj.base64 ?? ''), 'base64'); } catch { buf = Buffer.alloc(0); }
+    if (!buf.length) throw new HttpError(422, 'No se pudo leer el archivo.', { adjunto: 'Archivo vacío o dañado.' });
+    if (buf.length > MAX_ADJUNTO) throw new HttpError(413, 'La foto no puede pasar de 5 MB.', { adjunto: 'Archivo demasiado grande.' });
+    if (!firma.every((b, i) => buf[i] === b)) throw new HttpError(422, 'El archivo no coincide con su formato.', { adjunto: 'Archivo no válido.' });
+    if (!files) throw new HttpError(503, 'El almacenamiento de fotos todavía no está configurado.');
+    const clave = await files.put(buf, tipo, actor.id);
+    return { clave, tipo, tamano: buf.length, nombre: normalizeName(adj.nombre).slice(0, 120) || 'receta' };
+  }
+
+  const promotoras = {
+    async crearOperativo(actor, input) {
+      permitir(esPromotora(actor), 'Solo las promotoras registran operativos.');
+      const e = {};
+      const fecha = input.fecha ?? hoy();
+      if (!esFechaISO(fecha)) e.fecha = 'Elige la fecha del operativo.'; else if (fecha > hoy()) e.fecha = 'La fecha no puede ser futura.';
+      const provincia = texto(e, 'provincia', input.provincia, { etiqueta: 'La provincia' });
+      const municipio = texto(e, 'municipio', input.municipio, { etiqueta: 'El municipio' });
+      const centro = texto(e, 'centro', input.centro, { etiqueta: 'El centro de salud' });
+      if (Object.keys(e).length) invalido(e);
+      const dup = (await data.list('operativos', { promotoraId: actor.id, fecha })).find((o) => o.centro.toLowerCase() === centro.toLowerCase());
+      if (dup) return dup;
+      const o = await data.insert('operativos', { promotoraId: actor.id, fecha, provincia, municipio, centro });
+      await audit({ actorId: actor.id, action: 'operativo_creado', entity: 'operativo', entityId: o.id, after: o });
+      return o;
+    },
+    async listarOperativos(actor, { fecha } = {}) {
+      if (esPromotora(actor)) return data.list('operativos', { promotoraId: actor.id, ...(fecha ? { fecha } : {}) });
+      permitir(tieneRol(actor, GESTION));
+      return data.list('operativos', fecha ? { fecha } : {});
+    },
+    async crearReceta(actor, input) {
+      permitir(esPromotora(actor), 'Solo las promotoras registran recetas.');
+      const e = {};
+      const op = input.operativoId && (await data.get('operativos', input.operativoId));
+      if (!op || op.promotoraId !== actor.id) e.operativoId = 'Elige uno de tus operativos.';
+      const med = input.medicoId && (await data.get('medicos', input.medicoId));
+      if (!med) e.medicoId = 'Elige el médico que prescribió.';
+      const items = Array.isArray(input.items) ? input.items : [];
+      if (!items.length) e.items = 'Agrega al menos un medicamento.';
+      const lineas = []; const vistos = new Set();
+      for (const [i, it] of items.entries()) {
+        const m = await medicamentoActivo(it.medicamentoId);
+        const unidades = Number(it.unidades);
+        if (!m) e[`items.${i}.medicamentoId`] = 'Elige un medicamento del catálogo.';
+        else if (vistos.has(m.id)) e[`items.${i}.medicamentoId`] = 'Ese medicamento ya está en la receta.';
+        if (!Number.isInteger(unidades) || unidades < 1 || unidades > 999) e[`items.${i}.unidades`] = 'Escribe las unidades, entre 1 y 999.';
+        if (m) { vistos.add(m.id); lineas.push({ medicamentoId: m.id, medicamento: m.nombre, linea: m.linea ?? null, unidades }); }
+      }
+      if (Object.keys(e).length) invalido(e);
+      const adjunto = await guardarAdjunto(actor, input.adjunto);
+      const r = await data.insert('recetas', {
+        promotoraId: actor.id, operativoId: op.id, medicoId: med.id, fecha: op.fecha,
+        provincia: op.provincia, municipio: op.municipio, items: lineas, adjunto,
+      });
+      await audit({ actorId: actor.id, action: 'receta_registrada', entity: 'receta', entityId: r.id, after: { items: lineas.length } });
+      const alertas = await promotoras.alertasZona(op.provincia, op.municipio, op.fecha.slice(0, 7), lineas.map((l) => l.medicamentoId));
+      return { receta: r, alertas };
+    },
+    async listarRecetas(actor, { mes } = {}) {
+      let rs;
+      if (esPromotora(actor)) rs = await data.list('recetas', { promotoraId: actor.id });
+      else { permitir(tieneRol(actor, GESTION)); rs = await data.list('recetas'); }
+      if (mes) rs = rs.filter((r) => r.fecha.startsWith(mes));
+      const medicos = Object.fromEntries((await data.list('medicos')).map((m) => [m.id, m]));
+      return rs.map((r) => ({ ...r, medico: medicos[r.medicoId]?.nombre ?? '', especialidad: medicos[r.medicoId]?.especialidad ?? '' }));
+    },
+
+    async registrarInventario(actor, input) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor']) || esVendedor(actor), 'No tienes permiso para registrar inventario.');
+      const e = {};
+      const f = input.farmaciaId && (await data.get('farmacias', input.farmaciaId));
+      if (!f) e.farmaciaId = 'Elige la farmacia.';
+      const m = await medicamentoActivo(input.medicamentoId);
+      if (!m) e.medicamentoId = 'Elige el medicamento.';
+      const unidades = Number(input.unidades);
+      if (!Number.isInteger(unidades) || unidades < 0) e.unidades = 'Escribe las unidades disponibles (0 o más).';
+      const fechaCorte = input.fechaCorte ?? hoy();
+      if (!esFechaISO(fechaCorte) || fechaCorte > hoy()) e.fechaCorte = 'Elige una fecha de corte válida.';
+      if (Object.keys(e).length) invalido(e);
+      const i = await data.insert('inventario', { farmaciaId: f.id, medicamentoId: m.id, unidades, fechaCorte, registradoPor: actor.id });
+      await audit({ actorId: actor.id, action: 'inventario_registrado', entity: 'inventario', entityId: i.id, after: { unidades } });
+      return i;
+    },
+
+    async umbral() { return (await config('umbral_alerta_inventario'))?.valor ?? 0.75; },
+    async configurarUmbral(actor, valor) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia']));
+      const v = Number(valor);
+      if (!Number.isFinite(v) || v <= 0 || v > 1) invalido({ umbral: 'Escribe un porcentaje entre 1 y 100.' });
+      return setConfig(actor, 'umbral_alerta_inventario', { valor: round2(v) });
+    },
+
+    /** Compara lo recetado en la zona y el mes contra las unidades disponibles en las farmacias de la zona. */
+    async alertasZona(provincia, municipio, mes, medicamentoIds) {
+      const umbral = await promotoras.umbral();
+      const zona = (x) => x.provincia.toLowerCase() === provincia.toLowerCase() && x.municipio.toLowerCase() === municipio.toLowerCase();
+      const recetas = (await data.list('recetas')).filter((r) => zona(r) && r.fecha.startsWith(mes));
+      const farmacias = (await data.list('farmacias')).filter(zona);
+      const inv = await data.list('inventario');
+      const meds = Object.fromEntries((await data.list('medicamentos')).map((m) => [m.id, m.nombre]));
+      return medicamentoIds.map((id) => {
+        const recetado = recetas.reduce((s, r) => s + r.items.filter((it) => it.medicamentoId === id).reduce((a, it) => a + it.unidades, 0), 0);
+        let disponible = 0; let conDatos = 0;
+        for (const f of farmacias) {
+          const ult = inv.filter((x) => x.farmaciaId === f.id && x.medicamentoId === id).sort((a, b) => b.fechaCorte.localeCompare(a.fechaCorte) || String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+          if (ult) { disponible += ult.unidades; conDatos += 1; }
+        }
+        const base = { medicamentoId: id, medicamento: meds[id] ?? '', provincia, municipio, mes, recetado, umbral };
+        if (!conDatos) return { ...base, estado: 'sin_inventario', mensaje: 'No hay inventario registrado en farmacias de esta zona.' };
+        const r = evaluarAlertaInventario({ unidadesRecetadas: recetado, unidadesDisponibles: disponible, umbral });
+        return { ...base, disponible, farmaciasConDatos: conDatos, estado: r.alerta ? 'alerta' : 'ok', cobertura: Number.isFinite(r.cobertura) ? r.cobertura : null, faltante: r.faltante };
+      });
+    },
+    async misAlertas(actor, mes) {
+      permitir(esPromotora(actor) || tieneRol(actor, GESTION));
+      const m = mes ?? hoy().slice(0, 7);
+      const rs = (await data.list('recetas', esPromotora(actor) ? { promotoraId: actor.id } : {})).filter((r) => r.fecha.startsWith(m));
+      const zonas = new Map();
+      for (const r of rs) {
+        const k = `${r.provincia.toLowerCase()}|${r.municipio.toLowerCase()}`;
+        const z = zonas.get(k) ?? { provincia: r.provincia, municipio: r.municipio, meds: new Set() };
+        r.items.forEach((it) => z.meds.add(it.medicamentoId)); zonas.set(k, z);
+      }
+      const out = [];
+      for (const z of zonas.values()) out.push(...(await promotoras.alertasZona(z.provincia, z.municipio, m, [...z.meds])));
+      const orden = { alerta: 0, sin_inventario: 1, ok: 2 };
+      return out.sort((a, b) => orden[a.estado] - orden[b.estado]);
+    },
+  };
+
+  // ------------------------------------------------------------ reportes
+  const AGRUPAR = ['promotora', 'medicamento', 'linea', 'medico', 'especialidad', 'provincia', 'municipio', 'centro'];
+  async function reporteRecetas(actor, { mes, agrupar }) {
+    permitir(tieneRol(actor, GESTION));
+    if (!AGRUPAR.includes(agrupar)) throw new HttpError(422, 'Agrupación no válida.');
+    if (!/^\d{4}-\d{2}$/.test(String(mes))) throw new HttpError(422, 'Elige el mes.');
+    const rs = (await data.list('recetas')).filter((r) => r.fecha.startsWith(mes));
+    const medicos = Object.fromEntries((await data.list('medicos')).map((m) => [m.id, m]));
+    const ops = Object.fromEntries((await data.list('operativos')).map((o) => [o.id, o]));
+    const nombres = Object.fromEntries((await users.listUsers()).map((u) => [u.id, u.fullName]));
+    const filas = new Map();
+    const sumar = (clave, recetaId, unidades) => {
+      const f = filas.get(clave) ?? { clave, recetas: new Set(), unidades: 0 };
+      f.recetas.add(recetaId); f.unidades += unidades; filas.set(clave, f);
+    };
+    for (const r of rs) {
+      for (const it of r.items) {
+        const k = {
+          promotora: nombres[r.promotoraId] ?? 'Sin nombre', medicamento: it.medicamento, linea: it.linea ?? 'Sin línea',
+          medico: medicos[r.medicoId]?.nombre ?? 'Sin médico', especialidad: medicos[r.medicoId]?.especialidad ?? 'Sin especialidad',
+          provincia: r.provincia, municipio: `${r.municipio}, ${r.provincia}`, centro: ops[r.operativoId]?.centro ?? 'Sin centro',
+        }[agrupar];
+        sumar(k, r.id, it.unidades);
+      }
+    }
+    return { mes, agrupar, totalRecetas: rs.length, filas: [...filas.values()].map((f) => ({ clave: f.clave, recetas: f.recetas.size, unidades: f.unidades })).sort((a, b) => b.unidades - a.unidades) };
+  }
+
+  return { catalogo, comisiones, vouchers, promotoras, reporteRecetas };
+}

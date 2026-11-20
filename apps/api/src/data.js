@@ -1,0 +1,100 @@
+import { randomUUID } from 'node:crypto';
+
+/**
+ * Colecciones del módulo comercial (dependientes y promotoras).
+ * Cada una tiene tabla propia en PostgreSQL (migración 002). `json` = columnas JSONB.
+ */
+export const COLECCIONES = {
+  medicamentos: { tabla: 'medicamentos', campos: ['nombre', 'linea', 'presentacion', 'activo'], json: [] },
+  farmacias: { tabla: 'farmacias', campos: ['nombre', 'provincia', 'municipio', 'sector', 'estado', 'creadoPor'], json: [] },
+  medicos: { tabla: 'medicos', campos: ['nombre', 'especialidad', 'centro', 'provincia', 'municipio', 'estado', 'creadoPor'], json: [] },
+  vouchers: { tabla: 'vouchers', campos: ['dependienteId', 'farmacia', 'referencia', 'fecha', 'periodo', 'items', 'total', 'estado', 'decididoPor', 'motivo'], json: ['items'] },
+  cierres: { tabla: 'cierres_comision', campos: ['dependienteId', 'periodo', 'desde', 'hasta', 'ventas', 'porcentaje', 'comision', 'voucherIds', 'cerradoPor'], json: ['voucherIds'] },
+  operativos: { tabla: 'operativos', campos: ['promotoraId', 'fecha', 'provincia', 'municipio', 'centro'], json: [] },
+  recetas: { tabla: 'recetas', campos: ['promotoraId', 'operativoId', 'medicoId', 'fecha', 'provincia', 'municipio', 'items', 'adjunto'], json: ['items', 'adjunto'] },
+  inventario: { tabla: 'inventario', campos: ['farmaciaId', 'medicamentoId', 'unidades', 'fechaCorte', 'registradoPor'], json: [] },
+  configuracion: { tabla: 'configuracion', campos: ['clave', 'valor', 'actualizadoPor'], json: ['valor'] },
+};
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const snake = (s) => s.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
+
+function check(col) {
+  const c = COLECCIONES[col];
+  if (!c) throw new Error(`Colección desconocida: ${col}`);
+  return c;
+}
+
+/** Implementación en memoria (pruebas y desarrollo). */
+export class MemoryData {
+  constructor() { this.db = Object.fromEntries(Object.keys(COLECCIONES).map((k) => [k, new Map()])); }
+  async insert(col, obj) {
+    check(col);
+    const row = { id: randomUUID(), createdAt: new Date().toISOString(), ...structuredClone(obj) };
+    this.db[col].set(row.id, row);
+    return structuredClone(row);
+  }
+  async get(col, id) { check(col); const r = this.db[col].get(id); return r ? structuredClone(r) : null; }
+  async update(col, id, patch) {
+    check(col);
+    const cur = this.db[col].get(id); if (!cur) return null;
+    const row = { ...cur, ...structuredClone(patch), updatedAt: new Date().toISOString() };
+    this.db[col].set(id, row);
+    return structuredClone(row);
+  }
+  async list(col, where = {}) {
+    check(col);
+    return [...this.db[col].values()]
+      .filter((r) => Object.entries(where).every(([k, v]) => r[k] === v))
+      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+      .map((r) => structuredClone(r));
+  }
+}
+
+/** Implementación PostgreSQL. Solo columnas de la lista blanca; consultas parametrizadas. */
+export class PgData {
+  constructor(pool) { this.pool = pool; }
+  #row(col, r) {
+    if (!r) return null;
+    const c = check(col);
+    const out = { id: r.id, createdAt: r.created_at, updatedAt: r.updated_at ?? undefined };
+    for (const f of c.campos) {
+      let v = r[snake(f)];
+      if (v instanceof Date) v = v.toISOString().slice(0, 10);
+      if (typeof v === 'string' && /^\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision'].includes(f)) v = Number(v);
+      out[f] = v;
+    }
+    return out;
+  }
+  async insert(col, obj) {
+    const c = check(col);
+    const keys = c.campos.filter((f) => obj[f] !== undefined);
+    const vals = keys.map((f) => (c.json.includes(f) ? JSON.stringify(obj[f]) : obj[f]));
+    const sql = `INSERT INTO ${c.tabla} (${keys.map(snake).join(',')}) VALUES (${keys.map((_, i) => '$' + (i + 1)).join(',')}) RETURNING *`;
+    const { rows } = await this.pool.query(sql, vals);
+    return this.#row(col, rows[0]);
+  }
+  async get(col, id) {
+    const c = check(col);
+    if (!UUID.test(String(id))) return null;
+    const { rows } = await this.pool.query(`SELECT * FROM ${c.tabla} WHERE id = $1`, [id]);
+    return this.#row(col, rows[0]);
+  }
+  async update(col, id, patch) {
+    const c = check(col);
+    if (!UUID.test(String(id))) return null;
+    const keys = c.campos.filter((f) => patch[f] !== undefined);
+    if (!keys.length) return this.get(col, id);
+    const vals = keys.map((f) => (c.json.includes(f) ? JSON.stringify(patch[f]) : patch[f]));
+    const sql = `UPDATE ${c.tabla} SET ${keys.map((f, i) => `${snake(f)} = $${i + 2}`).join(', ')}, updated_at = now() WHERE id = $1 RETURNING *`;
+    const { rows } = await this.pool.query(sql, [id, ...vals]);
+    return this.#row(col, rows[0]);
+  }
+  async list(col, where = {}) {
+    const c = check(col);
+    const keys = Object.keys(where).filter((k) => c.campos.includes(k));
+    const cond = keys.length ? 'WHERE ' + keys.map((k, i) => `${snake(k)} = $${i + 1}`).join(' AND ') : '';
+    const { rows } = await this.pool.query(`SELECT * FROM ${c.tabla} ${cond} ORDER BY created_at`, keys.map((k) => where[k]));
+    return rows.map((r) => this.#row(col, r));
+  }
+}
