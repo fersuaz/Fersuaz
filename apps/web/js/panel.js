@@ -77,7 +77,7 @@ function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false 
   $('#dialogo-titulo').textContent = titulo;
   const c = $('#dialogo-cuerpo'); c.replaceChildren(h('p', {}, cuerpo));
   let motivo;
-  if (pedirMotivo) { motivo = h('textarea', { id: 'motivo', rows: 3, style: 'width:100%;border:1.5px solid var(--linea);border-radius:12px;padding:.7rem;font:inherit' }); c.append(h('label', { for: 'motivo', class: 'hint' }, 'Motivo'), motivo); }
+  if (pedirMotivo) { motivo = h('textarea', { id: 'motivo', rows: 3 }); c.append(h('label', { for: 'motivo', class: 'hint' }, 'Motivo'), motivo); }
   $('#dialogo-ok').textContent = okTexto;
   d.showModal();
   return new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok' ? (motivo ? motivo.value : true) : null), { once: true }));
@@ -408,8 +408,8 @@ V.solicitudes = async () => {
   const ligar = async (d) => {
     const opciones = d.candidatas.length ? d.candidatas : [];
     const dlg = $('#dialogo'); $('#dialogo-titulo').textContent = `Farmacia de ${d.nombre}`;
-    const sel = h('select', { id: 'dep-farm', style: 'width:100%;padding:.6rem;border:1.5px solid var(--linea);border-radius:12px;font:inherit' }, h('option', { value: '' }, 'Elige la farmacia'), ...opciones.map((f) => h('option', { value: f.id }, `${f.nombre} (${f.municipio}, ${f.provincia})`)));
-    const busc = h('input', { id: 'dep-busca', type: 'search', placeholder: 'Escribe parte del nombre', style: 'width:100%;padding:.6rem;border:1.5px solid var(--linea);border-radius:12px;font:inherit' });
+    const sel = h('select', { id: 'dep-farm' }, h('option', { value: '' }, 'Elige la farmacia'), ...opciones.map((f) => h('option', { value: f.id }, `${f.nombre} (${f.municipio}, ${f.provincia})`)));
+    const busc = h('input', { id: 'dep-busca', type: 'search', placeholder: 'Escribe parte del nombre' });
     let todas = null;
     busc.addEventListener('input', async () => {
       todas ??= (await api('GET', '/api/catalogo/farmacias')).items;
@@ -1102,12 +1102,12 @@ V.hoteles = async () => {
   fz.sp.addEventListener('change', aplicar); fz.sm.addEventListener('change', aplicar);
   const editar = async (x) => {
     const d = $('#dialogo'); $('#dialogo-titulo').textContent = x.nombre;
-    const precio = h('input', { id: 'h-precio', type: 'number', min: 1, step: 0.01, inputmode: 'decimal', value: x.precioNoche ?? '', style: 'width:100%;border:1.5px solid var(--linea);border-radius:12px;padding:.7rem;font:inherit' });
+    const precio = h('input', { id: 'h-precio', type: 'number', min: 1, step: 0.01, inputmode: 'decimal', value: x.precioNoche ?? '' });
     const cajas = reqs.map((r) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: `req-${r.value}`, checked: x.requisitos?.[r.value] === true }), h('span', {}, r.label)));
-    const notas = h('textarea', { id: 'h-notas', rows: 2, style: 'width:100%;border:1.5px solid var(--linea);border-radius:12px;padding:.7rem;font:inherit' }, x.notas ?? '');
+    const notas = h('textarea', { id: 'h-notas', rows: 2 }, x.notas ?? '');
     const inactivo = h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'h-inactivo', checked: x.estado === 'inactivo' }), h('span', {}, 'No usar este hotel'));
     $('#dialogo-cuerpo').replaceChildren(h('p', { class: 'hint' }, `${x.municipio}, ${x.provincia}${x.telefono ? `. Teléfono ${x.telefono}` : ''}. Confirma el precio y marca solo lo que hayas verificado por llamada o visita.`),
-      h('label', { for: 'h-precio', class: 'hint' }, 'Precio por noche RD$'), precio, h('div', { style: 'display:grid;gap:.25rem;margin:.75rem 0' }, cajas), h('label', { for: 'h-notas', class: 'hint' }, 'Notas'), notas, inactivo);
+      h('label', { for: 'h-precio', class: 'hint' }, 'Precio por noche RD$'), precio, h('div', { class: 'dialogo-checks' }, cajas), h('label', { for: 'h-notas', class: 'hint' }, 'Notas'), notas, inactivo);
     $('#dialogo-ok').textContent = 'Guardar'; d.showModal();
     const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
     if (!ok) return;
@@ -1324,8 +1324,8 @@ async function inicioDependiente(r) {
       kpi('Vouchers aprobados', fmtN.format(c.configurado ? c.vouchers.aprobados : est.aprobado ?? 0), c.configurado && c.vouchers.rechazados ? `${fmtN.format(c.vouchers.rechazados)} rechazado(s)` : null)),
     h('div', { class: 'tablero' },
       tg('Tu farmacia', f ? 'Dónde trabajas' : 'Aún no está ligada al catálogo', ficha, null, { ancho: 2 }),
-      tg('Ventas aprobadas por mes', 'Últimos 6 meses', columnas(meses, { fmt: RD, corto: RDc }), meses.map((x) => [x.nombre, RD(x.valor)]), { ancho: 2, cols: ['Mes', 'Ventas'] }),
-      tg('Ventas por medicamento', 'Período actual', barras(porMed, { fmt: RD, vacio: 'Aún no hay vouchers aprobados en este período.' }), porMed.map((x) => [x.nombre, RD(x.valor)]), { ancho: 2 }),
+      tg('Ventas aprobadas por mes', 'Últimos 6 meses, en RD$', columnas(meses, { fmt: RD, corto: (n) => fmtC.format(n) }), meses.map((x) => [x.nombre, RD(x.valor)]), { ancho: 2, cols: ['Mes', 'Ventas'] }),
+      tg('Ventas por medicamento', 'Período actual', barras(porMed, { fmt: RD, vacio: c.configurado ? 'Aún no hay vouchers aprobados en este período.' : 'Se muestra cuando la gerencia configure la comisión.' }), porMed.map((x) => [x.nombre, RD(x.valor)]), { ancho: 2 }),
       tg('Tus vouchers', `${fmtN.format(r.vouchers.total)} en total`, barras(porEstado, { enlace: () => '#misVouchers', vacio: 'Aún no has cargado vouchers.' }), porEstado.map((x) => [x.nombre, fmtN.format(x.valor)]), { ancho: 1 }),
       h('section', { class: 'tg tg-1 tg-accion' }, h('h2', {}, '¿Vendiste hoy?'), h('p', {}, 'Carga la foto del voucher; la gerencia lo revisa y suma a tu comisión.'), h('a', { class: 'btn', href: '#voucher' }, 'Cargar voucher'))),
   ];
@@ -1395,6 +1395,9 @@ function menuPara(u) {
 function pintarMenu(secciones, actual) {
   const padre = { viatico: 'viaticos' }[actual] ?? actual;
   $('#menu').replaceChildren(...secciones.flatMap(([titulo, items]) => [h('h3', {}, titulo), ...items.filter(([, label]) => label).map(([id, label]) => h('a', { href: `#${id}`, 'aria-current': id === padre ? 'page' : null }, label))]));
+  // En celular el menú es una fila deslizable: deja visible la sección actual.
+  const activo = $('#menu a[aria-current="page"]');
+  if (activo && matchMedia('(max-width: 900px)').matches) activo.scrollIntoView({ block: 'nearest', inline: 'center' });
 }
 let secciones;
 async function router() {
