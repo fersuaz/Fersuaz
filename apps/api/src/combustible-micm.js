@@ -60,13 +60,13 @@ export function preciosDeLineas(paginas) {
       for (let i = 0; i + 6 < nums.length; i++) {
         const suma = nums.slice(i, i + 6).reduce((a, b) => a + b, 0);
         if (Math.abs(suma - nums[i + 6]) <= 0.05 && nums[i + 6] > 0) {
-          const oficial = nums[i + 6]; const sig = nums[i + 7];
-          // Tras el precio oficial viene el ajuste (pequeño, puede ser negativo) o directamente el precio al público.
+          const oficial = nums[i + 6]; const resto = nums.slice(i + 7);
+          // Precio al público: si la fila lo trae explícito (cerca del oficial) y cuadra con oficial + algún ajuste, se usa;
+          // si no, es el oficial más el primer ajuste pequeño (puede ser negativo).
           let publico = oficial; let ajuste = 0;
-          if (sig != null && Math.abs(sig) < oficial * 0.2) { ajuste = sig; publico = oficial + sig; }
-          else if (sig != null && Math.abs(sig - oficial) <= oficial * 0.2) publico = sig;
-          const confirma = nums[i + 8];
-          if (ajuste && confirma != null && Math.abs(confirma - (oficial + ajuste)) > 0.05 && Math.abs(confirma - oficial) <= oficial * 0.2 && Math.abs(confirma) >= oficial * 0.2) continue;
+          const explicito = resto.find((x) => x !== oficial && Math.abs(x - oficial) <= oficial * 0.2 && resto.some((y) => Math.abs(oficial + y - x) <= 0.05));
+          if (explicito != null) { publico = explicito; ajuste = r2(explicito - oficial); }
+          else { const aj = resto.find((x) => x !== 0 && Math.abs(x) < oficial * 0.2); if (aj != null) { ajuste = aj; publico = oficial + aj; } }
           out[e[0]] = r2(publico);
           detalle[e[0]] = { oficial, ajuste, componentes: nums.slice(i, i + 6) };
           break;

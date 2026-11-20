@@ -82,3 +82,10 @@ test('actualizar: errores claros si el MICM cambia o no responde', async () => {
 test('PDF: lee la tabla aunque venga dentro de un objeto de formulario (tabla de Excel pegada)', () => {
   assert.deepEqual(preciosDePdf(fx('aviso-ejemplo-formulario.pdf')).precios, ESPERADO);
 });
+
+test('PDF: con columnas extra, usa el precio al público explícito si cuadra con oficial + ajuste (GLP)', () => {
+  const fila = [[{ texto: 'Gas Licuado de Petróleo (GLP) ** 84.58 0.00 13.53 11.71 17.90 6.68 134.40 0.00 0.80 135.20 0.00' }]];
+  assert.equal(preciosDeLineas(fila).precios.glp, 135.2);
+  const premium = [[{ texto: 'Gasolina Premium 210.87 71.85 33.74 16.59 27.07 6.68 366.80 (4.70) 0.00' }]];
+  assert.equal(preciosDeLineas(premium).precios.gasolina_premium, 362.1);
+});
