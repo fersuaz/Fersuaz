@@ -321,3 +321,39 @@ test('propuesta del mes: reparte los lugares de la zona en días libres y se apr
     assert.equal(otra.resumen.lugares, 0, 'lo ya programado no se vuelve a proponer'); assert.equal(otra.resumen.diasLibres, 4);
   } finally { server.close(); }
 });
+
+test('panel de inicio: cada rol ve su resumen con cifras reales', async () => {
+  const { server, call, t, id, planificar } = await setup();
+  try {
+    const data = setup.data;
+    const f1 = await data.insert('farmacias', { nombre: 'Farmacia Ejemplo Central', provincia: 'Espaillat', municipio: 'Moca', sector: 'Juan López', estado: 'validada', fuente: 'manual' });
+    await call('POST', `/api/viaticos/perfiles/${id.rep}`, PERFIL, t.gerente);
+    await call('POST', '/api/viaticos/precios', { combustible: 'gasoil_regular', precioGalon: 250, vigenteDesde: '2026-11-01' }, t.finanzas);
+    await planificar(jornada('2026-11-23', 350), t.rep);
+    // Representante
+    const r = (await call('GET', '/api/inicio?mes=2026-11', null, t.rep)).body;
+    assert.equal(r.tipo, 'representante'); assert.deepEqual(r.zona.provincias, ['Espaillat']);
+    assert.equal(r.lugares.total, 2, 'hospital y farmacia de su zona'); assert.equal(r.cronograma.dias, 1); assert.equal(r.cronograma.cobertura, 50);
+    assert.equal(r.viaticos.detalle.combustible, 2500); assert.equal(r.jornadas.km, 350);
+    assert.equal(r.cronograma.proximo.fecha, '2026-11-23');
+    // Dependiente: sin farmacia ligada, la liga una vez; después solo la gestión la cambia
+    let d = (await call('GET', '/api/inicio', null, t.dep)).body;
+    assert.equal(d.tipo, 'dependiente'); assert.equal(d.farmacia, null);
+    assert.equal((await call('POST', `/api/usuarios/${id.dep}/farmacia`, { farmaciaId: 'no-existe' }, t.dep)).status, 422);
+    assert.equal((await call('POST', `/api/usuarios/${id.dep}/farmacia`, { farmaciaId: f1.id }, t.dep)).status, 200);
+    d = (await call('GET', '/api/inicio', null, t.dep)).body;
+    assert.deepEqual([d.farmacia.provincia, d.farmacia.municipio, d.farmacia.sector], ['Espaillat', 'Moca', 'Juan López']);
+    assert.equal((await call('POST', `/api/usuarios/${id.dep}/farmacia`, { farmaciaId: f1.id }, t.dep)).status, 403);
+    assert.equal((await call('POST', `/api/usuarios/${id.dep}/farmacia`, { farmaciaId: f1.id }, t.rep)).status, 403);
+    assert.equal((await call('POST', `/api/usuarios/${id.dep}/farmacia`, { farmaciaId: f1.id }, t.supervisor)).status, 200);
+    assert.equal(d.vouchers.ventasPorMes.length, 6);
+    // Gestión
+    const g = (await call('GET', '/api/inicio?mes=2026-11', null, t.gerente)).body;
+    assert.equal(g.tipo, 'gestion'); assert.equal(g.catalogo.farmacias, 1); assert.equal(g.catalogo.centros, 1);
+    assert.equal(g.cronogramas.dias, 1); assert.equal(g.equipo.dependientesSinFarmacia, 0);
+    assert.equal(g.cobertura.find((x) => x.id === id.rep).cobertura, 50);
+    assert.equal(g.catalogo.provincias[0].nombre, 'Espaillat');
+    assert.equal((await call('GET', '/api/usuarios/dependientes', null, t.rep)).status, 403);
+    assert.equal((await call('GET', '/api/usuarios/dependientes', null, t.gerente)).body.items[0].farmacia.nombre, 'Farmacia Ejemplo Central');
+  } finally { server.close(); }
+});
