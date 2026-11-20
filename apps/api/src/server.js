@@ -39,7 +39,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const n = createNotificaciones({ data, users: store, correo, sitio });
   const avisar = (fn) => fn().catch((e) => console.error('Notificación:', e.message));
   const t = createTerritorio({ data, users: store, audit: (e) => store.addAudit(e), now });
-  const auth = createAuthService(store, { preregistro: { buscar: t.buscarPreregistro, confirmar: t.confirmarPreregistro } });
+  const farmaciaActiva = async (id) => { const f = await data.get('farmacias', id); return f && !['inactiva', 'inactivo'].includes(f.estado) ? f : null; };
+  const auth = createAuthService(store, { preregistro: { buscar: t.buscarPreregistro, confirmar: t.confirmarPreregistro }, farmaciaPara: farmaciaActiva });
   const c = createComercial({ data, users: store, files, audit: (e) => store.addAudit(e), now });
   const hoteles = createHoteles({ data, audit: (e) => store.addAudit(e), now: now ?? (() => new Date()) });
   const v = createViaticos({ data, users: store, files, mapas, hoteles, notificar: n.notificar, audit: (e) => store.addAudit(e), now });
@@ -125,11 +126,25 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/auth/options', () => ({ roles: SELF_REGISTERABLE.map((r) => ({ value: r, label: ROLE_LABELS[r] })), positions: POSITIONS }), { auth: false });
   ruta('POST', '/api/auth/register', async ({ body }) => {
     const user = await auth.register(body);
+    const roles = ['administrador', 'gerencia', 'supervisor'].filter((r) => canApprove(r, user.role));
     if (user.status !== 'activo') {
-      const roles = ['administrador', 'gerencia', 'supervisor'].filter((r) => canApprove(r, user.role));
       avisar(() => n.notificarRoles(roles, { tipo: 'solicitud', titulo: 'Nueva solicitud de cuenta', texto: `${user.fullName} pidió acceso como ${user.role}${user.position ? ` (${user.position})` : ''}.`, enlace: '#solicitudes' }));
+    } else if (user.role === 'dependiente') {
+      avisar(() => n.notificarRoles(roles, { tipo: 'solicitud', titulo: 'Nueva dependiente', texto: `${user.fullName} se registró en ${user.pharmacy}${user.province ? `, ${user.province}` : ''}.`, enlace: '#solicitudes?sec=dependientes' }));
     }
-    return [201, { user, message: user.status === 'activo' ? 'Tu cuenta ya está activa: la gerencia te había pre-registrado. Inicia sesión.' : 'Solicitud recibida. Te avisaremos cuando la gerencia la apruebe.' }];
+    const message = user.status !== 'activo' ? 'Solicitud recibida. Te avisaremos cuando la gerencia la apruebe.'
+      : user.role === 'dependiente' ? `Tu cuenta ya está activa y ligada a ${user.pharmacy}. Inicia sesión.` : 'Tu cuenta ya está activa: la gerencia te había pre-registrado. Inicia sesión.';
+    return [201, { user, message }];
+  }, { auth: false });
+  // Público (registro de dependientes): división territorial y farmacias del catálogo, solo datos de la farmacia.
+  ruta('GET', '/api/publico/division', () => { const d = t.division(); return { provincias: d.provincias, municipios: d.municipios }; }, { auth: false });
+  ruta('GET', '/api/publico/farmacias', async ({ q }) => {
+    const provincia = q.get('provincia'); const municipio = q.get('municipio'); const texto = String(q.get('q') ?? '').trim();
+    if (!provincia || !municipio) throw new AuthError(422, 'Elige la provincia y el municipio.');
+    const k = texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const xs = (await data.list('farmacias', { municipio })).filter((f) => f.provincia === provincia && !['inactiva', 'inactivo'].includes(f.estado)
+      && (!k || `${f.nombre} ${f.sector ?? ''} ${f.direccion ?? ''}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(k)));
+    return { items: xs.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')).slice(0, 60).map((f) => ({ id: f.id, nombre: f.nombre, sector: f.sector ?? null, direccion: f.direccion ?? null })), total: xs.length };
   }, { auth: false });
   ruta('POST', '/api/auth/login', async ({ body }) => {
     const user = await auth.login(body.email, body.password);
@@ -162,7 +177,13 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
 
   // Dependientes: vouchers y comisiones
   ruta('GET', '/api/vouchers', async ({ me, q }) => ({ items: await c.vouchers.listar(me, { estado: q.get('estado') || undefined, dependienteId: q.get('dependienteId') || undefined }) }));
-  ruta('POST', '/api/vouchers', async ({ me, body }) => [201, { item: await c.vouchers.crear(me, body) }]);
+  ruta('POST', '/api/vouchers', async ({ me, body }) => {
+    const item = await c.vouchers.crear(me, body ?? {});
+    if (item.dependienteId !== me.id) avisar(() => n.notificar(item.dependienteId, { tipo: 'voucher', titulo: 'Voucher cargado a tu nombre', texto: `${me.fullName} cargó el voucher ${item.referencia} por RD$${item.total.toLocaleString('es-DO', { minimumFractionDigits: 2 })}. Queda en revisión.`, enlace: '#misVouchers' }));
+    return [201, { item }];
+  });
+  ruta('GET', '/api/vouchers/dependientes', async ({ me }) => ({ items: await c.vouchers.dependientesDeZona(me) }));
+  ruta('GET', '/api/vouchers/porcentaje', async ({ me, q }) => ({ item: await c.vouchers.porcentaje(me, q.get('dependienteId')) }));
   ruta('POST', /^\/api\/vouchers\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p, body }) => {
     const item = await c.vouchers.decidir(me, p[1], p[2] === 'aprobar', body.motivo);
     avisar(() => n.notificar(item.dependienteId, { tipo: 'voucher', titulo: item.estado === 'aprobado' ? 'Voucher aprobado' : 'Voucher rechazado', texto: `Tu voucher ${item.referencia} fue ${item.estado}${item.motivo ? `: ${item.motivo}` : '.'}`, enlace: '#misVouchers' }));

@@ -74,3 +74,17 @@
 .sugerencia { margin-left: .35rem; padding: .2rem .65rem; border-radius: 999px; border: 1.5px solid var(--celeste); background: #fff; color: var(--marino); font: 600 .85rem/1.4 var(--sans); cursor: pointer; }
 .sugerencia:hover { background: var(--panel); }
 .sugerencia:focus-visible { outline: 3px solid var(--celeste); outline-offset: 2px; }
+
+/* Registro de dependiente: su farmacia del catálogo */
+.farmacia-buscar { border: 1px solid var(--linea); border-radius: 16px; padding: 1rem 1.1rem; margin: 0 0 1.25rem; display: grid; gap: .35rem; min-width: 0; }
+.farmacia-buscar legend { font: 600 1rem var(--serif); color: var(--marino); padding: 0 .35rem; }
+.farmacia-buscar .hint { margin: 0 0 .5rem; color: var(--texto-2); font-size: .9rem; }
+.farmacia-buscar select:disabled, .farmacia-buscar input:disabled { opacity: .6; }
+.farmacia-resultados { display: grid; gap: .4rem; max-height: 18rem; overflow-y: auto; margin: .25rem 0 .5rem; }
+.farmacia-opcion { display: flex; gap: .7rem; align-items: flex-start; padding: .7rem .85rem; border: 1.5px solid var(--linea); border-radius: 12px; cursor: pointer; background: #fff; }
+.farmacia-opcion:hover { border-color: var(--celeste); }
+.farmacia-opcion:has(input:checked) { border-color: var(--marino); background: rgba(48, 133, 172, .08); }
+.farmacia-opcion:has(input:focus-visible) { outline: 3px solid var(--celeste); outline-offset: 2px; }
+.farmacia-opcion input { margin-top: .25rem; accent-color: var(--marino); width: 1.1rem; height: 1.1rem; flex: none; }
+.farmacia-opcion strong { display: block; color: var(--marino); font-weight: 600; }
+.farmacia-opcion small { display: block; color: var(--texto-2); font-size: .85rem; }

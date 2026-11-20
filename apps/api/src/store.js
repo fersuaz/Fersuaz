@@ -60,9 +60,9 @@ export class PostgresStore {
   }
   async createUser(u) {
     const { rows } = await this.pool.query(
-      `INSERT INTO users (full_name, email, phone, role, position, pharmacy_text, province_text, password_hash, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [u.fullName, u.email, u.phone, u.role, u.position, u.pharmacy ?? null, u.province ?? null, u.passwordHash, u.status],
+      `INSERT INTO users (full_name, email, phone, role, position, pharmacy_text, province_text, password_hash, status, farmacia_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [u.fullName, u.email, u.phone, u.role, u.position, u.pharmacy ?? null, u.province ?? null, u.passwordHash, u.status, u.farmaciaId ?? null],
     );
     return this.#map(rows[0]);
   }

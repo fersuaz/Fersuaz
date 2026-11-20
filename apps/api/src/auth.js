@@ -9,9 +9,16 @@ export class AuthError extends Error {
 const publicUser = ({ passwordHash, ...u }) => u;
 
 /** `preregistro`: { buscar(email, role), confirmar(user, p) } — opcional, para representantes cargados por Excel. */
-export function createAuthService(store, { preregistro } = {}) {
+export function createAuthService(store, { preregistro, farmaciaPara } = {}) {
   return {
     async register(input) {
+      // Dependiente que elige su farmacia del catálogo: queda ligada y activa de inmediato.
+      let farmacia = null;
+      if (String(input?.role ?? '').toLowerCase() === 'dependiente' && input.farmaciaId && farmaciaPara) {
+        farmacia = await farmaciaPara(String(input.farmaciaId));
+        if (!farmacia) throw new AuthError(422, 'Revisa los campos marcados.', { farmaciaId: 'Esa farmacia no está en el catálogo. Búscala de nuevo o escribe su nombre.' });
+        input = { ...input, pharmacy: farmacia.nombre, province: farmacia.provincia };
+      }
       const { ok, errors, data } = validateRegistration(input);
       if (!ok) throw new AuthError(422, 'Revisa los campos marcados.', errors);
       if (await store.findUserByEmail(data.email)) {
@@ -20,10 +27,10 @@ export function createAuthService(store, { preregistro } = {}) {
       const { password, ...rest } = data;
       const pre = await preregistro?.buscar(data.email, data.role);
       const user = await store.createUser({
-        ...rest, ...(pre ? { position: pre.posicion } : {}),
-        passwordHash: await hashPassword(password), status: pre ? STATUS.ACTIVO : STATUS.PENDIENTE,
+        ...rest, ...(pre ? { position: pre.posicion } : {}), ...(farmacia ? { farmaciaId: farmacia.id } : {}),
+        passwordHash: await hashPassword(password), status: pre || farmacia ? STATUS.ACTIVO : STATUS.PENDIENTE,
       });
-      await store.addAudit({ action: pre ? 'registro_preaprobado' : 'registro_solicitado', entity: 'user', entityId: user.id, after: { role: user.role, ...(pre ? { position: user.position } : {}) } });
+      await store.addAudit({ action: pre ? 'registro_preaprobado' : farmacia ? 'registro_dependiente_farmacia' : 'registro_solicitado', entity: 'user', entityId: user.id, after: { role: user.role, ...(pre ? { position: user.position } : {}), ...(farmacia ? { farmaciaId: farmacia.id, farmacia: farmacia.nombre } : {}) } });
       if (pre) await preregistro.confirmar(user, pre);
       return publicUser(user);
     },

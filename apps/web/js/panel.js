@@ -184,26 +184,78 @@ function lineasEditor({ conMonto }) {
 
 // ---------------------------------------------------------------- vistas: dependiente
 const V = {};
+/** Editor de un voucher: medicamentos del catálogo, cantidad y precio por unidad; suma el total y la comisión estimada. */
+function editorVoucher(meds, pct) {
+  const cont = h('div', { class: 'vlineas' });
+  const totalEl = h('strong', { class: 'vtotal-monto' }, RD(0));
+  const comEl = h('strong', { class: 'vtotal-monto' }, '');
+  const comNota = h('small', {});
+  let porcentaje = pct; let n = 0;
+  const etiqueta = (m) => (m.presentacion ? `${m.nombre}, ${m.presentacion}` : m.nombre);
+  function recalcular() {
+    let total = 0;
+    for (const f of cont.children) {
+      const c = Number(f.querySelector('[name$=".cantidad"]').value) || 0; const p = Number(f.querySelector('[name$=".precio"]').value) || 0;
+      const sub = c * p; total += sub; f.querySelector('.vsub').textContent = RD(sub);
+    }
+    totalEl.textContent = RD(total);
+    if (porcentaje == null) { comEl.textContent = 'Sin configurar'; comNota.textContent = 'La gerencia aún no ha fijado el porcentaje de comisión.'; }
+    else { comEl.textContent = RD(Math.round(total * porcentaje) / 100); comNota.textContent = `${fmtN.format(porcentaje)} % del total. Se confirma cuando el voucher se aprueba.`; }
+  }
+  function agregar() {
+    const i = n++;
+    const sel = campo(`items.${i}.medicamentoId`, 'Medicamento', { options: meds.map((m) => ({ value: m.id, label: etiqueta(m) })), placeholder: 'Elige el medicamento' });
+    const cant = campo(`items.${i}.cantidad`, 'Cantidad', { type: 'number', min: 1, step: 1, value: 1, inputmode: 'numeric' });
+    const prec = campo(`items.${i}.precio`, 'Precio por unidad RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' });
+    const fila = h('div', { class: 'vlinea' }, sel, cant, prec,
+      h('div', { class: 'vsub-caja' }, h('span', { class: 'hint' }, 'Subtotal'), h('span', { class: 'vsub' }, RD(0))),
+      h('button', { type: 'button', class: 'quitar', 'aria-label': 'Quitar medicamento', onclick: () => { if (cont.children.length > 1) { fila.remove(); recalcular(); } } }, 'Quitar'));
+    // Al elegir el medicamento se propone su precio del catálogo; se puede cambiar por el precio real de la venta.
+    sel.querySelector('select').addEventListener('change', (e) => { const m = meds.find((x) => x.id === e.target.value); const inp = prec.querySelector('input'); if (m?.precio && !inp.value) inp.value = m.precio; recalcular(); });
+    fila.addEventListener('input', recalcular);
+    cont.append(fila); recalcular();
+    if (i > 0) sel.querySelector('select').focus();
+  }
+  agregar();
+  return {
+    el: cont,
+    resumen: h('div', { class: 'vtotales', 'aria-live': 'polite' }, h('div', {}, h('span', {}, 'Total del voucher'), totalEl), h('div', { class: 'vcom' }, h('span', {}, 'Comisión estimada'), comEl, comNota)),
+    boton: h('button', { type: 'button', class: 'btn-sec', onclick: () => agregar() }, 'Agregar otro medicamento'),
+    porcentaje: (p) => { porcentaje = p; recalcular(); },
+    valores: () => [...cont.children].map((f) => ({ medicamentoId: f.querySelector('select').value, cantidad: Number(f.querySelector('[name$=".cantidad"]').value), precio: f.querySelector('[name$=".precio"]').value })),
+    reiniciar: () => { cont.replaceChildren(); n = 0; agregar(); },
+  };
+}
 V.voucher = async () => {
-  const ed = lineasEditor({ conMonto: true }); await ed.init();
-  if (!ed.hayMeds()) return vista('Cargar voucher', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Todavía no hay medicamentos en el catálogo'), 'La gerencia debe agregarlos antes de que puedas cargar vouchers.'));
-  const boton = h('button', { class: 'btn', type: 'submit' }, 'Guardar voucher');
+  const vendedor = yo.role === 'representante';
+  const [meds, deps, pct] = await Promise.all([medicamentos(), vendedor ? api('GET', '/api/vouchers/dependientes').then((x) => x.items) : null, vendedor ? null : api('GET', '/api/vouchers/porcentaje').then((x) => x.item.porcentaje)]);
+  if (!meds.length) return vista('Cargar voucher', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Todavía no hay medicamentos en el catálogo'), 'La gerencia debe agregarlos antes de cargar vouchers.'));
+  if (vendedor && !deps.length) return vista('Cargar voucher', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay dependientes en farmacias de tu zona'), 'Aparecen aquí cuando una dependiente se registra con una farmacia de tus provincias.'));
+  const ed = editorVoucher(meds, pct ?? null);
+  const selDep = vendedor ? campo('dependienteId', 'Dependiente', { options: deps.map((d) => ({ value: d.id, label: `${d.nombre} (${d.farmacia}, ${d.municipio})` })), placeholder: 'Elige la dependiente' }) : null;
+  selDep?.querySelector('select').addEventListener('change', async (e) => { ed.porcentaje(null); if (e.target.value) { try { ed.porcentaje((await api('GET', `/api/vouchers/porcentaje?dependienteId=${e.target.value}`)).item.porcentaje); } catch { /* sin porcentaje */ } } });
+  const boton = h('button', { class: 'btn', type: 'submit' }, 'Enviar a revisión');
   const form = h('form', { class: 'tarjeta', novalidate: true },
+    selDep ? h('div', { class: 'form-fila' }, selDep) : null,
     h('div', { class: 'form-fila' }, campo('referencia', 'Número de voucher', { required: true, autocomplete: 'off' }), campo('fecha', 'Fecha', { type: 'date', value: hoy(), max: hoy(), required: true })),
-    h('h2', {}, 'Medicamentos vendidos'), h('p', { class: 'error', dataset: { for: 'items' } }), ed.el,
-    h('div', { class: 'acciones' }, ed.boton, ed.total), h('div', { class: 'acciones' }, boton));
+    h('h2', { style: 'margin-top:.5rem' }, 'Medicamentos vendidos'), h('p', { class: 'error', dataset: { for: 'items' } }), ed.el,
+    h('div', { class: 'acciones' }, ed.boton), ed.resumen,
+    h('p', { class: 'hint' }, 'El voucher queda en revisión hasta que la supervisión o finanzas verifiquen lo vendido. La comisión se suma cuando se aprueba.'),
+    h('div', { class: 'acciones' }, boton));
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const r = await enviar(form, boton, () => api('POST', '/api/vouchers', { referencia: form.referencia.value, fecha: form.fecha.value, items: ed.valores() }));
-    if (r) { estado(form.querySelector('.aviso'), 'ok', `Voucher ${r.item.referencia} guardado por ${RD(r.item.total)}. Queda pendiente de revisión.`); form.referencia.value = ''; form.referencia.focus(); }
+    const r = await enviar(form, boton, () => api('POST', '/api/vouchers', { ...(selDep ? { dependienteId: form.dependienteId.value } : {}), referencia: form.referencia.value, fecha: form.fecha.value, items: ed.valores() }));
+    if (r) { estado(form.querySelector('.aviso'), 'ok', `Voucher ${r.item.referencia} enviado a revisión por ${RD(r.item.total)}.`); form.referencia.value = ''; ed.reiniciar(); form.referencia.focus(); }
   });
-  return vista('Cargar voucher', 'Cada voucher suma a tu comisión cuando tu supervisor o finanzas lo aprueban.', form);
+  return vista('Cargar voucher', vendedor ? 'Carga el voucher a nombre de la dependiente de la farmacia. La comisión es de ella; queda constancia de que lo cargaste tú.' : 'Elige los medicamentos del voucher y su precio. Ves el total y tu comisión estimada mientras cargas.', form);
 };
 V.misVouchers = async () => {
   const { items } = await api('GET', '/api/vouchers');
   const pintar = async () => router();
-  return vista('Mis vouchers', 'Puedes anular un voucher mientras siga pendiente de revisión.', tabla([
+  const vendedor = yo.role === 'representante';
+  return vista(vendedor ? 'Vouchers cargados' : 'Mis vouchers', 'Puedes anular un voucher mientras siga pendiente de revisión.', tabla([
     { t: 'Número', v: (v) => v.referencia }, { t: 'Fecha', v: (v) => fecha(v.fecha) },
+    ...(vendedor ? [{ t: 'Dependiente', v: (v) => [v.dependiente, v.farmacia ? h('small', { style: 'display:block;color:var(--texto-2)' }, v.farmacia) : null] }] : [{ t: 'Cargado por', v: (v) => v.cargadoPor ?? 'Tú' }]),
     { t: 'Medicamentos', v: (v) => v.items.map((i) => `${i.medicamento} ×${i.cantidad}`).join(', ') },
     { t: 'Total', num: true, v: (v) => RD(v.total) }, { t: 'Estado', v: (v) => [chip(v.estado), v.motivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, v.motivo) : null] },
     { t: '', v: (v) => v.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await confirmar('Anular voucher', `¿Anular el voucher ${v.referencia}? No contará para tu comisión.`, { okTexto: 'Anular voucher' })) { await api('POST', `/api/vouchers/${v.id}/anular`).catch((e) => alert(e.message)); pintar(); } } }, 'Anular') : '' },
@@ -638,12 +690,20 @@ async function campana() {
     let r; try { r = await api('GET', '/api/notificaciones?limite=30'); } catch { return; }
     cuenta.hidden = !r.sinLeer; cuenta.textContent = r.sinLeer > 99 ? '99+' : String(r.sinLeer);
     btn.setAttribute('aria-label', r.sinLeer ? `Notificaciones, ${r.sinLeer} sin leer` : 'Notificaciones');
+    const relativo = (iso) => {
+      const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+      if (min < 1) return 'Ahora'; if (min < 60) return `Hace ${min} min`;
+      const hrs = Math.round(min / 60); if (hrs < 24) return `Hace ${hrs} h`;
+      return new Date(iso).toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+    };
+    const ICONO_TIPO = { voucher: 'misVouchers', cronograma: 'cronogramas', viatico: 'viaticos', presupuesto: 'viaticos', solicitud: 'solicitudes', territorio: 'establecimientos', cuenta: 'solicitudes' };
     lista.replaceChildren(...(r.items.length ? r.items.map((n) => {
-      const cuando = new Date(n.createdAt).toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo', dateStyle: 'medium', timeStyle: 'short' });
-      const cuerpo = [h('strong', {}, n.titulo), h('span', {}, n.texto), h('small', {}, cuando)];
+      const ic = icono(ICONO_TIPO[n.tipo] ?? 'inicio'); ic.classList.add('campana-icono');
+      const cuerpo = [ic, h('span', { class: 'campana-texto' }, h('strong', {}, n.titulo), h('span', {}, n.texto), h('small', {}, relativo(n.createdAt))), n.leida ? null : h('span', { class: 'campana-punto', 'aria-label': 'Sin leer' })];
       const marcar = () => { if (!n.leida) api('POST', `/api/notificaciones/${n.id}/leer`).then(pintar).catch(() => {}); };
       return h('li', { class: n.leida ? '' : 'nueva' }, n.enlace ? h('a', { href: n.enlace, onclick: () => { marcar(); cerrar(); } }, cuerpo) : h('div', { onclick: marcar }, cuerpo));
-    }) : [h('li', { class: 'campana-vacia' }, 'No tienes notificaciones.')]));
+    }) : [h('li', { class: 'campana-vacia' }, h('strong', {}, 'Estás al día'), 'Aquí verás aprobaciones, cronogramas y avisos del sistema.')]));
+    $('#campana-todas').hidden = !r.sinLeer;
   };
   const cerrar = () => { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
   btn.addEventListener('click', () => { const abrir = panel.hidden; panel.hidden = !abrir; btn.setAttribute('aria-expanded', String(abrir)); if (abrir) pintar(); });
@@ -1219,7 +1279,10 @@ V.representantes = async () => {
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const nombreMes = (m) => { const [y, n] = m.split('-').map(Number); return `${MESES[n - 1]} ${String(y).slice(2)}`; };
 const pct = (n) => `${fmtN.format(Math.round(n))} %`;
-const fmtC = new Intl.NumberFormat('es-DO', { notation: 'compact', maximumFractionDigits: 1 });
+const fmtC = { format: (n) => {
+  const a = Math.abs(n); const f = (x) => fmtN.format(Math.round(x * 10) / 10);
+  return a >= 1e6 ? `${f(n / 1e6)} M` : a >= 1e3 ? `${f(n / 1e3)} mil` : fmtN.format(Math.round(n));
+} };
 const RDc = (n) => `RD$ ${fmtC.format(n)}`;
 
 /** Tarjeta de gráfico: título, nota, el gráfico y su tabla de datos (accesible). */
@@ -1439,6 +1502,7 @@ function menuPara(u) {
     } else {
       s.push([null, [['inicio', 'Inicio'], ['jornadas', 'Mis jornadas'], ['presupuesto', 'Mi presupuesto']]]);
       s.push(['Mi zona', [['establecimientos', 'Establecimientos'], ...(u.position === 'Vendedor' ? [['catalogo', 'Farmacias'], ['inventario', 'Inventario']] : [])]]);
+      if (['Vendedor', 'PVC'].includes(u.position)) s.push(['Vouchers', [['voucher', 'Cargar voucher'], ['misVouchers', 'Vouchers cargados']]]);
     }
     return s;
   }
@@ -1480,9 +1544,6 @@ function aplicarMenu() {
   col.setAttribute('aria-expanded', String(expandido));
   col.setAttribute('aria-label', expandido ? 'Colapsar menú' : 'Expandir menú');
   col.dataset.tip = expandido ? 'Colapsar menú' : 'Expandir menú';
-  // La campana va en la barra superior en celular y en el menú en pantallas grandes.
-  const caja = $('#campana-caja');
-  (MQ_MOVIL.matches ? $('#topbar-campana') : $('#cabeza-acciones')).prepend(caja);
 }
 function alternarColapso() {
   const panel = $('#panel');

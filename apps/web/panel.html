@@ -19,27 +19,10 @@
 <body class="panel-body">
   <a class="skip" href="#vista">Saltar al contenido</a>
   <div class="panel" id="panel">
-    <header class="topbar">
-      <button type="button" id="abrir-menu" class="icono-boton" aria-controls="lateral" aria-expanded="false" aria-label="Abrir menú">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-      </button>
-      <a class="topbar-logo" href="./" aria-label="FERSUAZ, inicio"><img src="assets/brand/fersuaz-logo-color.svg" alt="FERSUAZ Laboratorio Farmacéutico" width="120" height="34"></a>
-      <div class="topbar-campana" id="topbar-campana"></div>
-    </header>
     <aside class="lateral" id="lateral" aria-label="Menú del panel">
       <div class="lateral-cabeza">
         <a class="lateral-logo" href="./" aria-label="FERSUAZ, inicio"><span class="logo-caja"><img src="assets/brand/fersuaz-logo-color.svg" alt="FERSUAZ Laboratorio Farmacéutico" width="150" height="42"></span></a>
         <div class="cabeza-acciones" id="cabeza-acciones">
-          <div class="campana" id="campana-caja">
-            <button type="button" id="campana" class="campana-boton" aria-haspopup="true" aria-expanded="false" aria-controls="campana-panel" aria-label="Notificaciones" data-tip="Notificaciones">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15Z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
-              <span id="campana-cuenta" class="campana-cuenta" hidden></span>
-            </button>
-            <div id="campana-panel" class="campana-panel" hidden>
-              <div class="campana-titulo"><h2>Notificaciones</h2><button type="button" class="enlace" id="campana-todas">Marcar todas como leídas</button></div>
-              <ul id="campana-lista" class="campana-lista"></ul>
-            </div>
-          </div>
           <button type="button" id="colapsar" class="icono-boton colapsar" aria-controls="lateral" aria-expanded="true" aria-label="Colapsar menú">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9 4.5v15"/><path class="flecha" d="m15.5 10-2 2 2 2"/></svg>
           </button>
@@ -69,9 +52,29 @@
       </div>
     </aside>
     <div class="velo" id="velo" hidden></div>
+    <div class="contenido">
+    <header class="topbar" aria-label="Barra superior">
+      <button type="button" id="abrir-menu" class="icono-boton" aria-controls="lateral" aria-expanded="false" aria-label="Abrir menú">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <a class="topbar-logo" href="./" aria-label="FERSUAZ, inicio"><img src="assets/brand/fersuaz-logo-color.svg" alt="FERSUAZ Laboratorio Farmacéutico" width="120" height="34"></a>
+      <div class="topbar-derecha" id="topbar-campana">
+        <div class="campana" id="campana-caja">
+          <button type="button" id="campana" class="campana-boton" aria-haspopup="true" aria-expanded="false" aria-controls="campana-panel" aria-label="Notificaciones" data-tip="Notificaciones">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15Z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+            <span id="campana-cuenta" class="campana-cuenta" hidden></span>
+          </button>
+          <div id="campana-panel" class="campana-panel" hidden>
+            <div class="campana-titulo"><h2>Notificaciones</h2><button type="button" class="enlace" id="campana-todas">Marcar todas como leídas</button></div>
+            <ul id="campana-lista" class="campana-lista"></ul>
+          </div>
+        </div>
+      </div>
+    </header>
     <main id="vista" class="vista" tabindex="-1" aria-live="polite">
       <p class="cargando">Cargando tu panel…</p>
     </main>
+    </div>
   </div>
   <dialog id="dialogo" class="dialogo" aria-labelledby="dialogo-titulo">
     <form method="dialog" id="dialogo-form">

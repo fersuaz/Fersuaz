@@ -6,13 +6,15 @@ import { calcularComisionVouchers, evaluarAlertaInventario } from './calculos.js
 import { esFechaISO, hoyRD, periodoDe, rangoDe } from './periodos.js';
 import { normalizeName } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
-import { provinciaOficial, municipioOficial } from './territorio.js';
+import { provinciaOficial, municipioOficial, dentroDeZona } from './territorio.js';
 
 const GESTION = ['administrador', 'gerencia', 'supervisor', 'finanzas'];
 const esActivo = (u) => u && u.status === STATUS.ACTIVO;
 export const esPromotora = (u) => esActivo(u) && u.role === 'representante' && u.position === 'Promotora';
 export const esVendedor = (u) => esActivo(u) && u.role === 'representante' && u.position === 'Vendedor';
 export const esDependiente = (u) => esActivo(u) && u.role === 'dependiente';
+/** Vendedor o PVC: también cargan vouchers a nombre de una dependiente de su zona. */
+export const esVendedorPVC = (u) => esActivo(u) && u.role === 'representante' && ['Vendedor', 'PVC'].includes(u.position);
 const tieneRol = (u, roles) => esActivo(u) && roles.includes(u.role);
 
 function permitir(cond, msg = 'No tienes permiso para esta acción.') { if (!cond) throw new HttpError(403, msg); }
@@ -209,44 +211,82 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
   };
 
   // ------------------------------------------------------------ vouchers
+  /** Dependientes cuya farmacia está en la zona del Vendedor o PVC. */
+  async function dependientesDeZona(actor) {
+    const zona = (await data.list('zonas', { representanteId: actor.id }))[0] ?? null;
+    if (!zona?.provincias?.length) return [];
+    const out = [];
+    for (const d of (await users.listUsers()).filter((u) => u.role === 'dependiente' && u.status === STATUS.ACTIVO && u.farmaciaId)) {
+      const f = await data.get('farmacias', d.farmaciaId);
+      if (f && dentroDeZona(zona, f.provincia, f.municipio)) out.push({ id: d.id, nombre: d.fullName, farmaciaId: f.id, farmacia: f.nombre, provincia: f.provincia, municipio: f.municipio });
+    }
+    return out.sort((a, b) => a.farmacia.localeCompare(b.farmacia, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
+  }
+  async function nombreFarmacia(u) {
+    if (u.farmaciaId) { const f = await data.get('farmacias', u.farmaciaId); if (f) return f.nombre; }
+    return u.pharmacy ?? null;
+  }
+
   const vouchers = {
+    dependientesDeZona: async (actor) => { permitir(esVendedorPVC(actor), 'Solo el Vendedor o el PVC cargan vouchers a nombre de una dependiente.'); return dependientesDeZona(actor); },
+    /** Porcentaje de comisión que aplica a una dependiente (para mostrar la comisión estimada mientras se carga). */
+    async porcentaje(actor, dependienteId) {
+      const id = String(dependienteId || actor.id);
+      const permitido = (esDependiente(actor) && actor.id === id) || tieneRol(actor, GESTION) || (esVendedorPVC(actor) && (await dependientesDeZona(actor)).some((d) => d.id === id));
+      permitir(permitido);
+      const cfg = await configComision(id);
+      return cfg ? { porcentaje: cfg.porcentaje, periodo: cfg.periodo } : { porcentaje: null, periodo: null };
+    },
     async crear(actor, input) {
-      permitir(esDependiente(actor), 'Solo los dependientes de farmacia cargan vouchers.');
+      permitir(esDependiente(actor) || esVendedorPVC(actor), 'Solo los dependientes de farmacia, el Vendedor o el PVC cargan vouchers.');
+      let dep = actor;
+      if (!esDependiente(actor)) {
+        const id = String(input.dependienteId ?? '');
+        if (!id) invalido({ dependienteId: 'Elige la dependiente a quien pertenece el voucher.' });
+        if (!(await dependientesDeZona(actor)).some((d) => d.id === id)) throw new HttpError(403, 'Esa dependiente no está en una farmacia de tu zona.', { dependienteId: 'Elige una dependiente de tu zona.' });
+        dep = await users.findUserById(id);
+      }
       const e = {};
       const referencia = texto(e, 'referencia', input.referencia, { etiqueta: 'El número de voucher', min: 1, max: 40 });
       if (!esFechaISO(input.fecha)) e.fecha = 'Elige la fecha del voucher.';
       else if (input.fecha > hoy()) e.fecha = 'La fecha no puede ser futura.';
       const items = Array.isArray(input.items) ? input.items : [];
       if (!items.length) e.items = 'Agrega al menos un medicamento.';
+      if (items.length > 50) e.items = 'Máximo 50 medicamentos por voucher.';
       const lineas = [];
       for (const [i, it] of items.entries()) {
         const med = await medicamentoActivo(it.medicamentoId);
-        const cantidad = Number(it.cantidad); const monto = Number(it.monto);
+        const cantidad = Number(it.cantidad);
+        // Precio por unidad: el subtotal es precio × cantidad. Se acepta también el monto de la línea (versión anterior).
+        const precio = it.precio != null && it.precio !== '' ? Number(it.precio) : null;
+        const monto = precio != null ? precio * cantidad : Number(it.monto);
         if (!med) e[`items.${i}.medicamentoId`] = 'Elige un medicamento del catálogo.';
         if (!Number.isInteger(cantidad) || cantidad < 1) e[`items.${i}.cantidad`] = 'La cantidad debe ser un número entero mayor que cero.';
-        if (!Number.isFinite(monto) || monto <= 0) e[`items.${i}.monto`] = 'Escribe el monto en RD$, mayor que cero.';
-        if (med) lineas.push({ medicamentoId: med.id, medicamento: med.nombre, cantidad, monto: round2(monto) });
+        if (precio != null && (!Number.isFinite(precio) || precio <= 0)) e[`items.${i}.precio`] = 'Escribe el precio en RD$, mayor que cero.';
+        else if (!Number.isFinite(monto) || monto <= 0) e[`items.${i}.${precio != null ? 'precio' : 'monto'}`] = 'Escribe el precio en RD$, mayor que cero.';
+        if (med) lineas.push({ medicamentoId: med.id, medicamento: med.nombre, presentacion: med.presentacion ?? null, cantidad, ...(precio != null ? { precio: round2(precio) } : {}), monto: round2(monto) });
       }
       if (Object.keys(e).length) invalido(e);
       const ref = referencia.toLowerCase();
-      if ((await data.list('vouchers', { dependienteId: actor.id })).some((v) => v.referencia.toLowerCase() === ref && v.estado !== 'anulado')) {
-        throw new HttpError(409, 'Ya cargaste un voucher con ese número.', { referencia: 'Ese número de voucher ya está registrado.' });
+      if ((await data.list('vouchers', { dependienteId: dep.id })).some((v) => v.referencia.toLowerCase() === ref && v.estado !== 'anulado')) {
+        throw new HttpError(409, 'Ya hay un voucher con ese número para esta dependiente.', { referencia: 'Ese número de voucher ya está registrado.' });
       }
-      if (await periodoCerrado(actor.id, input.fecha)) throw new HttpError(409, 'Ese período de comisión ya está cerrado.', { fecha: 'El período de esa fecha ya se cerró.' });
+      if (await periodoCerrado(dep.id, input.fecha)) throw new HttpError(409, 'Ese período de comisión ya está cerrado.', { fecha: 'El período de esa fecha ya se cerró.' });
       const v = await data.insert('vouchers', {
-        dependienteId: actor.id, farmacia: actor.pharmacy ?? null, referencia, fecha: input.fecha,
-        items: lineas, total: round2(lineas.reduce((s, l) => s + l.monto, 0)), estado: 'pendiente',
+        dependienteId: dep.id, farmacia: await nombreFarmacia(dep), referencia, fecha: input.fecha,
+        items: lineas, total: round2(lineas.reduce((s, l) => s + l.monto, 0)), estado: 'pendiente', registradoPor: actor.id,
       });
-      await audit({ actorId: actor.id, action: 'voucher_cargado', entity: 'voucher', entityId: v.id, after: { total: v.total } });
+      await audit({ actorId: actor.id, action: 'voucher_cargado', entity: 'voucher', entityId: v.id, after: { total: v.total, dependienteId: dep.id, ...(dep.id !== actor.id ? { cargadoPor: actor.fullName } : {}) } });
       return v;
     },
     async listar(actor, filtro = {}) {
-      if (esDependiente(actor)) return data.list('vouchers', { dependienteId: actor.id, ...(filtro.estado ? { estado: filtro.estado } : {}) });
+      const nombres = async () => Object.fromEntries((await users.listUsers()).map((u) => [u.id, u.fullName]));
+      const conNombres = async (vs) => { const n = await nombres(); return vs.map((v) => ({ ...v, dependiente: n[v.dependienteId] ?? '', cargadoPor: v.registradoPor && v.registradoPor !== v.dependienteId ? n[v.registradoPor] ?? '' : null })); };
+      if (esDependiente(actor)) return conNombres(await data.list('vouchers', { dependienteId: actor.id, ...(filtro.estado ? { estado: filtro.estado } : {}) }));
+      if (esVendedorPVC(actor)) return conNombres(await data.list('vouchers', { registradoPor: actor.id, ...(filtro.estado ? { estado: filtro.estado } : {}) }));
       permitir(tieneRol(actor, GESTION));
       const where = {}; if (filtro.estado) where.estado = filtro.estado; if (filtro.dependienteId) where.dependienteId = filtro.dependienteId;
-      const vs = await data.list('vouchers', where);
-      const nombres = Object.fromEntries((await users.listUsers()).map((u) => [u.id, u.fullName]));
-      return vs.map((v) => ({ ...v, dependiente: nombres[v.dependienteId] ?? '' }));
+      return conNombres(await data.list('vouchers', where));
     },
     async decidir(actor, id, aprobar, motivo) {
       permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor', 'finanzas']), 'No tienes permiso para revisar vouchers.');
@@ -264,7 +304,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
     async anular(actor, id) {
       const v = await data.get('vouchers', id);
       if (!v) throw new HttpError(404, 'El voucher no existe.');
-      permitir(esDependiente(actor) && v.dependienteId === actor.id);
+      permitir((esDependiente(actor) && v.dependienteId === actor.id) || (esVendedorPVC(actor) && v.registradoPor === actor.id));
       if (v.estado !== 'pendiente') throw new HttpError(409, 'Solo puedes anular un voucher que todavía no se ha revisado.');
       const out = await data.update('vouchers', id, { estado: 'anulado' });
       await audit({ actorId: actor.id, action: 'voucher_anulado', entity: 'voucher', entityId: id, before: { estado: 'pendiente' }, after: { estado: 'anulado' } });
