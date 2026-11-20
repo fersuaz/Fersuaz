@@ -26,6 +26,7 @@ export class MemoryStore {
   async listUsersByStatus(status) {
     return [...this.users.values()].filter((u) => u.status === status);
   }
+  async listUsers() { return [...this.users.values()]; }
   async addAudit(entry) { this.audit.push({ at: new Date().toISOString(), ...entry }); }
 }
 
@@ -34,7 +35,10 @@ export class PostgresStore {
 
   static async connect(url) {
     const { default: pg } = await import('pg');
-    const pool = new pg.Pool({ connectionString: url, ssl: { rejectUnauthorized: true } });
+    // DigitalOcean firma con su propia CA: se pasa en DATABASE_CA (App Platform la expone como ${db.CA_CERT}).
+    const ssl = /sslmode=disable/.test(url) ? false
+      : process.env.DATABASE_CA ? { ca: process.env.DATABASE_CA, rejectUnauthorized: true } : { rejectUnauthorized: true };
+    const pool = new pg.Pool({ connectionString: url.replace(/[?&]sslmode=[^&]*/, ''), ssl });
     return new PostgresStore(pool);
   }
 
@@ -50,6 +54,7 @@ export class PostgresStore {
     return this.#map(rows[0]);
   }
   async findUserById(id) {
+    if (!/^[0-9a-f-]{36}$/i.test(String(id))) return null;
     const { rows } = await this.pool.query('SELECT * FROM users WHERE id = $1', [id]);
     return this.#map(rows[0]);
   }
@@ -71,6 +76,10 @@ export class PostgresStore {
   }
   async listUsersByStatus(status) {
     const { rows } = await this.pool.query('SELECT * FROM users WHERE status = $1 ORDER BY created_at', [status]);
+    return rows.map((r) => this.#map(r));
+  }
+  async listUsers() {
+    const { rows } = await this.pool.query('SELECT * FROM users ORDER BY full_name');
     return rows.map((r) => this.#map(r));
   }
   async addAudit(e) {

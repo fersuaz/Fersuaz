@@ -65,7 +65,7 @@ login.addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = login.querySelector('button[type="submit"]');
   if (!login.email.value.trim() || !login.password.value) return say('status-entrar', 'error', 'Escribe tu correo y tu contraseña.');
-  const base = apiBase();
+  const base = apiBase() || (['localhost', '127.0.0.1'].includes(location.hostname) ? 'http://localhost:8080' : '');
   if (!base) return say('status-entrar', 'error', 'El inicio de sesión todavía no está conectado al servidor.');
   btn.disabled = true; btn.textContent = 'Entrando…';
   try {
@@ -77,7 +77,8 @@ login.addEventListener('submit', async (e) => {
       store.setItem('fersuaz.token', body.token);
       if (login.recordar.checked) localStorage.setItem('fersuaz.email', login.email.value.trim()); else localStorage.removeItem('fersuaz.email');
     } catch {}
-    say('status-entrar', 'ok', `Hola, ${body.user.fullName}. Tu panel llegará en el próximo módulo.`);
+    say('status-entrar', 'ok', `Hola, ${body.user.fullName}. Abriendo tu panel…`);
+    location.href = 'panel.html';
   } catch { say('status-entrar', 'error', 'No pudimos conectar con el servidor. Revisa tu conexión e intenta de nuevo.'); }
   finally { btn.disabled = false; btn.textContent = 'Continuar'; }
 });

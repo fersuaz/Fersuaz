@@ -3,11 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "crear-admin": "node src/cli/crear-admin.js",
+    "migrar": "node src/cli/migrar.js"
   },
   "optionalDependencies": {
     "pg": "^8.13.0"
