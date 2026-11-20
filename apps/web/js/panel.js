@@ -334,35 +334,6 @@ V.inventario = async () => {
   });
   return vista('Inventario en farmacias', 'Las alertas de las promotoras comparan las recetas de la zona con el último conteo de cada farmacia.', f);
 };
-V.catalogo = async () => {
-  const esGer = ['administrador', 'gerencia'].includes(yo.role);
-  const [ms, fs, mds] = await Promise.all([medicamentos(), api('GET', '/api/catalogo/farmacias'), api('GET', '/api/catalogo/medicos')]);
-  const validar = async (col, id) => { try { await api('POST', `/api/catalogo/${col}/${id}/validar`); router(); } catch (e) { alert(e.message); } };
-  const bloques = [];
-  if (esGer) {
-    const b = h('button', { class: 'btn', type: 'submit' }, 'Agregar medicamento');
-    const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo medicamento'),
-      h('div', { class: 'form-fila' }, campo('nombre', 'Nombre'), campo('linea', 'Línea', {}, '(opcional)'), campo('presentacion', 'Presentación', {}, '(opcional)')), h('div', { class: 'acciones' }, b));
-    f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/medicamentos', { nombre: f.nombre.value, linea: f.linea.value, presentacion: f.presentacion.value }))) { cache = {}; router(); } });
-    bloques.push(f);
-  }
-  bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Medicamentos'),
-    tabla([{ t: 'Nombre', v: (m) => m.nombre }, { t: 'Línea', v: (m) => m.linea ?? '' }, { t: 'Presentación', v: (m) => m.presentacion ?? '' }], ms, ['Catálogo vacío', 'Agrega los medicamentos de FERSUAZ para que se puedan usar en vouchers y recetas.']));
-  if (['administrador', 'gerencia', 'supervisor'].includes(yo.role) || (yo.role === 'representante' && yo.position === 'Vendedor')) {
-    const b = h('button', { class: 'btn', type: 'submit' }, 'Agregar farmacia');
-    const f = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-top:1.5rem' }, h('h2', {}, 'Nueva farmacia'),
-      h('div', { class: 'form-fila' }, campo('nombre', 'Nombre'), campo('provincia', 'Provincia'), campo('municipio', 'Municipio'), campo('sector', 'Sector', {}, '(opcional)')), h('div', { class: 'acciones' }, b));
-    f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/farmacias', { nombre: f.nombre.value, provincia: f.provincia.value, municipio: f.municipio.value, sector: f.sector.value }))) router(); });
-    bloques.push(f);
-  }
-  bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Farmacias'),
-    tabla([{ t: 'Nombre', v: (x) => x.nombre }, { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
-      { t: '', v: (x) => esGer && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('farmacias', x.id) }, 'Validar') : '' }], fs.items, ['Aún no hay farmacias', 'Los vendedores y supervisores pueden agregarlas.']),
-    h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Médicos'),
-    tabla([{ t: 'Nombre', v: (x) => x.nombre }, { t: 'Especialidad', v: (x) => x.especialidad }, { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
-      { t: '', v: (x) => esGer && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('medicos', x.id) }, 'Validar') : '' }], mds.items, ['Aún no hay médicos', 'Las promotoras los agregan al cargar recetas.']));
-  return vista('Catálogo', 'Medicamentos, farmacias y médicos. Lo que agregan las promotoras y los vendedores queda pendiente hasta que la gerencia lo valida.', ...bloques);
-};
 V.solicitudes = async () => {
   const { pending } = await api('GET', '/api/auth/pending');
   const decidir = async (u, ok) => {
@@ -392,10 +363,37 @@ function desglose(d, total) {
 
 V.jornadas = async () => {
   const mes = mesDe();
-  const [{ items }, est] = await Promise.all([api('GET', `/api/viaticos/jornadas?mes=${mes}`), api('GET', '/api/viaticos/estado')]);
+  const [{ items }, est, div, mias, farms] = await Promise.all([api('GET', `/api/viaticos/jornadas?mes=${mes}`), api('GET', '/api/viaticos/estado'), division(), api('GET', '/api/territorio/mis-provincias'), api('GET', '/api/catalogo/farmacias')]);
   const paradas = h('div', { class: 'lineas' }); let n = 0;
-  const addParada = () => { const i = n++; const f = h('div', { class: 'linea' }, campo(`paradas.${i}.lugar`, 'Lugar (clínica, hospital, farmacia)'), campo(`paradas.${i}.municipio`, 'Municipio'), campo(`paradas.${i}.provincia`, 'Provincia'),
-    h('button', { type: 'button', class: 'quitar', 'aria-label': 'Quitar parada', onclick: () => { if (paradas.children.length > 1) f.remove(); } }, 'Quitar')); paradas.append(f); };
+  const OTRO = '__otro';
+  const addParada = () => {
+    const i = n++;
+    const z = selectorZona(mias.items, div.municipios, { prefijo: `paradas.${i}.`, provincia: mias.items.length === 1 ? mias.items[0] : '' });
+    const fl = campo(`paradas.${i}.ref`, 'Lugar', { options: [], placeholder: 'Elige primero el municipio' });
+    const sl = fl.querySelector('select');
+    const libre = campo(`paradas.${i}.lugar`, 'Nombre del lugar', {}, '(no está registrado)'); libre.hidden = true;
+    sl.addEventListener('change', () => { libre.hidden = sl.value !== OTRO; });
+    z.sm.addEventListener('change', async () => {
+      sl.replaceChildren(h('option', { value: '' }, 'Cargando…')); libre.hidden = true;
+      if (!z.sm.value) { sl.replaceChildren(h('option', { value: '' }, 'Elige primero el municipio')); return; }
+      let ests = [];
+      try { ests = (await api('GET', `/api/territorio/establecimientos?municipio=${encodeURIComponent(z.sm.value)}`)).items; } catch {}
+      const fs = farms.items.filter((x) => x.municipio === z.sm.value && x.estado !== 'inactiva');
+      const grupo = (label, xs, tipo) => xs.length ? h('optgroup', { label }, xs.map((x) => h('option', { value: `${tipo}:${x.id}` }, `${x.nombre}${x.tipo ? ` (${div.tipos[x.tipo]})` : ''}`))) : null;
+      sl.replaceChildren(h('option', { value: '' }, ests.length + fs.length ? 'Elige el lugar' : 'No hay lugares registrados aquí'),
+        grupo('Clínicas, hospitales y centros', ests, 'establecimiento'), grupo('Farmacias', fs, 'farmacia'), h('option', { value: OTRO }, 'Otro lugar (escribir el nombre)'));
+    });
+    if (z.sm.value) z.sm.dispatchEvent(new Event('change'));
+    const f = h('div', { class: 'linea parada' }, z.fp, z.fm, fl, libre,
+      h('button', { type: 'button', class: 'quitar', 'aria-label': 'Quitar parada', onclick: () => { if (paradas.children.length > 1) f.remove(); } }, 'Quitar'));
+    f._leer = () => {
+      const [tipo, id] = sl.value && sl.value !== OTRO ? sl.value.split(':') : [];
+      const etiqueta = sl.selectedOptions[0]?.textContent.replace(/ \([^)]*\)$/, '') ?? '';
+      return id ? { refTipo: tipo, refId: id, lugar: etiqueta, municipio: z.sm.value, provincia: z.sp.value }
+        : { lugar: libre.querySelector('input').value, municipio: z.sm.value, provincia: z.sp.value };
+    };
+    paradas.append(f);
+  };
   addParada();
   const hosp = h('details', { class: 'tarjeta', style: 'background:var(--canvas)' }, h('summary', { style: 'cursor:pointer;font-weight:600;color:var(--marino)' }, '¿Necesitas hotel? La gerencia debe autorizarlo'),
     h('div', { class: 'form-fila', style: 'margin-top:1rem' }, campo('hospedaje.noches', 'Noches', { type: 'number', min: 1, step: 1, inputmode: 'numeric' }), campo('hospedaje.tarifaNoche', 'Tarifa por noche RD$', { type: 'number', min: 0, step: 0.01 }),
@@ -418,7 +416,7 @@ V.jornadas = async () => {
     kmInfo, calc ? h('div', { class: 'acciones', style: 'margin-top:0' }, calc) : null,
     h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'conAlimentacion', checked: true }), h('span', {}, 'Este día lleva gasto de alimentación')),
     hosp, h('div', { class: 'acciones' }, boton));
-  function leerParadas() { return [...paradas.children].map((f) => ({ lugar: f.querySelector('[name$=".lugar"]').value, municipio: f.querySelector('[name$=".municipio"]').value, provincia: f.querySelector('[name$=".provincia"]').value })); }
+  function leerParadas() { return [...paradas.children].map((f) => f._leer()); }
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const g = (k) => form.elements[k]?.value;
@@ -435,7 +433,8 @@ V.jornadas = async () => {
     }
     router();
   };
-  return vista('Mis jornadas', 'Planifica tus rutas del mes. El presupuesto de viáticos se calcula con estas jornadas.', form,
+  return vista('Mis jornadas', 'Planifica tus rutas del mes. El presupuesto de viáticos se calcula con estas jornadas.',
+    mias.items.length ? null : h('div', { class: 'aviso error' }, 'Aún no tienes provincias asignadas. Pide a tu supervisor que te las asigne para poder planificar.'), form,
     h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Jornadas del mes'), filtroMes(mes, 'jornadas', null, { futuro: true }),
     tabla([
       { t: 'Fecha', v: (j) => fecha(j.fecha) }, { t: 'Paradas', v: (j) => j.paradas.map((p) => `${p.lugar} (${p.municipio})`).join(' → ') },
@@ -540,22 +539,37 @@ V.perfiles = async () => {
 };
 
 V.precios = async () => {
-  const [{ items }, { items: combs }] = await Promise.all([api('GET', '/api/viaticos/precios'), api('GET', '/api/viaticos/combustibles')]);
+  const [{ items }, { items: combs }, { item: micm }] = await Promise.all([api('GET', '/api/viaticos/precios'), api('GET', '/api/viaticos/combustibles'), api('GET', '/api/viaticos/precios/micm')]);
+  const puede = ['administrador', 'gerencia', 'finanzas'].includes(yo.role);
   const bloques = [];
-  if (['administrador', 'gerencia', 'finanzas'].includes(yo.role)) {
+  const estadoMicm = h('div', { class: 'tarjeta' }, h('h2', {}, 'Actualización automática desde el MICM'),
+    h('p', { class: 'hint' }, 'Cada 6 horas se revisa el aviso semanal oficial del MICM. Un precio solo se registra si los componentes del aviso suman el precio oficial; si algo no cuadra, no se registra nada y se avisa aquí.'),
+    micm ? h('div', { class: `aviso ${micm.estado === 'error' ? 'error' : 'ok'}`, role: 'status' },
+      `${micm.estado === 'error' ? 'No se pudo actualizar' : micm.estado === 'al dia' ? 'Al día' : 'Actualizado'}: ${micm.mensaje ?? ''} Última revisión: ${new Date(micm.revisado).toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo', dateStyle: 'medium', timeStyle: 'short' }).replace(/\.$/, '')}.`,
+      micm.pdf ? [' ', h('a', { href: micm.pdf, target: '_blank', rel: 'noopener' }, micm.aviso ?? 'Ver aviso')] : null)
+      : h('p', {}, 'Todavía no se ha revisado el aviso del MICM.'),
+    puede ? h('div', { class: 'acciones' }, h('button', { class: 'btn-sec', type: 'button', onclick: async (ev) => {
+      ev.target.disabled = true; ev.target.textContent = 'Revisando el MICM…';
+      try { await api('POST', '/api/viaticos/precios/micm'); } catch (e) { alert(e.message); }
+      router();
+    } }, 'Revisar el MICM ahora')) : null);
+  bloques.push(estadoMicm);
+  if (puede) {
     const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar precio');
-    const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo precio'),
+    const f = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-top:1.25rem' }, h('h2', {}, 'Registrar a mano'),
+      h('p', { class: 'hint' }, 'Úsalo solo si el MICM no se pudo leer. Un precio registrado a mano no se sobrescribe.'),
       h('div', { class: 'form-fila' }, campo('combustible', 'Combustible', { options: combs.filter((c) => !['hibrido', 'electrico'].includes(c.value)) }),
         campo('precioGalon', 'Precio por galón RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }), campo('vigenteDesde', 'Vigente desde', { type: 'date', value: hoy() })),
       h('div', { class: 'acciones' }, b));
     f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/viaticos/precios', { combustible: f.combustible.value, precioGalon: f.precioGalon.value, vigenteDesde: f.vigenteDesde.value }))) router(); });
     bloques.push(f);
   }
-  bloques.push(tabla([{ t: 'Combustible', v: (p) => combs.find((c) => c.value === p.combustible)?.label ?? p.combustible }, { t: 'Precio por galón', num: true, v: (p) => RD(p.precioGalon) }, { t: 'Vigente desde', v: (p) => fecha(p.vigenteDesde) }],
-    items, ['Aún no hay precios registrados', 'Registra los precios oficiales semanales del MICM para que se calcule el combustible.']));
+  bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Historial de precios'),
+    tabla([{ t: 'Combustible', v: (p) => combs.find((c) => c.value === p.combustible)?.label ?? p.combustible }, { t: 'Precio por galón', num: true, v: (p) => RD(p.precioGalon) }, { t: 'Vigente desde', v: (p) => fecha(p.vigenteDesde) },
+      { t: 'Fuente', v: (p) => p.fuente === 'micm' ? h('a', { href: p.enlace, target: '_blank', rel: 'noopener' }, 'Aviso MICM') : 'Manual' }],
+    items, ['Aún no hay precios registrados', 'Se cargarán solos con el próximo aviso del MICM, o puedes revisarlo ahora.']));
   return vista('Precios de combustible', 'Cada jornada usa el precio vigente en su fecha. Los presupuestos ya aprobados no cambian.', ...bloques);
 };
-
 V.viaticos = async () => {
   const mes = mesDe();
   const r = await api('GET', `/api/viaticos/consolidado?mes=${mes}`);
@@ -619,6 +633,221 @@ V.viatico = async () => {
 };
 const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
+// ---------------------------------------------------------------- territorio, catálogo e importación
+const GESTION_T = () => ['administrador', 'gerencia', 'supervisor'].includes(yo.role);
+const ES_GER = () => ['administrador', 'gerencia'].includes(yo.role);
+async function division() { return (cache.div ??= await api('GET', '/api/territorio/division')); }
+const param = (k) => new URLSearchParams(location.hash.split('?')[1]).get(k);
+
+/** Control segmentado accesible: flechas izquierda/derecha cambian de opción. */
+function segmentos(etiqueta, opciones, actual, alCambiar) {
+  const cont = h('div', { class: 'segmentos', role: 'tablist', 'aria-label': etiqueta });
+  const botones = opciones.map(([id, label]) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(id === actual), tabindex: id === actual ? '0' : '-1', onclick: () => alCambiar(id) }, label));
+  cont.addEventListener('keydown', (e) => {
+    const i = botones.indexOf(document.activeElement); if (i < 0) return;
+    const j = e.key === 'ArrowRight' ? (i + 1) % botones.length : e.key === 'ArrowLeft' ? (i - 1 + botones.length) % botones.length : -1;
+    if (j >= 0) { e.preventDefault(); botones[j].focus(); botones[j].click(); }
+  });
+  cont.append(...botones);
+  return cont;
+}
+const irA = (ruta, params) => { location.hash = `#${ruta}?${new URLSearchParams(params)}`; };
+
+/** Selects de provincia y municipio dependientes. */
+function selectorZona(provincias, municipios, { provincia = '', municipio = '', prefijo = '' } = {}) {
+  const fp = campo(`${prefijo}provincia`, 'Provincia', { options: provincias.map((p) => ({ value: p, label: p })), value: provincia, placeholder: 'Elige la provincia' });
+  const fm = campo(`${prefijo}municipio`, 'Municipio', { options: [], placeholder: 'Elige primero la provincia' });
+  const sp = fp.querySelector('select'); const sm = fm.querySelector('select');
+  const llenar = (sel) => {
+    const lista = municipios[sp.value] ?? [];
+    sm.replaceChildren(h('option', { value: '' }, lista.length ? 'Elige el municipio' : 'Elige primero la provincia'), ...lista.map((m) => h('option', { value: m, selected: m === sel }, m)));
+    sm.disabled = !lista.length;
+  };
+  sp.addEventListener('change', () => { llenar(''); sm.dispatchEvent(new Event('change')); });
+  llenar(municipio);
+  return { fp, fm, sp, sm };
+}
+
+/** Subir Excel: primero revisa (vista previa), luego importa todo o nada. */
+function importador(tipo, titulo, ayuda, alTerminar) {
+  const archivo = campo('archivo', 'Archivo Excel (.xlsx) o CSV', { type: 'file', accept: '.xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv' });
+  const revisar = h('button', { class: 'btn-sec', type: 'submit' }, 'Revisar archivo');
+  const salida = h('div', { 'aria-live': 'polite' });
+  const f = h('form', { class: 'tarjeta importador', novalidate: true },
+    h('h2', {}, titulo), h('p', { class: 'hint' }, ayuda, ' ', h('a', { href: `assets/plantillas/${tipo}.xlsx`, download: true }, 'Descargar plantilla')),
+    archivo, h('div', { class: 'acciones' }, revisar), salida);
+  let leido = null;
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault(); salida.replaceChildren();
+    const file = f.archivo.files[0];
+    const r = await enviar(f, revisar, async () => {
+      if (!file) throw new ApiError(422, { error: 'Elige un archivo.', fields: { archivo: 'Elige un archivo .xlsx o .csv.' } });
+      if (file.size > 8 * 1024 * 1024) throw new ApiError(413, { error: 'El archivo no puede pasar de 8 MB.', fields: { archivo: 'Archivo demasiado grande.' } });
+      leido = { archivo: await archivoB64(file), nombre: file.name };
+      return api('POST', `/api/importar/${tipo}`, leido);
+    });
+    if (!r) return;
+    const chips = Object.entries(r.resumen).map(([k, n]) => h('span', {}, `${fmtN.format(n)} ${k}`));
+    if (r.errores.length) chips.push(h('span', { class: 'mal' }, `${fmtN.format(r.errores.length)} con errores`));
+    salida.append(h('p', {}, `${fmtN.format(r.total)} filas leídas de ${file.name}.`), h('div', { class: 'resumen' }, chips));
+    if (r.errores.length) {
+      salida.append(h('div', { class: 'aviso error' }, 'Corrige estas filas en el Excel y vuelve a revisarlo. No se guarda nada mientras haya errores.'),
+        h('ul', { class: 'errores' }, r.errores.slice(0, 100).map((x) => h('li', {}, `Fila ${x.fila}: ${x.errores.join(' ')}`))));
+      return;
+    }
+    const cambios = r.total - (r.resumen['ya existe'] ?? 0) - (r.resumen['sin cambio'] ?? 0) - (r.resumen['ya tiene cuenta'] ?? 0);
+    if (!cambios) { salida.append(h('div', { class: 'aviso ok' }, 'No hay nada nuevo que guardar: todo ya está registrado.')); return; }
+    const imp = h('button', { class: 'btn', type: 'button', onclick: async () => {
+      imp.disabled = true; imp.textContent = 'Importando…';
+      try { const ok = await api('POST', `/api/importar/${tipo}`, { ...leido, confirmar: true }); salida.replaceChildren(h('div', { class: 'aviso ok' }, `Importación lista: ${Object.entries(ok.resumen).map(([k, n]) => `${n} ${k}`).join(', ')}.`)); cache = {}; setTimeout(alTerminar, 1200); }
+      catch (err) { imp.disabled = false; imp.textContent = 'Importar'; salida.append(h('div', { class: 'aviso error' }, err.message)); }
+    } }, `Importar ${fmtN.format(cambios)} fila(s)`);
+    salida.append(h('div', { class: 'acciones' }, imp));
+  });
+  return f;
+}
+
+/** Búsqueda de Google Maps por municipio (solo gestión). */
+async function buscadorGoogle(tipos, alAgregar) {
+  const [{ activo }, div] = await Promise.all([api('GET', '/api/territorio/google/estado'), division()]);
+  if (!activo) return h('div', { class: 'tarjeta' }, h('h2', {}, 'Buscar en Google Maps'), h('p', { class: 'hint' }, 'La búsqueda en Google Maps se activa cuando se configure la clave del mapa (MAPS_API_KEY) en el servidor. Mientras tanto, registra a mano o importa un Excel.'));
+  const z = selectorZona(div.provincias, div.municipios);
+  const ft = campo('tipo', 'Tipo', { options: tipos.map(([value, label]) => ({ value, label })), value: tipos[0][0] });
+  const ftx = campo('texto', 'Nombre o palabra', {}, '(opcional)');
+  const b = h('button', { class: 'btn-sec', type: 'submit' }, 'Buscar en Google Maps');
+  const res = h('div', { 'aria-live': 'polite' });
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Buscar en Google Maps'), h('p', { class: 'hint' }, 'Busca por municipio y agrega con un clic. Cada búsqueda consume cuota de Google.'),
+    h('div', { class: 'form-fila' }, z.fp, z.fm, ft, ftx), h('div', { class: 'acciones' }, b), res);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const q = { tipo: f.tipo.value, provincia: z.sp.value, municipio: z.sm.value, texto: f.texto.value };
+    const r = await enviar(f, b, () => api('GET', `/api/territorio/google/buscar?${new URLSearchParams(q)}`));
+    if (!r) return;
+    res.replaceChildren(tabla([
+      { t: 'Nombre', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion)] },
+      { t: 'Teléfono', v: (x) => x.telefono ?? '' },
+      { t: '', v: (x) => x.registrado ? h('span', { class: 'chip validado' }, 'Ya registrado') : h('button', { class: 'btn btn-peq', type: 'button', onclick: async (ev) => {
+        ev.target.disabled = true;
+        try { await api('POST', '/api/territorio/google/agregar', { ...q, placeId: x.placeId }); ev.target.replaceWith(h('span', { class: 'chip validado' }, 'Agregado')); alAgregar?.(); }
+        catch (err) { ev.target.disabled = false; alert(err.message); }
+      } }, 'Agregar') },
+    ], r.items, ['Google no encontró resultados', 'Prueba con otro tipo o escribe parte del nombre.']));
+  });
+  return f;
+}
+
+V.catalogo = async () => {
+  const ver = param('ver') || 'medicamentos';
+  const seg = segmentos('Secciones del catálogo', [['medicamentos', 'Medicamentos'], ['farmacias', 'Farmacias'], ['medicos', 'Médicos']], ver, (id) => irA('catalogo', { ver: id }));
+  const validar = async (col, id) => { try { await api('POST', `/api/catalogo/${col}/${id}/validar`); router(); } catch (e) { alert(e.message); } };
+  const bloques = [seg];
+  if (ver === 'medicamentos') {
+    const ms = await medicamentos();
+    if (ES_GER()) {
+      const b = h('button', { class: 'btn', type: 'submit' }, 'Agregar medicamento');
+      const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo medicamento'),
+        h('div', { class: 'form-fila' }, campo('nombre', 'Nombre'), campo('linea', 'Línea', {}, '(opcional)'), campo('presentacion', 'Presentación', {}, '(opcional)'), campo('precio', 'Precio RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }, '(opcional)')),
+        h('div', { class: 'acciones' }, b));
+      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/medicamentos', { nombre: f.nombre.value, linea: f.linea.value, presentacion: f.presentacion.value, precio: f.precio.value || undefined }))) { cache = {}; router(); } });
+      bloques.push(f);
+    }
+    const historial = async (m) => {
+      const { items } = await api('GET', `/api/catalogo/medicamentos/${m.id}/precios`);
+      await confirmar(`Precios de ${m.nombre}`, items.length ? items.map((p) => `${fecha(p.vigenteDesde)}: ${RD(p.precio)} (${p.fuente})`).join('  ·  ') : 'Sin historial de precios.', { okTexto: 'Cerrar' });
+    };
+    bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Medicamentos'),
+      tabla([{ t: 'Nombre', v: (m) => m.nombre }, { t: 'Línea', v: (m) => m.linea ?? '' }, { t: 'Presentación', v: (m) => m.presentacion ?? '' },
+        { t: 'Precio', num: true, v: (m) => m.precio != null ? RD(m.precio) : 'Sin precio' },
+        { t: '', v: (m) => h('button', { class: 'btn-enlace', type: 'button', onclick: () => historial(m) }, 'Historial') }], ms, ['Catálogo vacío', 'Agrega los medicamentos de FERSUAZ o impórtalos desde Excel.']));
+    if (ES_GER()) bloques.push(h('div', { style: 'margin-top:1.5rem' }, importador('medicamentos', 'Importar medicamentos y precios', 'Si el medicamento ya existe con esa presentación, se actualiza el precio y el anterior queda en el historial.', router)));
+  } else if (ver === 'farmacias') {
+    const [fs, div] = await Promise.all([api('GET', '/api/catalogo/farmacias'), division()]);
+    const fprov = param('provincia') || '';
+    if (GESTION_T() || (yo.role === 'representante' && yo.position === 'Vendedor')) {
+      const z = selectorZona(div.provincias, div.municipios);
+      const b = h('button', { class: 'btn', type: 'submit' }, 'Agregar farmacia');
+      const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nueva farmacia'),
+        h('div', { class: 'form-fila' }, campo('nombre', 'Nombre'), z.fp, z.fm, campo('sector', 'Sector', {}, '(opcional)'), campo('direccion', 'Dirección', {}, '(opcional)'), campo('telefono', 'Teléfono', { inputmode: 'tel' }, '(opcional)')),
+        h('div', { class: 'acciones' }, b));
+      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/farmacias', { nombre: f.nombre.value, provincia: z.sp.value, municipio: z.sm.value, sector: f.sector.value, direccion: f.direccion.value, telefono: f.telefono.value }))) router(); });
+      bloques.push(f);
+    }
+    const filtro = campo('fprov', 'Filtrar por provincia', { options: div.provincias.map((p) => ({ value: p, label: p })), value: fprov, placeholder: 'Todas las provincias' });
+    filtro.querySelector('select').addEventListener('change', (e) => irA('catalogo', { ver: 'farmacias', provincia: e.target.value }));
+    const lista = fs.items.filter((x) => !fprov || x.provincia === fprov).sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
+    bloques.push(h('div', { style: 'display:flex;justify-content:space-between;align-items:end;gap:1rem;flex-wrap:wrap;margin:1.5rem 0 .75rem' }, h('h2', { style: 'margin:0;font-size:1.2rem' }, `Farmacias (${fmtN.format(lista.length)})`), h('div', { style: 'min-width:14rem' }, filtro)),
+      tabla([{ t: 'Nombre', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
+        { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('farmacias', x.id) }, 'Validar') : '' }], lista, ['Aún no hay farmacias', 'Agrégalas a mano, impórtalas desde Excel o búscalas en Google Maps.']));
+    if (GESTION_T()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, importador('farmacias', 'Importar farmacias', 'Provincia y municipio deben ser oficiales. Las que ya existen en el mismo municipio no se duplican.', router), await buscadorGoogle([['farmacia', 'Farmacias']], null)));
+  } else {
+    const mds = await api('GET', '/api/catalogo/medicos');
+    bloques.push(tabla([{ t: 'Nombre', v: (x) => x.nombre }, { t: 'Especialidad', v: (x) => x.especialidad }, { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
+      { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('medicos', x.id) }, 'Validar') : '' }], mds.items, ['Aún no hay médicos', 'Las promotoras los agregan al cargar recetas.']));
+  }
+  return vista('Catálogo', 'Lo que agregan las promotoras y los vendedores queda pendiente hasta que la gerencia lo valida.', ...bloques);
+};
+
+V.establecimientos = async () => {
+  const [div, mias] = await Promise.all([division(), api('GET', '/api/territorio/mis-provincias')]);
+  const provincias = mias.items;
+  if (!provincias.length) return vista('Establecimientos', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Aún no tienes provincias asignadas'), 'Pide a tu supervisor que te asigne las provincias que visitas.'));
+  const fprov = param('provincia') || (provincias.length === 1 ? provincias[0] : '');
+  const fmun = param('municipio') || ''; const ftipo = param('tipo') || '';
+  const qs = new URLSearchParams(Object.entries({ provincia: fprov, municipio: fmun, tipo: ftipo }).filter(([, v]) => v));
+  const { items } = await api('GET', `/api/territorio/establecimientos?${qs}`);
+  const tipos = Object.entries(div.tipos);
+  const fz = selectorZona(provincias, div.municipios, { provincia: fprov, municipio: fmun, prefijo: 'f' });
+  const ft = campo('ftipo', 'Tipo', { options: tipos.map(([value, label]) => ({ value, label })), value: ftipo, placeholder: 'Todos los tipos' });
+  const aplicar = () => irA('establecimientos', Object.fromEntries(Object.entries({ provincia: fz.sp.value, municipio: fz.sm.value, tipo: ft.querySelector('select').value }).filter(([, v]) => v)));
+  fz.sm.addEventListener('change', aplicar); ft.querySelector('select').addEventListener('change', aplicar);
+  fz.sp.addEventListener('change', () => { if (!fz.sp.value) aplicar(); });
+  const z = selectorZona(provincias, div.municipios, { provincia: fprov, municipio: fmun });
+  const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar establecimiento');
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo establecimiento'),
+    h('div', { class: 'form-fila' }, campo('tipo', 'Tipo', { options: tipos.map(([value, label]) => ({ value, label })) }), campo('nombre', 'Nombre'), z.fp, z.fm, campo('sector', 'Sector', {}, '(opcional)'), campo('direccion', 'Dirección', {}, '(opcional)'), campo('telefono', 'Teléfono', { inputmode: 'tel' }, '(opcional)')),
+    h('p', { class: 'hint' }, GESTION_T() ? 'Queda validado de inmediato.' : 'Queda pendiente hasta que tu supervisor lo valide.'), h('div', { class: 'acciones' }, b));
+  f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/territorio/establecimientos', { tipo: f.tipo.value, nombre: f.nombre.value, provincia: z.sp.value, municipio: z.sm.value, sector: f.sector.value, direccion: f.direccion.value, telefono: f.telefono.value }))) router(); });
+  const validar = async (x) => { try { await api('POST', `/api/territorio/establecimientos/${x.id}/validar`); router(); } catch (e) { alert(e.message); } };
+  const bloques = [f, h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, `Registrados (${fmtN.format(items.length)})`), h('div', { class: 'form-fila' }, fz.fp, fz.fm, ft),
+    tabla([{ t: 'Nombre', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] }, { t: 'Tipo', v: (x) => div.tipos[x.tipo] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` },
+      { t: 'Estado', v: (x) => chip(x.estado) }, { t: '', v: (x) => GESTION_T() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar(x) }, 'Validar') : '' }],
+    items, ['No hay establecimientos con estos filtros', 'Regístralos aquí; tu supervisor también puede importarlos desde Excel.'])];
+  if (GESTION_T()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, importador('establecimientos', 'Importar clínicas, hospitales, UNAP y centros', 'Tipo, nombre, provincia y municipio son obligatorios. Los que ya existen en el mismo municipio no se duplican.', router), await buscadorGoogle(tipos, null)));
+  return vista('Establecimientos', 'Clínicas, hospitales, UNAP y centros de primer nivel por municipio. Se usan como paradas exactas de las jornadas.', ...bloques);
+};
+
+V.representantes = async () => {
+  const ver = param('ver') || 'zonas';
+  const seg = segmentos('Representantes', [['zonas', 'Provincias por representante'], ['preregistro', 'Pre-registro por Excel']], ver, (id) => irA('representantes', { ver: id }));
+  if (ver === 'preregistro') {
+    const { items } = await api('GET', '/api/territorio/preregistros');
+    const anular = async (p) => { if (await confirmar('Anular pre-registro', `${p.nombre} ya no quedará aprobado automáticamente al registrarse.`, { okTexto: 'Anular' })) { try { await api('POST', `/api/territorio/preregistros/${p.id}/anular`); } catch (e) { alert(e.message); } router(); } };
+    return vista('Representantes', 'Carga promotores, visitadores, vendedores y PVC con sus provincias. Cuando cada uno se registra con su mismo correo, su cuenta se activa sola.', seg,
+      importador('representantes', 'Importar representantes', 'Nadie recibe contraseñas por Excel: cada representante crea la suya al registrarse en la web.', router),
+      h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Pre-registrados'),
+      tabla([{ t: 'Nombre', v: (p) => [p.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, p.email)] }, { t: 'Cargo', v: (p) => p.posicion }, { t: 'Provincias', v: (p) => p.provincias.join(', ') || 'Sin asignar' },
+        { t: 'Estado', v: (p) => h('span', { class: `chip ${p.estado === 'usado' ? 'validado' : 'pendiente'}` }, p.estado === 'usado' ? 'Ya registrado' : 'Esperando registro') },
+        { t: '', v: (p) => p.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => anular(p) }, 'Anular') : '' }], items, ['Aún no hay pre-registros', 'Importa el Excel de tu equipo comercial.']));
+  }
+  const [{ items: reps }, div] = await Promise.all([api('GET', '/api/viaticos/representantes'), division()]);
+  const id = param('rep');
+  if (id) {
+    const r = reps.find((x) => x.id === id); const { item } = await api('GET', `/api/territorio/zonas/${id}`);
+    const marcadas = new Set(item.provincias);
+    const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar provincias');
+    const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, r?.fullName ?? 'Representante'), h('p', { class: 'hint' }, 'Marca las provincias que visita. Solo verá y registrará establecimientos en ellas.'),
+      h('div', { class: 'provincias' }, div.provincias.map((p) => h('label', {}, h('input', { type: 'checkbox', name: 'prov', value: p, checked: marcadas.has(p) }), p))),
+      h('div', { class: 'acciones' }, b, h('a', { class: 'btn-sec', href: '#representantes' }, 'Volver')));
+    f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', `/api/territorio/zonas/${id}`, { provincias: [...f.querySelectorAll('[name=prov]:checked')].map((x) => x.value) }))) irA('representantes', {}); });
+    return vista('Provincias del representante', null, f);
+  }
+  const zonas = await Promise.all(reps.map((r) => api('GET', `/api/territorio/zonas/${r.id}`).then((z) => z.item.provincias).catch(() => [])));
+  return vista('Representantes', 'Asigna a cada representante las provincias que visita.', seg,
+    tabla([{ t: 'Representante', v: (r) => [r.fullName, h('small', { style: 'display:block;color:var(--texto-2)' }, r.position ?? '')] },
+      { t: 'Provincias', v: (r) => zonas[reps.indexOf(r)].join(', ') || 'Sin asignar' },
+      { t: '', v: (r) => GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, 'Asignar provincias') : '' }], reps, ['Aún no hay representantes activos', 'Impórtalos en "Pre-registro por Excel".']));
+};
+
 // ---------------------------------------------------------------- menú por rol
 let yo;
 function menuPara(u) {
@@ -627,11 +856,12 @@ function menuPara(u) {
   if (u.role === 'dependiente') s.push(['Mi trabajo', [['voucher', 'Cargar voucher'], ['misVouchers', 'Mis vouchers'], ['comision', 'Mi comisión']]]);
   if (u.role === 'representante' && u.position === 'Promotora') s.push(['Mi trabajo', [['operativo', 'Operativo de hoy'], ['receta', 'Cargar receta'], ['misRecetas', 'Mis recetas'], ['alertas', 'Alertas']]]);
   if (u.role === 'representante' && u.position === 'Vendedor') s.push(['Mi trabajo', [['inventario', 'Inventario'], ['catalogo', 'Farmacias']]]);
-  if (u.role === 'representante') s.push(['Rutas y viáticos', [['jornadas', 'Mis jornadas'], ['presupuesto', 'Mi presupuesto']]]);
+  if (u.role === 'representante') s.push(['Rutas y viáticos', [['jornadas', 'Mis jornadas'], ['presupuesto', 'Mi presupuesto'], ['establecimientos', 'Establecimientos']]]);
   if (G) {
     s.push(['Dependientes', [['revisar', 'Vouchers por revisar'], ['comisiones', 'Comisiones']]]);
     s.push(['Promotoras', [['reportes', 'Reporte de recetas'], ['misRecetas', 'Recetas'], ['alertas', 'Alertas']]]);
     s.push(['Rutas y viáticos', [['viaticos', 'Presupuestos'], ['perfiles', 'Perfiles de viático'], ['precios', 'Precios de combustible'], ['viatico', null]]]);
+    s.push(['Territorio', [['establecimientos', 'Establecimientos'], ...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : [])]]);
     s.push(['Administración', [['inventario', 'Inventario'], ['catalogo', 'Catálogo'], ...(u.role !== 'finanzas' ? [['solicitudes', 'Solicitudes de cuenta']] : [])]]);
   }
   if (!s.length) s.push(['Mi trabajo', [['pronto', 'Inicio']]]);

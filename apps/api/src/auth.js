@@ -8,7 +8,8 @@ export class AuthError extends Error {
 
 const publicUser = ({ passwordHash, ...u }) => u;
 
-export function createAuthService(store) {
+/** `preregistro`: { buscar(email, role), confirmar(user, p) } — opcional, para representantes cargados por Excel. */
+export function createAuthService(store, { preregistro } = {}) {
   return {
     async register(input) {
       const { ok, errors, data } = validateRegistration(input);
@@ -17,8 +18,13 @@ export function createAuthService(store) {
         throw new AuthError(409, 'Ya existe una cuenta con ese correo.', { email: 'Este correo ya está registrado. Inicia sesión.' });
       }
       const { password, ...rest } = data;
-      const user = await store.createUser({ ...rest, passwordHash: await hashPassword(password), status: STATUS.PENDIENTE });
-      await store.addAudit({ action: 'registro_solicitado', entity: 'user', entityId: user.id, after: { role: user.role } });
+      const pre = await preregistro?.buscar(data.email, data.role);
+      const user = await store.createUser({
+        ...rest, ...(pre ? { position: pre.posicion } : {}),
+        passwordHash: await hashPassword(password), status: pre ? STATUS.ACTIVO : STATUS.PENDIENTE,
+      });
+      await store.addAudit({ action: pre ? 'registro_preaprobado' : 'registro_solicitado', entity: 'user', entityId: user.id, after: { role: user.role, ...(pre ? { position: user.position } : {}) } });
+      if (pre) await preregistro.confirmar(user, pre);
       return publicUser(user);
     },
 
