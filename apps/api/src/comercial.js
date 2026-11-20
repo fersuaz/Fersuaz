@@ -56,10 +56,13 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const nombre = texto(e, 'nombre', input.nombre, { etiqueta: 'El nombre' });
       const linea = texto(e, 'linea', input.linea, { etiqueta: 'La línea', requerido: false });
       const presentacion = texto(e, 'presentacion', input.presentacion, { etiqueta: 'La presentación', requerido: false });
+      const precio = input.precio == null || input.precio === '' ? null : Number(input.precio);
+      if (precio != null && !(precio > 0 && precio < 1e7)) e.precio = 'Escribe un precio mayor que cero o déjalo vacío.';
       if (Object.keys(e).length) invalido(e);
       const dup = (await data.list('medicamentos')).find((m) => m.nombre.toLowerCase() === nombre.toLowerCase() && (m.presentacion ?? '') === (presentacion ?? ''));
       if (dup) throw new HttpError(409, 'Ese medicamento ya está en el catálogo.', { nombre: 'Ya existe con esa presentación.' });
-      const m = await data.insert('medicamentos', { nombre, linea, presentacion, activo: true });
+      const m = await data.insert('medicamentos', { nombre, linea, presentacion, precio: precio == null ? null : round2(precio), activo: true });
+      if (precio != null) await data.insert('preciosMedicamento', { medicamentoId: m.id, precio: round2(precio), vigenteDesde: hoy(), fuente: 'manual', registradoPor: actor.id });
       await audit({ actorId: actor.id, action: 'medicamento_creado', entity: 'medicamento', entityId: m.id, after: m });
       return m;
     },
