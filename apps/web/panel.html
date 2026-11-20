@@ -20,7 +20,19 @@
   <a class="skip" href="#vista">Saltar al contenido</a>
   <div class="panel">
     <aside class="lateral" aria-label="Menú del panel">
-      <a class="lateral-logo" href="./" aria-label="FERSUAZ, inicio"><img src="assets/brand/fersuaz-logo-color.svg" alt="FERSUAZ Laboratorio Farmacéutico" width="150" height="42"></a>
+      <div class="lateral-cabeza">
+        <a class="lateral-logo" href="./" aria-label="FERSUAZ, inicio"><img src="assets/brand/fersuaz-logo-color.svg" alt="FERSUAZ Laboratorio Farmacéutico" width="150" height="42"></a>
+        <div class="campana">
+          <button type="button" id="campana" class="campana-boton" aria-haspopup="true" aria-expanded="false" aria-controls="campana-panel" aria-label="Notificaciones">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15Z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+            <span id="campana-cuenta" class="campana-cuenta" hidden></span>
+          </button>
+          <div id="campana-panel" class="campana-panel" hidden>
+            <div class="campana-titulo"><h2>Notificaciones</h2><button type="button" class="enlace" id="campana-todas">Marcar todas como leídas</button></div>
+            <ul id="campana-lista" class="campana-lista"></ul>
+          </div>
+        </div>
+      </div>
       <nav id="menu" aria-label="Secciones"></nav>
       <div class="lateral-usuario">
         <p id="usuario-nombre"></p>

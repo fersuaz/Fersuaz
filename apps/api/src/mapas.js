@@ -24,13 +24,14 @@ export class GoogleRoutes {
    * Ruta en auto desde la residencia, por las paradas en orden y de regreso a la residencia.
    * Devuelve { km, minutos, tramos: [{ km, minutos }] } o lanza un Error con mensaje en español.
    */
-  async ruta(origen, paradas, { regresar = true } = {}) {
+  async ruta(origen, paradas, { regresar = true, optimizar = false } = {}) {
     if (!paradas.length) throw new Error('No hay paradas para calcular.');
     const punto = (p) => (Number.isFinite(p.lat) && Number.isFinite(p.lng) ? { location: { latLng: { latitude: p.lat, longitude: p.lng } } } : { address: direccion(p) });
     const pts = [origen, ...paradas, ...(regresar ? [origen] : [])].map(punto);
     const body = {
       origin: pts[0], destination: pts.at(-1), intermediates: pts.slice(1, -1),
       travelMode: 'DRIVE', routingPreference: 'TRAFFIC_UNAWARE', languageCode: 'es-419', regionCode: 'DO', units: 'METRIC',
+      ...(optimizar && paradas.length > 1 ? { optimizeWaypointOrder: true } : {}),
     };
     let r;
     try {
@@ -38,7 +39,7 @@ export class GoogleRoutes {
         method: 'POST',
         headers: {
           'content-type': 'application/json', 'X-Goog-Api-Key': this.apiKey,
-          'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration',
+          'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration,routes.optimizedIntermediateWaypointIndex',
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(15000),
@@ -57,6 +58,8 @@ export class GoogleRoutes {
       km: Math.round(ruta.distanceMeters / 10) / 100,
       minutos: seg(ruta.duration),
       tramos: (ruta.legs ?? []).map((l) => ({ km: Math.round((l.distanceMeters ?? 0) / 10) / 100, minutos: seg(l.duration) })),
+      // Orden óptimo de las paradas (índices sobre el arreglo recibido). Sin optimizar, el mismo orden.
+      orden: Array.isArray(ruta.optimizedIntermediateWaypointIndex) && ruta.optimizedIntermediateWaypointIndex.length === paradas.length && ruta.optimizedIntermediateWaypointIndex.every((i) => i >= 0) ? ruta.optimizedIntermediateWaypointIndex : paradas.map((_, i) => i),
       proveedor: 'google',
     };
   }

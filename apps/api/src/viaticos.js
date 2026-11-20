@@ -25,7 +25,7 @@ const invalido = (f) => { throw new HttpError(422, 'Revisa los campos marcados.'
 const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const num = (v) => (v === '' || v == null ? null : Number(v));
 
-export function createViaticos({ data, users, files, audit, mapas, now = () => new Date() }) {
+export function createViaticos({ data, users, files, audit, mapas, notificar, now = () => new Date() }) {
   const hoy = () => hoyRD(now());
   async function rep(id) {
     const u = await users.findUserById(id);
@@ -135,24 +135,100 @@ export function createViaticos({ data, users, files, audit, mapas, now = () => n
     const kmFuente = input.kmFuente === 'google' ? 'google' : 'manual';
     return { paradas, kmEstimados: r2(km || 0), kmFuente, conAlimentacion: input.conAlimentacion !== false, hospedaje, peajes: monto('peajes'), estacionamiento: monto('estacionamiento'), otros: monto('otros') };
   }
+  // ------------------------------------------------------------ cronogramas (los crea y aprueba el administrador)
+  const MAX_LUGARES = 15;
+  async function lugarDe(ref) {
+    const col = ref?.refTipo === 'farmacia' ? 'farmacias' : ref?.refTipo === 'establecimiento' ? 'establecimientos' : null;
+    const x = col && ref.refId && (await data.get(col, String(ref.refId)));
+    if (!x || ['inactivo', 'inactiva'].includes(x.estado)) return null;
+    return { refTipo: ref.refTipo, refId: x.id, lugar: x.nombre, municipio: x.municipio, provincia: x.provincia, ...(x.lat != null && x.lng != null ? { lat: Number(x.lat), lng: Number(x.lng) } : {}) };
+  }
+  async function crearCronograma(actor, input) {
+    permitir(rol(actor, ['administrador']), 'Solo el administrador crea cronogramas.');
+    const rep = await users.findUserById(String(input.representanteId ?? ''));
+    if (!rep || rep.role !== 'representante' || rep.status !== 'activo') throw new HttpError(404, 'El representante no existe o no está activo.');
+    const e = {};
+    const fechas = [...new Set((Array.isArray(input.fechas) ? input.fechas : [input.fecha]).filter(Boolean).map(String))].sort();
+    if (!fechas.length || fechas.some((f) => !esFechaISO(f))) e.fechas = 'Elige al menos una fecha.';
+    else if (fechas.length > 31) e.fechas = 'Máximo 31 fechas por vez.';
+    else if (fechas[0] < `${hoy().slice(0, 7)}-01`) e.fechas = 'Solo se programan fechas desde el inicio del mes en curso.';
+    const refs = Array.isArray(input.lugares) ? input.lugares : [];
+    if (!refs.length) e.lugares = 'Agrega al menos un lugar.';
+    else if (refs.length > MAX_LUGARES) e.lugares = `Máximo ${MAX_LUGARES} lugares por día.`;
+    if (Object.keys(e).length) invalido(e);
+    const zona = (await data.list('zonas', { representanteId: rep.id }))[0]?.provincias ?? [];
+    if (!zona.length) throw new HttpError(409, `${rep.fullName} no tiene provincias asignadas. Asígnalas antes de programar su cronograma.`);
+    const lugares = [];
+    for (const r of refs) {
+      const l = await lugarDe(r);
+      if (!l) invalido({ lugares: 'Uno de los lugares ya no existe en el catálogo.' });
+      if (!zona.includes(l.provincia)) invalido({ lugares: `${l.lugar} está en ${l.provincia}, fuera de las provincias de ${rep.fullName}.` });
+      if (lugares.some((x) => x.refId === l.refId)) continue;
+      lugares.push(l);
+    }
+    const ya = (await data.list('cronogramas', { representanteId: rep.id })).filter((c) => c.estado === 'aprobado' && fechas.includes(c.fecha)).map((c) => c.fecha);
+    if (ya.length) throw new HttpError(409, `Ya hay cronograma aprobado para: ${ya.join(', ')}. Anúlalo primero si quieres cambiarlo.`, { fechas: 'Hay fechas ya programadas.' });
+    const nota = normalizeName(input.nota) || null;
+    const creados = [];
+    for (const fecha of fechas) creados.push(await data.insert('cronogramas', { representanteId: rep.id, fecha, lugares, nota, estado: 'aprobado', creadoPor: actor.id }));
+    await audit({ actorId: actor.id, action: 'cronograma_aprobado', entity: 'user', entityId: rep.id, after: { fechas, lugares: lugares.map((l) => l.lugar) } });
+    await notificar?.(rep.id, { tipo: 'cronograma', titulo: 'Nuevo cronograma', texto: `Tienes ${fechas.length} día(s) programado(s) desde el ${fechas[0]}.`, enlace: '#jornadas' });
+    return creados;
+  }
+  async function listarCronogramas(actor, { representanteId, mes } = {}) {
+    const id = esRep(actor) ? actor.id : representanteId;
+    permitir(esRep(actor) || rol(actor, ['administrador', 'gerencia', 'supervisor', 'finanzas']));
+    let xs = id ? await data.list('cronogramas', { representanteId: id }) : await data.list('cronogramas');
+    if (mes) xs = xs.filter((c) => c.fecha.startsWith(mes));
+    if (esRep(actor)) xs = xs.filter((c) => c.estado === 'aprobado');
+    const jornadas = id ? await data.list('jornadas', { representanteId: id }) : await data.list('jornadas');
+    return xs.sort((a, b) => a.fecha.localeCompare(b.fecha)).map((c) => ({ ...c, jornadaId: jornadas.find((j) => j.cronogramaId === c.id && j.estado !== 'cancelada')?.id ?? null }));
+  }
+  async function anularCronograma(actor, id, motivo) {
+    permitir(rol(actor, ['administrador']), 'Solo el administrador anula cronogramas.');
+    const c = await data.get('cronogramas', id);
+    if (!c) throw new HttpError(404, 'El cronograma no existe.');
+    if (c.estado !== 'aprobado') throw new HttpError(409, 'Ese cronograma ya está anulado.');
+    const m = normalizeName(motivo); if (!m || m.length < 3) invalido({ motivo: 'Escribe el motivo.' });
+    if ((await data.list('jornadas', { representanteId: c.representanteId })).some((j) => j.cronogramaId === id && j.estado !== 'cancelada')) {
+      throw new HttpError(409, 'El representante ya creó su jornada de ese día. Cancela la jornada primero.');
+    }
+    const out = await data.update('cronogramas', id, { estado: 'anulado', motivo: m });
+    await audit({ actorId: actor.id, action: 'cronograma_anulado', entity: 'cronograma', entityId: id, before: { estado: c.estado }, after: { estado: 'anulado', motivo: m } });
+    await notificar?.(c.representanteId, { tipo: 'cronograma', titulo: 'Cronograma anulado', texto: `El cronograma del ${c.fecha} fue anulado: ${m}`, enlace: '#jornadas' });
+    return out;
+  }
+  /** Paradas del cronograma en el orden que menos recorre: Google Routes si está conectado; si no, el orden del administrador. */
+  async function rutaDeCronograma(actor, cronogramaId) {
+    const c = await data.get('cronogramas', String(cronogramaId ?? ''));
+    if (!c || c.representanteId !== actor.id || c.estado !== 'aprobado') throw new HttpError(404, 'No tienes un cronograma aprobado con ese id.');
+    const lugares = [];
+    for (const l of c.lugares) lugares.push((await lugarDe(l)) ?? l);
+    if (!mapas?.activo) return { cronograma: c, paradas: lugares, km: null, kmFuente: 'manual', optimizado: false };
+    const perfil = await perfilDe(actor.id);
+    if (!perfil?.residencia?.municipio) throw new HttpError(409, 'Tu perfil no tiene residencia registrada. Pide a tu supervisor que la complete.');
+    let r;
+    try { r = await mapas.ruta(perfil.residencia, lugares, { regresar: true, optimizar: true }); } catch (err) { throw new HttpError(502, err.message); }
+    const orden = Array.isArray(r.orden) && r.orden.length === lugares.length ? r.orden : lugares.map((_, i) => i);
+    return { cronograma: c, paradas: orden.map((i) => lugares[i]), km: r.km, minutos: r.minutos, kmFuente: 'google', optimizado: lugares.length > 1 };
+  }
+
   async function crearJornada(actor, input) {
     permitir(esRep(actor), 'Solo los representantes planifican jornadas.');
     const e = {};
-    if (!esFechaISO(input.fecha)) e.fecha = 'Elige la fecha de la jornada.';
-    input = await enriquecerParadas(input);
-    let entrada = input;
-    if (input.kmFuente === 'google') {
-      // Los km "del mapa" se recalculan en el servidor: nunca se acepta la cifra que envía el navegador.
-      const r = await calcularKm(actor, input);
-      entrada = { ...input, kmEstimados: r.km, kmFuente: 'google' };
-    }
+    // La jornada sale del cronograma aprobado por el administrador: fecha y lugares no los decide el representante.
+    if (!input.cronogramaId) throw new HttpError(422, 'Elige el día de tu cronograma aprobado.', { cronogramaId: 'Elige un día del cronograma.' });
+    const ruta = await rutaDeCronograma(actor, input.cronogramaId);
+    input = { ...input, fecha: ruta.cronograma.fecha, paradas: ruta.paradas };
+    // Con mapa, los km son los del servidor; nunca la cifra que envía el navegador.
+    const entrada = ruta.km != null ? { ...input, kmEstimados: ruta.km, kmFuente: 'google' } : { ...input, kmFuente: 'manual' };
     const d = validarJornada(entrada, e);
     if (Object.keys(e).length) invalido(e);
     if ((await data.list('jornadas', { representanteId: actor.id, fecha: input.fecha })).some((j) => j.estado !== 'cancelada')) {
       throw new HttpError(409, 'Ya tienes una jornada ese día. Edítala en vez de crear otra.', { fecha: 'Ya hay una jornada ese día.' });
     }
     if (await presupuestoBloqueado(actor.id, input.fecha.slice(0, 7))) throw new HttpError(409, 'El presupuesto de ese mes ya fue solicitado; pide a la gerencia que lo devuelva para cambiar jornadas.');
-    const j = await data.insert('jornadas', { representanteId: actor.id, fecha: input.fecha, ...d, kmReales: null, estado: 'planificada' });
+    const j = await data.insert('jornadas', { representanteId: actor.id, cronogramaId: ruta.cronograma.id, fecha: input.fecha, ...d, kmReales: null, estado: 'planificada' });
     await audit({ actorId: actor.id, action: 'jornada_planificada', entity: 'jornada', entityId: j.id, after: { fecha: j.fecha, km: j.kmEstimados } });
     return j;
   }
@@ -423,7 +499,9 @@ export function createViaticos({ data, users, files, audit, mapas, now = () => n
   return {
     guardarPerfil, verPerfil, listarRepresentantes, registrarPrecio,
     listarPrecios: async (actor) => { permitir(activo(actor)); return (await data.list('precios')).sort((a, b) => b.vigenteDesde.localeCompare(a.vigenteDesde)); },
-    crearJornada, actualizarJornada, listarJornadas, calcularKm, mapasActivo: () => Boolean(mapas?.activo),
+    crearJornada, actualizarJornada, listarJornadas, calcularKm,
+    crearCronograma, listarCronogramas, anularCronograma,
+    vistaPreviaRuta: async (actor, id) => { permitir(esRep(actor)); const r = await rutaDeCronograma(actor, id); return { fecha: r.cronograma.fecha, paradas: r.paradas, km: r.km, minutos: r.minutos ?? null, kmFuente: r.kmFuente, optimizado: r.optimizado }; }, mapasActivo: () => Boolean(mapas?.activo),
     verPresupuesto, solicitar, decidirPresupuesto, desembolsar, reportarGasto, revisarGasto, liquidar, consolidado, presupuestoPorId,
   };
 }

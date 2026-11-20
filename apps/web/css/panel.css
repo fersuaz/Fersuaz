@@ -113,3 +113,41 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .95rem; }
 .linea.parada { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; }
 .linea.parada > .field:nth-child(4) { grid-column: 1 / -2; }
 @media (max-width: 760px) { .linea.parada { grid-template-columns: 1fr; } .linea.parada > .field:nth-child(4) { grid-column: auto; } }
+
+/* Campana de notificaciones */
+.lateral-cabeza { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.campana { position: relative; }
+.campana-boton { position: relative; width: 44px; height: 44px; border-radius: 12px; border: 1.5px solid var(--linea); background: #fff; display: grid; place-items: center; cursor: pointer; color: var(--marino); }
+.campana-boton:hover { background: var(--panel); }
+.campana-boton svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.campana-cuenta { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: var(--alerta); color: #fff; font: 700 .72rem/20px var(--sans); text-align: center; border: 2px solid #fff; }
+.campana-panel { position: absolute; z-index: 30; top: calc(100% + .5rem); left: 0; width: min(24rem, calc(100vw - 2rem)); max-height: min(70vh, 32rem); overflow: auto;
+  background: #fff; border: 1px solid var(--linea); border-radius: 16px; box-shadow: 0 24px 60px -24px rgba(0,52,99,.4); }
+.campana-titulo { position: sticky; top: 0; background: #fff; display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: 1rem 1.1rem .75rem; border-bottom: 1px solid var(--linea); }
+.campana-titulo h2 { font-size: 1.05rem; }
+.campana-titulo .enlace { font-size: .85rem; }
+.campana-lista { list-style: none; margin: 0; padding: .4rem; }
+.campana-lista li a, .campana-lista li > div { display: grid; gap: .15rem; padding: .75rem .8rem; border-radius: 10px; color: var(--tinta); text-decoration: none; }
+.campana-lista li a:hover { background: var(--panel); }
+.campana-lista strong { font-weight: 600; color: var(--marino); }
+.campana-lista .nueva strong::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--celeste); margin-right: .45rem; vertical-align: middle; }
+.campana-lista span { color: var(--texto-2); font-size: .92rem; }
+.campana-lista small { color: var(--texto-2); font-size: .78rem; }
+.campana-vacia { padding: 1.5rem 1rem; text-align: center; color: var(--texto-2); }
+@media (max-width: 900px) { .campana-panel { left: auto; right: 0; } }
+
+/* Cronogramas */
+.dias { display: flex; flex-wrap: wrap; gap: .4rem; margin: .5rem 0 1rem; }
+.dias button { min-width: 2.75rem; min-height: 44px; padding: 0 .5rem; border-radius: 10px; border: 1.5px solid var(--linea); background: #fff; font: 600 .95rem var(--sans); color: var(--tinta); cursor: pointer; }
+.dias button small { display: block; font-weight: 500; font-size: .7rem; color: var(--texto-2); }
+.dias button[aria-pressed="true"] { background: var(--marino); border-color: var(--marino); color: #fff; }
+.dias button[aria-pressed="true"] small { color: #C9E1EE; }
+.dias button:disabled { opacity: .35; cursor: not-allowed; }
+.lugares-lista { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: .4rem .9rem; max-height: 22rem; overflow: auto; padding: .25rem; margin: .5rem 0 1rem; }
+.lugares-lista label { display: flex; gap: .55rem; align-items: flex-start; padding: .55rem .6rem; border-radius: 10px; background: var(--canvas); }
+.lugares-lista label small { display: block; color: var(--texto-2); }
+.ruta-orden { list-style: none; counter-reset: p; margin: .75rem 0 0; padding: 0; display: grid; gap: .5rem; }
+.ruta-orden li { counter-increment: p; display: grid; grid-template-columns: 2rem 1fr; gap: .75rem; align-items: center; padding: .7rem .8rem; border-radius: 12px; background: var(--canvas); }
+.ruta-orden li::before { content: counter(p); width: 2rem; height: 2rem; border-radius: 50%; display: grid; place-items: center; background: var(--marino); color: #fff; font: 600 .9rem var(--serif); }
+.ruta-orden li.casa { counter-increment: none; }
+.ruta-orden li.casa::before { content: ""; background: #fff; border: 2px solid var(--marino); }

@@ -160,31 +160,6 @@ test('Google Maps: sin clave avisa; con clave busca, marca los ya registrados y 
   } finally { server.close(); }
 });
 
-test('jornada: una parada elegida del catálogo usa nombre y coordenadas de la base', async () => {
-  let recibido;
-  const { server, call, tok, ids } = await arrancar();
-  server.close();
-  const data = new MemoryData();
-  const mapas = { activo: true, async ruta(o, paradas) { recibido = paradas; return { km: 50, minutos: 60, tramos: [], proveedor: 'google' }; } };
-  const store = new MemoryStore();
-  const s2 = createServer(createApp({ store, data, files: new MemoryFiles(), mapas, sessionSecret: 'x'.repeat(40), now: () => new Date('2026-11-20T16:00:00Z') })).listen(0);
-  const url = `http://127.0.0.1:${s2.address().port}`;
-  const c2 = async (m, p, b, t) => { const r = await fetch(url + p, { method: m, headers: { 'content-type': 'application/json', ...(t && { authorization: `Bearer ${t}` }) }, body: b && JSON.stringify(b) }); return { status: r.status, body: await r.json() }; };
-  try {
-    const tk = {};
-    for (const [k, props] of Object.entries({ ger: { role: 'gerencia' }, rep: { role: 'representante', position: 'Visitador' } })) {
-      const u = await store.createUser({ fullName: `${k} Ejemplo`, email: `${k}@x.do`, status: 'activo', passwordHash: await hashPassword('clave123456'), ...props });
-      ids[k] = u.id; tk[k] = (await c2('POST', '/api/auth/login', { email: `${k}@x.do`, password: 'clave123456' })).body.token;
-    }
-    const est = await data.insert('establecimientos', { tipo: 'hospital', nombre: 'Hospital Ejemplo', provincia: 'Espaillat', municipio: 'Moca', lat: 19.39, lng: -70.52, estado: 'validado', fuente: 'google' });
-    await c2('POST', `/api/viaticos/perfiles/${ids.rep}`, { residencia: { provincia: 'La Vega', municipio: 'Concepción de La Vega' }, vehiculo: { propiedad: 'asignado', combustible: 'gasolina_regular', rendimiento: 30 }, tarifaAlimentacion: 400 }, tk.ger);
-    const j = await c2('POST', '/api/viaticos/jornadas', { fecha: '2026-11-10', kmFuente: 'google', paradas: [{ refTipo: 'establecimiento', refId: est.id, lugar: 'Otro nombre', municipio: 'X', provincia: 'Y', lat: 1, lng: 1 }] }, tk.rep);
-    assert.equal(j.status, 201, JSON.stringify(j.body));
-    assert.deepEqual(recibido[0], { refTipo: 'establecimiento', refId: est.id, lugar: 'Hospital Ejemplo', municipio: 'Moca', provincia: 'Espaillat', lat: 19.39, lng: -70.52 });
-    assert.equal(j.body.item.paradas[0].lugar, 'Hospital Ejemplo');
-  } finally { s2.close(); }
-});
-
 // Contra PostgreSQL real, si hay base de pruebas.
 test('PostgreSQL: columnas nuevas de territorio', { skip: !process.env.TEST_DATABASE_URL }, async () => {
   const { PostgresStore } = await import('../src/store.js');
@@ -207,6 +182,9 @@ test('PostgreSQL: importar y precios del MICM dejan auditoría válida', { skip:
   const t = createTerritorio({ data, users: st, audit: (e) => st.addAudit(e) });
   const r = await t.importar(ger, 'establecimientos', { archivo: b64(`Tipo,Nombre,Provincia,Municipio\nHospital,Hospital PG ${Date.now()},Espaillat,Moca\n`), nombre: 'e.csv', confirmar: true });
   assert.equal(r.guardado, true);
+  // Auditoría con listas (provincias) y textos sueltos: deben guardarse como JSON válido.
+  await st.addAudit({ actorId: ger.id, action: 'zona_asignada', entity: 'user', entityId: ger.id, before: null, after: ['La Vega', 'Espaillat'] });
+  await st.addAudit({ actorId: ger.id, action: 'prueba', entity: 'x', entityId: 'y', before: 'texto', after: 3 });
   await st.pool.query("DELETE FROM precios_combustible WHERE vigente_desde = '2026-11-14'");
   const { actualizarDesdeMicm, URL_AVISOS } = await import('../src/combustible-micm.js');
   const fx = (f) => readFileSync(new URL(`./fixtures/${f}`, import.meta.url));

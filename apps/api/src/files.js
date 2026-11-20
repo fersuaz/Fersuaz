@@ -37,16 +37,16 @@ import { createHash, createHmac } from 'node:crypto';
 const sha256 = (d) => createHash('sha256').update(d).digest('hex');
 const hmac = (k, d) => createHmac('sha256', k).update(d).digest();
 
-/** Firma AWS Signature V4 para S3/Spaces. Devuelve los encabezados a enviar. */
-export function firmarS3({ method, host, path, region, accessKey, secretKey, headers = {}, payloadHash, fecha = new Date() }) {
+/** Firma AWS Signature V4 (S3/Spaces, SES…). Devuelve los encabezados a enviar. */
+export function firmarS3({ method, host, path, region, accessKey, secretKey, headers = {}, payloadHash, fecha = new Date(), servicio = 's3' }) {
   const amzDate = fecha.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
   const day = amzDate.slice(0, 8);
   const h = { host, 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate, ...Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), String(v).trim()])) };
   const nombres = Object.keys(h).sort();
   const canon = [method, path.split('/').map((s) => encodeURIComponent(decodeURIComponent(s))).join('/'), '', ...nombres.map((k) => `${k}:${h[k]}`), '', nombres.join(';'), payloadHash].join('\n');
-  const scope = `${day}/${region}/s3/aws4_request`;
+  const scope = `${day}/${region}/${servicio}/aws4_request`;
   const aFirmar = ['AWS4-HMAC-SHA256', amzDate, scope, sha256(canon)].join('\n');
-  const kFirma = hmac(hmac(hmac(hmac(`AWS4${secretKey}`, day), region), 's3'), 'aws4_request');
+  const kFirma = hmac(hmac(hmac(hmac(`AWS4${secretKey}`, day), region), servicio), 'aws4_request');
   const firma = createHmac('sha256', kFirma).update(aFirmar).digest('hex');
   return { ...h, authorization: `AWS4-HMAC-SHA256 Credential=${accessKey}/${scope}, SignedHeaders=${nombres.join(';')}, Signature=${firma}` };
 }
@@ -77,6 +77,7 @@ export class SpacesFiles {
   }
 }
 
+export const sha256Hex = sha256;
 export function crearArchivos(env, uploadDir) {
   const { SPACES_KEY, SPACES_SECRET, SPACES_BUCKET, SPACES_REGION } = env;
   if (SPACES_KEY && SPACES_SECRET && SPACES_BUCKET) return new SpacesFiles({ accessKey: SPACES_KEY, secretKey: SPACES_SECRET, bucket: SPACES_BUCKET, region: SPACES_REGION || 'nyc3' });

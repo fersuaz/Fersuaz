@@ -363,67 +363,8 @@ function desglose(d, total) {
 
 V.jornadas = async () => {
   const mes = mesDe();
-  const [{ items }, est, div, mias, farms] = await Promise.all([api('GET', `/api/viaticos/jornadas?mes=${mes}`), api('GET', '/api/viaticos/estado'), division(), api('GET', '/api/territorio/mis-provincias'), api('GET', '/api/catalogo/farmacias')]);
-  const paradas = h('div', { class: 'lineas' }); let n = 0;
-  const OTRO = '__otro';
-  const addParada = () => {
-    const i = n++;
-    const z = selectorZona(mias.items, div.municipios, { prefijo: `paradas.${i}.`, provincia: mias.items.length === 1 ? mias.items[0] : '' });
-    const fl = campo(`paradas.${i}.ref`, 'Lugar', { options: [], placeholder: 'Elige primero el municipio' });
-    const sl = fl.querySelector('select');
-    const libre = campo(`paradas.${i}.lugar`, 'Nombre del lugar', {}, '(no está registrado)'); libre.hidden = true;
-    sl.addEventListener('change', () => { libre.hidden = sl.value !== OTRO; });
-    z.sm.addEventListener('change', async () => {
-      sl.replaceChildren(h('option', { value: '' }, 'Cargando…')); libre.hidden = true;
-      if (!z.sm.value) { sl.replaceChildren(h('option', { value: '' }, 'Elige primero el municipio')); return; }
-      let ests = [];
-      try { ests = (await api('GET', `/api/territorio/establecimientos?municipio=${encodeURIComponent(z.sm.value)}`)).items; } catch {}
-      const fs = farms.items.filter((x) => x.municipio === z.sm.value && x.estado !== 'inactiva');
-      const grupo = (label, xs, tipo) => xs.length ? h('optgroup', { label }, xs.map((x) => h('option', { value: `${tipo}:${x.id}` }, `${x.nombre}${x.tipo ? ` (${div.tipos[x.tipo]})` : ''}`))) : null;
-      sl.replaceChildren(h('option', { value: '' }, ests.length + fs.length ? 'Elige el lugar' : 'No hay lugares registrados aquí'),
-        grupo('Clínicas, hospitales y centros', ests, 'establecimiento'), grupo('Farmacias', fs, 'farmacia'), h('option', { value: OTRO }, 'Otro lugar (escribir el nombre)'));
-    });
-    if (z.sm.value) z.sm.dispatchEvent(new Event('change'));
-    const f = h('div', { class: 'linea parada' }, z.fp, z.fm, fl, libre,
-      h('button', { type: 'button', class: 'quitar', 'aria-label': 'Quitar parada', onclick: () => { if (paradas.children.length > 1) f.remove(); } }, 'Quitar'));
-    f._leer = () => {
-      const [tipo, id] = sl.value && sl.value !== OTRO ? sl.value.split(':') : [];
-      const etiqueta = sl.selectedOptions[0]?.textContent.replace(/ \([^)]*\)$/, '') ?? '';
-      return id ? { refTipo: tipo, refId: id, lugar: etiqueta, municipio: z.sm.value, provincia: z.sp.value }
-        : { lugar: libre.querySelector('input').value, municipio: z.sm.value, provincia: z.sp.value };
-    };
-    paradas.append(f);
-  };
-  addParada();
-  const hosp = h('details', { class: 'tarjeta', style: 'background:var(--canvas)' }, h('summary', { style: 'cursor:pointer;font-weight:600;color:var(--marino)' }, '¿Necesitas hotel? La gerencia debe autorizarlo'),
-    h('div', { class: 'form-fila', style: 'margin-top:1rem' }, campo('hospedaje.noches', 'Noches', { type: 'number', min: 1, step: 1, inputmode: 'numeric' }), campo('hospedaje.tarifaNoche', 'Tarifa por noche RD$', { type: 'number', min: 0, step: 0.01 }),
-      campo('hospedaje.cargos', 'Impuestos y cargos RD$', { type: 'number', min: 0, step: 0.01, value: 0 }), campo('hospedaje.hotel', 'Hotel', {}, '(si lo sabes)')),
-    campo('hospedaje.motivo', 'Motivo del hospedaje'));
-  const kmInfo = h('p', { class: 'hint', 'aria-live': 'polite' }, est.mapas ? 'Calcula los km por carretera desde tu residencia, con regreso.' : 'El mapa aún no está conectado: escribe los km por carretera (ida, paradas y regreso). Quedan marcados como estimado manual.');
-  let kmFuente = 'manual';
-  const calc = est.mapas ? h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: async () => {
-    calc.disabled = true; calc.textContent = 'Calculando…';
-    try { const r = await api('POST', '/api/viaticos/calcular-km', { paradas: leerParadas() }); form.kmEstimados.value = r.km; kmFuente = 'google'; kmInfo.textContent = `Ruta por carretera: ${fmtN.format(r.km)} km, unos ${fmtN.format(r.minutos)} minutos de manejo.`; }
-    catch (e) { mostrarErrores(form, e); kmInfo.textContent = e.message; }
-    finally { calc.disabled = false; calc.textContent = 'Calcular km con el mapa'; }
-  } }, 'Calcular km con el mapa') : null;
-  const boton = h('button', { class: 'btn', type: 'submit' }, 'Guardar jornada');
-  const form = h('form', { class: 'tarjeta', novalidate: true },
-    h('div', { class: 'form-fila' }, campo('fecha', 'Fecha', { type: 'date', value: hoy(), required: true })),
-    h('h2', {}, 'Paradas en orden'), h('p', { class: 'error', dataset: { for: 'paradas' } }), paradas, h('div', { class: 'acciones' }, h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: addParada }, 'Agregar parada')),
-    h('div', { class: 'form-fila', style: 'margin-top:1rem' }, campo('kmEstimados', 'Km por carretera', { type: 'number', min: 0, step: 0.1, inputmode: 'decimal', oninput: () => { kmFuente = 'manual'; } }),
-      campo('peajes', 'Peajes RD$', { type: 'number', min: 0, step: 0.01, value: 0 }), campo('estacionamiento', 'Estacionamiento RD$', { type: 'number', min: 0, step: 0.01, value: 0 }), campo('otros', 'Otros RD$', { type: 'number', min: 0, step: 0.01, value: 0 })),
-    kmInfo, calc ? h('div', { class: 'acciones', style: 'margin-top:0' }, calc) : null,
-    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'conAlimentacion', checked: true }), h('span', {}, 'Este día lleva gasto de alimentación')),
-    hosp, h('div', { class: 'acciones' }, boton));
-  function leerParadas() { return [...paradas.children].map((f) => f._leer()); }
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const g = (k) => form.elements[k]?.value;
-    const body = { fecha: g('fecha'), paradas: leerParadas(), kmEstimados: g('kmEstimados'), kmFuente, peajes: g('peajes'), estacionamiento: g('estacionamiento'), otros: g('otros'), conAlimentacion: form.conAlimentacion.checked,
-      hospedaje: hosp.open && g('hospedaje.noches') ? { noches: Number(g('hospedaje.noches')), tarifaNoche: g('hospedaje.tarifaNoche'), cargos: g('hospedaje.cargos'), hotel: g('hospedaje.hotel'), motivo: g('hospedaje.motivo') } : null };
-    if (await enviar(form, boton, () => api('POST', '/api/viaticos/jornadas', body))) { location.hash = `#jornadas?mes=${body.fecha.slice(0, 7)}`; router(); }
-  });
+  const cronId = param('cron');
+  const [{ items }, { items: crons }] = await Promise.all([api('GET', `/api/viaticos/jornadas?mes=${mes}`), api('GET', `/api/cronogramas?mes=${mes}`)]);
   const accion = async (j, a) => {
     if (a === 'realizada') {
       const km = await confirmar('Marcar jornada realizada', `Escribe los km reales del ${fecha(j.fecha)} según el odómetro.`, { okTexto: 'Guardar', pedirMotivo: true });
@@ -433,18 +374,128 @@ V.jornadas = async () => {
     }
     router();
   };
-  return vista('Mis jornadas', 'Planifica tus rutas del mes. El presupuesto de viáticos se calcula con estas jornadas.',
-    mias.items.length ? null : h('div', { class: 'aviso error' }, 'Aún no tienes provincias asignadas. Pide a tu supervisor que te las asigne para poder planificar.'), form,
-    h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Jornadas del mes'), filtroMes(mes, 'jornadas', null, { futuro: true }),
+  const bloques = [];
+  if (cronId) {
+    const c = crons.find((x) => x.id === cronId);
+    const r = await api('GET', `/api/cronogramas/${cronId}/ruta`);
+    const boton = h('button', { class: 'btn', type: 'submit' }, 'Crear mi jornada');
+    const hosp = h('details', { class: 'tarjeta', style: 'background:var(--canvas)' }, h('summary', { style: 'cursor:pointer;font-weight:600;color:var(--marino)' }, '¿Necesitas hotel? La gerencia debe autorizarlo'),
+      h('div', { class: 'form-fila', style: 'margin-top:1rem' }, campo('hospedaje.noches', 'Noches', { type: 'number', min: 1, step: 1, inputmode: 'numeric' }), campo('hospedaje.tarifaNoche', 'Tarifa por noche RD$', { type: 'number', min: 0, step: 0.01 }),
+        campo('hospedaje.cargos', 'Impuestos y cargos RD$', { type: 'number', min: 0, step: 0.01, value: 0 }), campo('hospedaje.hotel', 'Hotel', {}, '(si lo sabes)')),
+      campo('hospedaje.motivo', 'Motivo del hospedaje'));
+    const form = h('form', { class: 'tarjeta', novalidate: true },
+      h('h2', {}, `Ruta del ${fecha(r.fecha)}`),
+      h('p', { class: 'hint' }, r.optimizado ? 'Ordenada por distancia para que recorras menos y gastes menos combustible.' : r.km != null ? 'Ruta calculada por carretera.' : 'El mapa aún no está conectado: se respeta el orden del cronograma y escribes los km por carretera.'),
+      h('ol', { class: 'ruta-orden' }, h('li', { class: 'casa' }, h('span', {}, 'Sales de tu residencia')), ...r.paradas.map((p) => h('li', {}, h('span', {}, h('strong', {}, p.lugar), h('small', { style: 'display:block;color:var(--texto-2)' }, `${p.municipio}, ${p.provincia}`)))), h('li', { class: 'casa' }, h('span', {}, 'Regresas a tu residencia'))),
+      r.km != null ? h('dl', { class: 'rejilla', style: 'margin-top:1.25rem' }, h('div', { class: 'cifra' }, h('dt', {}, 'Recorrido por carretera'), h('dd', {}, `${fmtN.format(r.km)} km`)), r.minutos ? h('div', { class: 'cifra' }, h('dt', {}, 'Manejo aproximado'), h('dd', {}, `${fmtN.format(Math.round(r.minutos / 6) / 10)} h`)) : null)
+        : h('div', { class: 'form-fila', style: 'margin-top:1rem' }, campo('kmEstimados', 'Km por carretera (ida, paradas y regreso)', { type: 'number', min: 0, step: 0.1, inputmode: 'decimal' })),
+      c?.nota ? h('p', { class: 'aviso' }, `Nota del administrador: ${c.nota}`) : null,
+      h('div', { class: 'form-fila', style: 'margin-top:1rem' }, campo('peajes', 'Peajes RD$', { type: 'number', min: 0, step: 0.01, value: 0 }), campo('estacionamiento', 'Estacionamiento RD$', { type: 'number', min: 0, step: 0.01, value: 0 }), campo('otros', 'Otros RD$', { type: 'number', min: 0, step: 0.01, value: 0 })),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'conAlimentacion', checked: true }), h('span', {}, 'Este día lleva gasto de alimentación')),
+      hosp, h('div', { class: 'acciones' }, boton, h('a', { class: 'btn-sec', href: `#jornadas?mes=${mes}` }, 'Volver')));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const g = (k) => form.elements[k]?.value;
+      const body = { cronogramaId: cronId, kmEstimados: g('kmEstimados'), peajes: g('peajes'), estacionamiento: g('estacionamiento'), otros: g('otros'), conAlimentacion: form.conAlimentacion.checked,
+        hospedaje: hosp.open && g('hospedaje.noches') ? { noches: Number(g('hospedaje.noches')), tarifaNoche: g('hospedaje.tarifaNoche'), cargos: g('hospedaje.cargos'), hotel: g('hospedaje.hotel'), motivo: g('hospedaje.motivo') } : null };
+      if (await enviar(form, boton, () => api('POST', '/api/viaticos/jornadas', body))) irA('jornadas', { mes });
+    });
+    return vista('Crear jornada', 'Los lugares y el día los programó el administrador. El sistema calcula el recorrido, el combustible y los viáticos.', form);
+  }
+  bloques.push(filtroMes(mes, 'jornadas', null, { futuro: true }),
+    h('h2', { style: 'margin:1rem 0 .75rem;font-size:1.2rem' }, 'Mi cronograma'),
     tabla([
-      { t: 'Fecha', v: (j) => fecha(j.fecha) }, { t: 'Paradas', v: (j) => j.paradas.map((p) => `${p.lugar} (${p.municipio})`).join(' → ') },
+      { t: 'Día', v: (c) => fecha(c.fecha) },
+      { t: 'Lugares', v: (c) => c.lugares.map((l) => l.lugar).join(', ') },
+      { t: 'Estado', v: (c) => c.jornadaId ? h('span', { class: 'chip aprobado' }, 'Jornada creada') : h('span', { class: 'chip pendiente' }, 'Por planificar') },
+      { t: '', v: (c) => c.jornadaId ? '' : h('a', { class: 'btn btn-peq', href: `#jornadas?mes=${mes}&cron=${c.id}` }, 'Crear jornada') },
+    ], crons, ['No tienes días programados este mes', 'El administrador programa tu cronograma; te llegará una notificación.']),
+    h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Jornadas del mes'),
+    tabla([
+      { t: 'Fecha', v: (j) => fecha(j.fecha) }, { t: 'Recorrido', v: (j) => j.paradas.map((p) => p.lugar).join(' → ') },
       { t: 'Km', num: true, v: (j) => [fmtN.format(j.kmEstimados), h('small', { style: 'display:block;color:var(--texto-2)' }, j.kmFuente === 'google' ? 'mapa' : 'manual'), j.kmReales != null ? h('small', { style: 'display:block' }, `real ${fmtN.format(j.kmReales)}`) : null] },
       { t: 'Hotel', v: (j) => j.hospedaje ? [`${j.hospedaje.noches} noche(s)`, ' ', chipP(j.hospedaje.estado)] : 'No' },
       { t: 'Estado', v: (j) => chipP(j.estado) },
       { t: '', v: (j) => j.estado === 'planificada' ? h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' },
         j.fecha <= hoy() ? h('button', { class: 'btn btn-peq', onclick: () => accion(j, 'realizada') }, 'Realizada') : null, h('button', { class: 'btn-sec btn-peq', onclick: () => accion(j, 'cancelar') }, 'Cancelar')) : '' },
-    ], items, ['No hay jornadas en este mes', 'Planifica tu primera jornada con el formulario de arriba.']));
+    ], items, ['No hay jornadas en este mes', 'Crea tus jornadas desde tu cronograma.']));
+  return vista('Mis jornadas', 'Tu cronograma lo programa el administrador; desde cada día creas tu jornada y el sistema calcula la ruta y los viáticos.', ...bloques);
 };
+
+V.cronogramas = async () => {
+  const mes = mesDe(); const rep = param('rep') || '';
+  const [{ items: reps }, div] = await Promise.all([api('GET', '/api/viaticos/representantes'), division()]);
+  const esAdmin = yo.role === 'administrador';
+  const selRep = campo('rep', 'Representante', { options: reps.map((r) => ({ value: r.id, label: `${r.fullName} (${r.position ?? ''})` })), value: rep, placeholder: 'Elige el representante' });
+  selRep.querySelector('select').addEventListener('change', (e) => irA('cronogramas', { mes, rep: e.target.value }));
+  const bloques = [h('div', { class: 'form-fila' }, selRep, filtroMes(mes, 'cronogramas', () => `rep=${rep}`, { futuro: true }))];
+  if (!rep) return vista('Cronogramas', 'Elige un representante para ver y programar sus días.', ...bloques);
+  const [{ item: zona }, { items: crons }, { items: farms }] = await Promise.all([api('GET', `/api/territorio/zonas/${rep}`), api('GET', `/api/cronogramas?representanteId=${rep}&mes=${mes}`), api('GET', '/api/catalogo/farmacias')]);
+  if (esAdmin) {
+    if (!zona.provincias.length) bloques.push(h('div', { class: 'aviso error' }, 'Este representante no tiene provincias asignadas. ', h('a', { href: `#representantes?rep=${rep}` }, 'Asignar provincias')));
+    else {
+      const ests = (await Promise.all(zona.provincias.map((p) => api('GET', `/api/territorio/establecimientos?provincia=${encodeURIComponent(p)}`)))).flatMap((x) => x.items);
+      const lugares = [...ests.map((x) => ({ ...x, refTipo: 'establecimiento', etiqueta: div.tipos[x.tipo] })), ...farms.filter((f) => zona.provincias.includes(f.provincia) && f.estado !== 'inactiva').map((x) => ({ ...x, refTipo: 'farmacia', etiqueta: 'Farmacia' }))]
+        .sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
+      // Días del mes como botones
+      const [y, m] = mes.split('-').map(Number); const nDias = new Date(y, m, 0).getDate();
+      const ocupados = new Set(crons.filter((c) => c.estado === 'aprobado').map((c) => c.fecha));
+      const elegidos = new Set();
+      const minimo = `${hoy().slice(0, 7)}-01`;
+      const dias = h('div', { class: 'dias', role: 'group', 'aria-label': 'Días a programar' }, Array.from({ length: nDias }, (_, i) => {
+        const f = `${mes}-${String(i + 1).padStart(2, '0')}`; const dow = new Date(`${f}T12:00:00`).toLocaleDateString('es-DO', { weekday: 'short' }).replace('.', '');
+        const b = h('button', { type: 'button', 'aria-pressed': 'false', disabled: ocupados.has(f) || f < minimo, title: ocupados.has(f) ? 'Ya programado' : null, onclick: () => { const on = !elegidos.has(f); on ? elegidos.add(f) : elegidos.delete(f); b.setAttribute('aria-pressed', String(on)); } }, String(i + 1), h('small', {}, dow));
+        return b;
+      }));
+      const fmun = campo('fmun', 'Filtrar lugares por municipio', { options: [...new Set(lugares.map((l) => l.municipio))].map((x) => ({ value: x, label: x })), placeholder: 'Todos los municipios' });
+      const lista = h('div', { class: 'lugares-lista' }, lugares.map((l) => h('label', { dataset: { mun: l.municipio } }, h('input', { type: 'checkbox', name: 'lugar', value: `${l.refTipo}:${l.id}` }), h('span', {}, l.nombre, h('small', {}, `${l.etiqueta} · ${l.municipio}, ${l.provincia}`)))));
+      fmun.querySelector('select').addEventListener('change', (e) => lista.querySelectorAll('label').forEach((x) => { x.hidden = !!e.target.value && x.dataset.mun !== e.target.value; }));
+      const b = h('button', { class: 'btn', type: 'submit' }, 'Aprobar cronograma');
+      const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Programar días'),
+        h('p', { class: 'hint' }, `Provincias de este representante: ${zona.provincias.join(', ')}. Elige los días y los lugares; el orden de visita lo calcula el sistema por distancia.`),
+        h('p', { class: 'error', dataset: { for: 'fechas' } }), dias,
+        lugares.length ? [fmun, h('p', { class: 'error', dataset: { for: 'lugares' } }), lista] : h('div', { class: 'aviso' }, 'No hay lugares registrados en sus provincias. ', h('a', { href: '#establecimientos' }, 'Registrar establecimientos')),
+        campo('nota', 'Nota para el representante', {}, '(opcional)'), h('div', { class: 'acciones' }, b));
+      f.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const sel = [...f.querySelectorAll('[name=lugar]:checked')].map((x) => { const [refTipo, refId] = x.value.split(':'); return { refTipo, refId }; });
+        if (await enviar(f, b, () => api('POST', '/api/cronogramas', { representanteId: rep, fechas: [...elegidos].sort(), lugares: sel, nota: f.nota.value }))) router();
+      });
+      bloques.push(f);
+    }
+  }
+  const anular = async (c) => { const m = await confirmar('Anular cronograma', `El representante dejará de ver el día ${fecha(c.fecha)}. Escribe el motivo.`, { okTexto: 'Anular', pedirMotivo: true }); if (m == null) return; try { await api('POST', `/api/cronogramas/${c.id}/anular`, { motivo: m }); } catch (e) { alert(e.message); } router(); };
+  bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Días programados'),
+    tabla([{ t: 'Día', v: (c) => fecha(c.fecha) }, { t: 'Lugares', v: (c) => c.lugares.map((l) => l.lugar).join(', ') },
+      { t: 'Estado', v: (c) => c.estado === 'anulado' ? [h('span', { class: 'chip anulado' }, 'Anulado'), c.motivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, c.motivo) : null] : c.jornadaId ? h('span', { class: 'chip aprobado' }, 'Jornada creada') : h('span', { class: 'chip pendiente' }, 'Aprobado') },
+      { t: '', v: (c) => esAdmin && c.estado === 'aprobado' && !c.jornadaId ? h('button', { class: 'btn-sec btn-peq', onclick: () => anular(c) }, 'Anular') : '' }],
+    crons, ['Sin días programados en este mes', esAdmin ? 'Elige días y lugares arriba.' : 'El administrador aún no programa este mes.']));
+  return vista('Cronogramas', 'El administrador programa y aprueba los días y lugares de cada representante.', ...bloques);
+};
+
+// ---------------------------------------------------------------- campana de notificaciones
+async function campana() {
+  const btn = $('#campana'); const panel = $('#campana-panel'); const lista = $('#campana-lista'); const cuenta = $('#campana-cuenta');
+  if (!btn) return;
+  const pintar = async () => {
+    let r; try { r = await api('GET', '/api/notificaciones?limite=30'); } catch { return; }
+    cuenta.hidden = !r.sinLeer; cuenta.textContent = r.sinLeer > 99 ? '99+' : String(r.sinLeer);
+    btn.setAttribute('aria-label', r.sinLeer ? `Notificaciones, ${r.sinLeer} sin leer` : 'Notificaciones');
+    lista.replaceChildren(...(r.items.length ? r.items.map((n) => {
+      const cuando = new Date(n.createdAt).toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo', dateStyle: 'medium', timeStyle: 'short' });
+      const cuerpo = [h('strong', {}, n.titulo), h('span', {}, n.texto), h('small', {}, cuando)];
+      const marcar = () => { if (!n.leida) api('POST', `/api/notificaciones/${n.id}/leer`).then(pintar).catch(() => {}); };
+      return h('li', { class: n.leida ? '' : 'nueva' }, n.enlace ? h('a', { href: n.enlace, onclick: () => { marcar(); cerrar(); } }, cuerpo) : h('div', { onclick: marcar }, cuerpo));
+    }) : [h('li', { class: 'campana-vacia' }, 'No tienes notificaciones.')]));
+  };
+  const cerrar = () => { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+  btn.addEventListener('click', () => { const abrir = panel.hidden; panel.hidden = !abrir; btn.setAttribute('aria-expanded', String(abrir)); if (abrir) pintar(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) { cerrar(); btn.focus(); } });
+  document.addEventListener('click', (e) => { if (!panel.hidden && !e.target.closest('.campana')) cerrar(); });
+  $('#campana-todas').addEventListener('click', async () => { try { await api('POST', '/api/notificaciones/leer-todas'); } catch {} pintar(); });
+  await pintar();
+  setInterval(() => { if (document.visibilityState === 'visible') pintar(); }, 60000);
+}
 
 function bloqueResumen(p) {
   const r = p.resumen;
@@ -861,7 +912,7 @@ function menuPara(u) {
     s.push(['Dependientes', [['revisar', 'Vouchers por revisar'], ['comisiones', 'Comisiones']]]);
     s.push(['Promotoras', [['reportes', 'Reporte de recetas'], ['misRecetas', 'Recetas'], ['alertas', 'Alertas']]]);
     s.push(['Rutas y viáticos', [['viaticos', 'Presupuestos'], ['perfiles', 'Perfiles de viático'], ['precios', 'Precios de combustible'], ['viatico', null]]]);
-    s.push(['Territorio', [['establecimientos', 'Establecimientos'], ...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : [])]]);
+    s.push(['Territorio', [['cronogramas', 'Cronogramas'], ['establecimientos', 'Establecimientos'], ...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : [])]]);
     s.push(['Administración', [['inventario', 'Inventario'], ['catalogo', 'Catálogo'], ...(u.role !== 'finanzas' ? [['solicitudes', 'Solicitudes de cuenta']] : [])]]);
   }
   if (!s.length) s.push(['Mi trabajo', [['pronto', 'Inicio']]]);
@@ -897,4 +948,5 @@ $('#salir').addEventListener('click', salir);
   secciones = menuPara(yo);
   addEventListener('hashchange', router);
   router();
+  campana();
 })();

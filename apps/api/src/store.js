@@ -86,7 +86,7 @@ export class PostgresStore {
   async addAudit(e) {
     await this.pool.query(
       'INSERT INTO audit_logs (actor_id, action, entity, entity_id, before_value, after_value) VALUES ($1,$2,$3,$4,$5,$6)',
-      [e.actorId ?? null, e.action, e.entity, e.entityId, e.before ?? null, e.after ?? null],
+      [e.actorId ?? null, e.action, e.entity, String(e.entityId ?? e.entity), e.before == null ? null : JSON.stringify(e.before), e.after == null ? null : JSON.stringify(e.after)],
     );
   }
 }
