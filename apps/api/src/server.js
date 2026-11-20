@@ -2,10 +2,11 @@ import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { MemoryStore, PostgresStore } from './store.js';
 import { MemoryData, PgData } from './data.js';
-import { MemoryFiles, LocalFiles } from './files.js';
+import { MemoryFiles, crearArchivos } from './files.js';
 import { createAuthService, AuthError } from './auth.js';
 import { createComercial } from './comercial.js';
 import { createViaticos, COMBUSTIBLE_LABEL } from './viaticos.js';
+import { SinMapas, crearMapas } from './mapas.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -25,10 +26,10 @@ async function readJson(req, limit = MAX_BODY) {
 
 const publico = ({ passwordHash, ...u }) => u;
 
-export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), sessionSecret, allowedOrigins = [], now }) {
+export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), sessionSecret, allowedOrigins = [], now }) {
   const auth = createAuthService(store);
   const c = createComercial({ data, users: store, files, audit: (e) => store.addAudit(e), now });
-  const v = createViaticos({ data, users: store, files, audit: (e) => store.addAudit(e), now });
+  const v = createViaticos({ data, users: store, files, mapas, audit: (e) => store.addAudit(e), now });
 
   function send(res, status, body, origin, raw) {
     const headers = { 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' };
@@ -103,6 +104,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
 
   // Rutas y viáticos
   ruta('GET', '/api/viaticos/combustibles', () => ({ items: Object.entries(COMBUSTIBLE_LABEL).map(([value, label]) => ({ value, label })) }));
+  ruta('GET', '/api/viaticos/estado', () => ({ mapas: v.mapasActivo() }));
+  ruta('POST', '/api/viaticos/calcular-km', async ({ me, body }) => v.calcularKm(me, body));
   ruta('GET', '/api/viaticos/representantes', async ({ me }) => ({ items: await v.listarRepresentantes(me) }));
   ruta('GET', /^\/api\/viaticos\/perfiles\/([\w-]+)$/, async ({ me, p }) => ({ item: await v.verPerfil(me, p[1]) }));
   ruta('POST', /^\/api\/viaticos\/perfiles\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await v.guardarPerfil(me, p[1], body) }));
@@ -164,6 +167,6 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   else { store = new MemoryStore(); data = new MemoryData(); console.warn('⚠ Sin DATABASE_URL: usando memoria (solo desarrollo, los datos se pierden).'); }
   const secret = SESSION_SECRET ?? (NODE_ENV === 'production' ? null : 'dev-only-secret-change-me-0123456789abcdef');
   if (!secret) { console.error('SESSION_SECRET es obligatorio.'); process.exit(1); }
-  const app = createApp({ store, data, files: new LocalFiles(UPLOAD_DIR), sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
+  const app = createApp({ store, data, files: crearArchivos(process.env, UPLOAD_DIR), mapas: crearMapas(), sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
   createServer(app).listen(PORT, () => console.log(`API FERSUAZ en :${PORT}`));
 }

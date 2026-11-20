@@ -25,7 +25,7 @@ const invalido = (f) => { throw new HttpError(422, 'Revisa los campos marcados.'
 const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const num = (v) => (v === '' || v == null ? null : Number(v));
 
-export function createViaticos({ data, users, files, audit, now = () => new Date() }) {
+export function createViaticos({ data, users, files, audit, mapas, now = () => new Date() }) {
   const hoy = () => hoyRD(now());
   async function rep(id) {
     const u = await users.findUserById(id);
@@ -115,7 +115,7 @@ export function createViaticos({ data, users, files, audit, now = () => new Date
       if (!p.provincia) e[`paradas.${i}.provincia`] = 'Escribe la provincia.';
     });
     const km = num(input.kmEstimados);
-    if (!Number.isFinite(km) || km < 0 || km > 2000) e.kmEstimados = 'Escribe los km estimados por carretera (ida, paradas y regreso).';
+    if (!Number.isFinite(km) || km < 0 || km > 2000) e.kmEstimados = 'Escribe los km por carretera (ida, paradas y regreso) o calcúlalos con el mapa.';
     const monto = (k) => { const v = num(input[k]) ?? 0; if (!Number.isFinite(v) || v < 0) e[k] = 'Escribe un monto válido o déjalo en 0.'; return r2(v || 0); };
     let hospedaje = null;
     if (input.hospedaje) {
@@ -128,13 +128,20 @@ export function createViaticos({ data, users, files, audit, now = () => new Date
       if (motivo.length < 3) e['hospedaje.motivo'] = 'Explica por qué hace falta el hotel.';
       hospedaje = { noches, tarifaNoche: r2(tarifa || 0), cargos: r2(cargos || 0), hotel: normalizeName(hsp.hotel) || null, municipio: normalizeName(hsp.municipio) || paradas.at(-1)?.municipio || null, motivo, estado: 'propuesto' };
     }
-    return { paradas, kmEstimados: r2(km || 0), conAlimentacion: input.conAlimentacion !== false, hospedaje, peajes: monto('peajes'), estacionamiento: monto('estacionamiento'), otros: monto('otros') };
+    const kmFuente = input.kmFuente === 'google' ? 'google' : 'manual';
+    return { paradas, kmEstimados: r2(km || 0), kmFuente, conAlimentacion: input.conAlimentacion !== false, hospedaje, peajes: monto('peajes'), estacionamiento: monto('estacionamiento'), otros: monto('otros') };
   }
   async function crearJornada(actor, input) {
     permitir(esRep(actor), 'Solo los representantes planifican jornadas.');
     const e = {};
     if (!esFechaISO(input.fecha)) e.fecha = 'Elige la fecha de la jornada.';
-    const d = validarJornada(input, e);
+    let entrada = input;
+    if (input.kmFuente === 'google') {
+      // Los km "del mapa" se recalculan en el servidor: nunca se acepta la cifra que envía el navegador.
+      const r = await calcularKm(actor, input);
+      entrada = { ...input, kmEstimados: r.km, kmFuente: 'google' };
+    }
+    const d = validarJornada(entrada, e);
     if (Object.keys(e).length) invalido(e);
     if ((await data.list('jornadas', { representanteId: actor.id, fecha: input.fecha })).some((j) => j.estado !== 'cancelada')) {
       throw new HttpError(409, 'Ya tienes una jornada ese día. Edítala en vez de crear otra.', { fecha: 'Ya hay una jornada ese día.' });
@@ -177,6 +184,21 @@ export function createViaticos({ data, users, files, audit, now = () => new Date
     }
     throw new HttpError(404, 'Acción no válida.');
   }
+  /** Calcula km por carretera con el proveedor de mapas: residencia → paradas → residencia. */
+  async function calcularKm(actor, input) {
+    permitir(esRep(actor), 'Solo los representantes calculan sus rutas.');
+    if (!mapas?.activo) throw new HttpError(503, 'El proveedor de mapas no está conectado. Escribe los km a mano.');
+    const perfil = await perfilDe(actor.id);
+    if (!perfil?.residencia?.municipio) throw new HttpError(409, 'Tu perfil no tiene residencia registrada. Pide a tu supervisor que la complete.');
+    const e = {}; const { paradas } = validarJornada({ ...input, kmEstimados: 0 }, e);
+    delete e.kmEstimados;
+    if (Object.keys(e).length) invalido(e);
+    try {
+      const r = await mapas.ruta(perfil.residencia, paradas, { regresar: input.regresar !== false });
+      return { ...r, kmFuente: r.proveedor };
+    } catch (err) { throw new HttpError(502, err.message); }
+  }
+
   async function listarJornadas(actor, { representanteId, mes }) {
     const id = representanteId || actor.id;
     permitir(actor.id === id || rol(actor, VEN_PERFIL));
@@ -226,7 +248,7 @@ export function createViaticos({ data, users, files, audit, now = () => new Date
     return {
       faltan, detalle: detalle.detalle, total: detalle.total,
       supuestos: {
-        jornadas: js.length, km, kmTipo: 'estimado manual', galones: r2(galones), rendimiento: v.rendimiento ?? null,
+        jornadas: js.length, km, kmTipo: js.every((j) => j.kmFuente === 'google') ? 'por carretera (Google)' : js.some((j) => j.kmFuente === 'google') ? 'mixto: mapa y manual' : 'estimado manual', galones: r2(galones), rendimiento: v.rendimiento ?? null,
         combustible: v.combustible, preciosUsados, diasAlimentacion: dias, tarifaAlimentacion: perfil.tarifaAlimentacion,
         reembolsoPorKm: usaReembolso ? perfil.reembolsoPorKm : null, hospedajes: hoteles.length,
       },
@@ -380,7 +402,7 @@ export function createViaticos({ data, users, files, audit, now = () => new Date
   return {
     guardarPerfil, verPerfil, listarRepresentantes, registrarPrecio,
     listarPrecios: async (actor) => { permitir(activo(actor)); return (await data.list('precios')).sort((a, b) => b.vigenteDesde.localeCompare(a.vigenteDesde)); },
-    crearJornada, actualizarJornada, listarJornadas,
+    crearJornada, actualizarJornada, listarJornadas, calcularKm, mapasActivo: () => Boolean(mapas?.activo),
     verPresupuesto, solicitar, decidirPresupuesto, desembolsar, reportarGasto, revisarGasto, liquidar, consolidado, presupuestoPorId,
   };
 }
