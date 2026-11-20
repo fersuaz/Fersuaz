@@ -16,6 +16,8 @@ import { SinLugares, crearLugares } from './lugares.js';
 import { createBarrido } from './barrido-google.js';
 import { createHoteles, REQUISITOS } from './hoteles.js';
 import { createInicio } from './inicio.js';
+import { createVehiculos } from './vehiculos.js';
+import { createAltaRepresentantes } from './representantes.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -35,7 +37,7 @@ async function readJson(req, limit = MAX_BODY) {
 
 const publico = ({ passwordHash, ...u }) => u;
 
-export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), correo = new SinCorreo(), sitio = 'https://fersuaz.net', micmFetch = fetch, barridoPausa, sessionSecret, allowedOrigins = [], now }) {
+export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), correo = new SinCorreo(), sitio = 'https://fersuaz.net', micmFetch = fetch, vehiculosFetch = fetch, barridoPausa, sessionSecret, allowedOrigins = [], now }) {
   const n = createNotificaciones({ data, users: store, correo, sitio });
   const avisar = (fn) => fn().catch((e) => console.error('Notificación:', e.message));
   const t = createTerritorio({ data, users: store, audit: (e) => store.addAudit(e), now });
@@ -76,6 +78,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     return { item: await t.crearEstablecimiento(me, { ...base, tipo: body.tipo }, { fuente: 'google', verificado: true }) };
   }
 
+  const vehiculos = createVehiculos({ fetchImpl: vehiculosFetch });
+  const altas = createAltaRepresentantes({ store, t, v });
   const inicio = createInicio({ data, users: store, v, c, t, now: now ?? (() => new Date()) });
 
   // Registro automático desde Google Maps (recorre municipios y guarda lo que falte)
@@ -151,6 +155,18 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     return { user, token: signSession({ sub: user.id, role: user.role }, sessionSecret) };
   }, { auth: false });
   ruta('GET', '/api/auth/me', ({ me }) => ({ user: publico(me) }));
+  ruta('POST', '/api/auth/cambiar-clave', async ({ me, body }) => ({ item: await auth.cambiarMiClave(me, body?.actual, body?.nueva) }));
+  // Alta de representantes por el administrador
+  ruta('POST', '/api/representantes', async ({ me, body }) => [201, await altas.alta(me, body ?? {})]);
+  ruta('POST', /^\/api\/representantes\/([\w-]+)\/clave$/, async ({ me, p }) => altas.restablecerClave(me, p[1]));
+  // Vehículos: rendimiento de FuelEconomy.gov (EPA)
+  const soloGestion = (me) => { if (!['administrador', 'gerencia', 'supervisor'].includes(me?.role)) throw new AuthError(403, 'No tienes permiso para esta acción.'); };
+  const conVehiculos = async (fn) => { try { return await fn(); } catch (err) { throw new AuthError(err.status ?? 503, err.message); } };
+  ruta('GET', '/api/vehiculos/anios', async ({ me }) => { soloGestion(me); return { items: await conVehiculos(() => vehiculos.anios()) }; });
+  ruta('GET', '/api/vehiculos/marcas', async ({ me, q }) => { soloGestion(me); return { items: await conVehiculos(() => vehiculos.marcas(q.get('anio'))) }; });
+  ruta('GET', '/api/vehiculos/modelos', async ({ me, q }) => { soloGestion(me); return { items: await conVehiculos(() => vehiculos.modelos(q.get('anio'), q.get('marca'))) }; });
+  ruta('GET', '/api/vehiculos/versiones', async ({ me, q }) => { soloGestion(me); return { items: await conVehiculos(() => vehiculos.versiones(q.get('anio'), q.get('marca'), q.get('modelo'))) }; });
+  ruta('GET', /^\/api\/vehiculos\/ficha\/(\d+)$/, async ({ me, p }) => { soloGestion(me); return { item: await conVehiculos(() => vehiculos.ficha(p[1])) }; });
   // Panel de inicio por rol
   ruta('GET', '/api/inicio', async ({ me, q }) => inicio.resumen(me, q.get('mes')));
   ruta('GET', '/api/usuarios/dependientes', async ({ me }) => ({ items: await inicio.dependientes(me) }));
@@ -222,6 +238,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', '/api/hoteles', async ({ me, body }) => [201, { item: await hoteles.crear(me, body ?? {}) }]);
   ruta('POST', /^\/api\/hoteles\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await hoteles.actualizar(me, p[1], body ?? {}) }));
   // Tope mensual global de combustible / transporte
+  ruta('GET', '/api/viaticos/tarifas-publico', async ({ me }) => { if (me?.status !== 'activo') throw new AuthError(403, 'No tienes permiso para esta acción.'); return { item: await v.verTarifasPublico() }; });
+  ruta('POST', '/api/viaticos/tarifas-publico', async ({ me, body }) => ({ item: await v.guardarTarifasPublico(me, body ?? {}) }));
   ruta('GET', '/api/viaticos/tope-global', async ({ me }) => { if (me?.status !== 'activo') throw new AuthError(403, 'No tienes permiso para esta acción.'); return { item: { monto: await v.verTopeGlobal() } }; });
   ruta('POST', '/api/viaticos/tope-global', async ({ me, body }) => ({ item: await v.guardarTopeGlobal(me, body?.monto ?? null) }));
   ruta('POST', /^\/api\/cronogramas\/([\w-]+)\/anular$/, async ({ me, p, body }) => ({ item: await v.anularCronograma(me, p[1], body.motivo) }));
@@ -329,6 +347,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
         me = await currentUser(req);
         if (!me) return send(res, 401, { error: 'Inicia sesión.' }, origin);
         if (me.status !== 'activo') return send(res, 403, { error: 'Tu cuenta no está activa.' }, origin);
+        // Con contraseña temporal solo puede ver su sesión y cambiarla.
+        if (me.debeCambiarClave && !['/api/auth/me', '/api/auth/cambiar-clave'].includes(url.pathname)) return send(res, 403, { error: 'Cambia tu contraseña temporal para continuar.', cambiarClave: true }, origin);
       }
       const body = req.method === 'POST' ? await readJson(req, o.limite ?? MAX_BODY) : {};
       const out = await h({ me, body, q: url.searchParams, p: url.pathname.match(re) });

@@ -53,7 +53,36 @@ export function aplicarTope({ calculado, tope }) {
   return { aplicado: round2(aplicado), excedente: round2(calculado - aplicado), topado: calculado > tope };
 }
 
-const CATEGORIAS = ['combustible', 'alimentacion', 'hospedaje', 'peajes', 'estacionamiento', 'otros'];
+const CATEGORIAS = ['combustible', 'transporte', 'alimentacion', 'hospedaje', 'peajes', 'estacionamiento', 'otros'];
+
+const mismoLugar = (a, b) => a && b && String(a.provincia) === String(b.provincia) && String(a.municipio) === String(b.municipio);
+/**
+ * Representante sin vehículo (transporte público). Cada día de trabajo es "dentro" si todas sus paradas
+ * están en su municipio de residencia, y "fuera" si alguna está en otro municipio.
+ * Transporte: un monto por día (dentro o fuera). Comida: un monto por día, solo si la jornada lleva alimentación.
+ * tarifas = { transporteDentro, comidaDentro, transporteFuera, comidaFuera } en RD$ por día.
+ */
+export function calcularTransportePublico({ jornadas, residencia, tarifas }) {
+  for (const k of ['transporteDentro', 'comidaDentro', 'transporteFuera', 'comidaFuera']) requireNumber(k, tarifas[k]);
+  const dias = new Map();
+  for (const j of jornadas) {
+    const fuera = (j.paradas ?? []).some((p) => !mismoLugar(p, residencia));
+    const d = dias.get(j.fecha) ?? { fecha: j.fecha, fuera: false, comida: false };
+    d.fuera = d.fuera || fuera; d.comida = d.comida || j.conAlimentacion !== false;
+    dias.set(j.fecha, d);
+  }
+  const lista = [...dias.values()].sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const dentro = lista.filter((d) => !d.fuera); const fuera = lista.filter((d) => d.fuera);
+  const transporte = dentro.length * tarifas.transporteDentro + fuera.length * tarifas.transporteFuera;
+  const alimentacion = dentro.filter((d) => d.comida).length * tarifas.comidaDentro + fuera.filter((d) => d.comida).length * tarifas.comidaFuera;
+  return { diasDentro: dentro.length, diasFuera: fuera.length, transporte: round2(transporte), alimentacion: round2(alimentacion), dias: lista.map((d) => ({ fecha: d.fecha, fuera: d.fuera })) };
+}
+
+/** Millas por galón (EPA, galón de EE. UU., el mismo que se vende en RD) a km por galón, con un decimal. */
+export function mpgAKmPorGalon(mpg) {
+  requireNumber('Millas por galón', mpg, { allowZero: false });
+  return Math.round(mpg * 1.609344 * 10) / 10;
+}
 
 /** Suma categorías de presupuesto. El salario no es una categoría y se rechaza. */
 export function calcularPresupuesto(partidas) {

@@ -68,3 +68,38 @@ test('posible error de Google: direcciones, negocios ajenos y nombres sin palabr
   for (const n of ['Clínica Ejemplo', 'Hospital Municipal Ejemplo', 'UNAP Ejemplo', 'Centro Médico Ejemplo', 'Consultorio Dr. Ejemplo', 'Ac. Dental. Odontología Especializada', 'Laboratorio Clínico Ejemplo', 'Policlínica Ejemplo'])
     assert.equal(posibleError(n), false, n);
 });
+
+test('transporte público: días dentro y fuera de su municipio según las paradas', async () => {
+  const { calcularTransportePublico, mpgAKmPorGalon } = await import('../src/calculos.js');
+  const casa = { provincia: 'Espaillat', municipio: 'Moca' };
+  const J = (fecha, munis, conAlimentacion = true) => ({ fecha, conAlimentacion, paradas: munis.map((m) => ({ provincia: 'Espaillat', municipio: m })) });
+  const r = calcularTransportePublico({
+    jornadas: [J('2026-11-23', ['Moca']), J('2026-11-24', ['Moca', 'Gaspar Hernández']), J('2026-11-25', ['Moca'], false), J('2026-11-26', ['San Víctor'])],
+    residencia: casa, tarifas: { transporteDentro: 150, comidaDentro: 300, transporteFuera: 500, comidaFuera: 450 },
+  });
+  assert.equal(r.diasDentro, 2); assert.equal(r.diasFuera, 2);
+  assert.equal(r.transporte, 2 * 150 + 2 * 500);
+  assert.equal(r.alimentacion, 1 * 300 + 2 * 450, 'el 25 no lleva comida');
+  assert.deepEqual(r.dias.map((d) => d.fuera), [false, true, false, true]);
+  assert.throws(() => calcularTransportePublico({ jornadas: [], residencia: casa, tarifas: { transporteDentro: 1, comidaDentro: 1, transporteFuera: null, comidaFuera: 1 } }));
+  // EPA: millas por galón (EE. UU.) a km por galón
+  assert.equal(mpgAKmPorGalon(30), 48.3); assert.equal(mpgAKmPorGalon(41), 66);
+});
+
+test('vehículos EPA: lee menús y ficha en JSON o XML', async () => {
+  const { leerMenu, leerFicha } = await import('../src/vehiculos.js');
+  assert.deepEqual(leerMenu({ menuItem: [{ text: 'Toyota', value: 'Toyota' }] }), [{ texto: 'Toyota', valor: 'Toyota' }]);
+  assert.deepEqual(leerMenu({ menuItem: { text: 'Auto 6-spd, 4 cyl, 2.5 L', value: '45000' } }), [{ texto: 'Auto 6-spd, 4 cyl, 2.5 L', valor: '45000' }]);
+  assert.deepEqual(leerMenu('<menuItems><menuItem><text>Corolla</text><value>Corolla</value></menuItem></menuItems>'), [{ texto: 'Corolla', valor: 'Corolla' }]);
+  const f = leerFicha({ id: '45000', year: '2022', make: 'Toyota', model: 'Corolla', comb08: '34', city08: '31', highway08: '38', fuelType1: 'Regular Gasoline', displ: '1.8', cylinders: '4', trany: 'Automatic (AV-S10)' });
+  assert.equal(f.kmPorGalon, 54.7); assert.equal(f.combustible, 'gasolina_regular'); assert.equal(f.motor, '1.8 L, 4 cil., Automatic (AV-S10)');
+  assert.equal(leerFicha('<vehicle><id>1</id><comb08>25</comb08><fuelType1>Diesel</fuelType1></vehicle>').combustible, 'gasoil_regular');
+  assert.equal(leerFicha({ comb08: '0' }), null);
+});
+
+test('alta: usuario a partir del nombre y clave temporal con letras y números', async () => {
+  const { usuarioBase, claveTemporal } = await import('../src/representantes.js');
+  assert.equal(usuarioBase('José Miguel', 'Pérez de la Cruz'), 'jperez');
+  assert.equal(usuarioBase('Ana', 'Núñez'), 'anunez');
+  for (let i = 0; i < 50; i++) { const c = claveTemporal(); assert.equal(c.length, 10); assert.match(c, /[A-Za-z]/); assert.match(c, /\d/); assert.doesNotMatch(c, /[0O1lI]/); }
+});

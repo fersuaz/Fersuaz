@@ -3,7 +3,7 @@
 // los movimientos aprobados no se borran; los km son estimados manuales hasta conectar un proveedor de mapas.
 import { AuthError as HttpError } from './auth.js';
 import { STATUS } from './roles.js';
-import { calcularCombustible, calcularAlimentacion, calcularHospedaje, calcularPresupuesto, detectarDuplicados, aplicarTope } from './calculos.js';
+import { calcularCombustible, calcularAlimentacion, calcularHospedaje, calcularPresupuesto, detectarDuplicados, aplicarTope, calcularTransportePublico } from './calculos.js';
 import { esFechaISO, hoyRD } from './periodos.js';
 import { normalizeName } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
@@ -16,7 +16,7 @@ export const COMBUSTIBLE_LABEL = {
   gasoil_regular: 'Gasoil regular', glp: 'GLP', hibrido: 'Híbrido (gasolina)', electrico: 'Eléctrico',
 };
 // Un híbrido consume gasolina: se presupuesta con el precio de la gasolina que indique su perfil.
-const CATEGORIAS_GASTO = ['combustible', 'alimentacion', 'hospedaje', 'peajes', 'estacionamiento', 'otros'];
+const CATEGORIAS_GASTO = ['combustible', 'transporte', 'alimentacion', 'hospedaje', 'peajes', 'estacionamiento', 'otros'];
 
 const activo = (u) => u && u.status === STATUS.ACTIVO;
 const rol = (u, roles) => activo(u) && roles.includes(u.role);
@@ -42,39 +42,81 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
   }
 
   // ------------------------------------------------------------ perfiles
-  async function guardarPerfil(actor, representanteId, input) {
-    permitir(rol(actor, ['administrador', 'gerencia', 'supervisor']), 'Solo la gerencia o los supervisores configuran perfiles de viático.');
-    await rep(representanteId);
+  const TIPOS_VEHICULO = ['carro', 'jeepeta', 'camioneta', 'motocicleta'];
+  const TARIFAS_PUBLICO = ['transporteDentro', 'comidaDentro', 'transporteFuera', 'comidaFuera'];
+  /** Valida un perfil sin guardarlo. Sin vehículo (propiedad "ninguno") se usa transporte público. */
+  function prepararPerfil(input) {
     const e = {};
     const res = input.residencia ?? {};
     const residencia = { provincia: normalizeName(res.provincia), municipio: normalizeName(res.municipio), direccion: normalizeName(res.direccion) || null };
     if (!residencia.provincia) e['residencia.provincia'] = 'Escribe la provincia de residencia.';
     if (!residencia.municipio) e['residencia.municipio'] = 'Escribe el municipio de residencia.';
     const v = input.vehiculo ?? {};
-    const vehiculo = {
-      propiedad: v.propiedad, marca: normalizeName(v.marca) || null, modelo: normalizeName(v.modelo) || null,
+    const sinVehiculo = v.propiedad === 'ninguno';
+    const vehiculo = sinVehiculo ? { propiedad: 'ninguno' } : {
+      propiedad: v.propiedad, tipo: v.tipo || null, marca: normalizeName(v.marca) || null, modelo: normalizeName(v.modelo) || null,
       anio: num(v.anio), combustible: v.combustible, rendimiento: num(v.rendimiento), placa: normalizeName(v.placa) || null,
       combustibleHibrido: v.combustible === 'hibrido' ? (v.combustibleHibrido || 'gasolina_regular') : null,
+      epaId: v.epaId ? String(v.epaId).slice(0, 12) : null, rendimientoFuente: v.epaId && v.rendimientoFuente === 'epa' ? 'epa' : 'manual',
     };
-    if (!['propio', 'asignado'].includes(vehiculo.propiedad)) e['vehiculo.propiedad'] = 'Elige si el vehículo es propio o asignado.';
-    if (!COMBUSTIBLES.includes(vehiculo.combustible)) e['vehiculo.combustible'] = 'Elige el tipo de combustible.';
-    if (vehiculo.combustible !== 'electrico' && (!Number.isFinite(vehiculo.rendimiento) || vehiculo.rendimiento <= 0 || vehiculo.rendimiento > 200)) e['vehiculo.rendimiento'] = 'Escribe el rendimiento real en km por galón.';
-    if (vehiculo.anio != null && (!Number.isInteger(vehiculo.anio) || vehiculo.anio < 1980 || vehiculo.anio > Number(hoy().slice(0, 4)) + 1)) e['vehiculo.anio'] = 'Año no válido.';
-    const tarifaAlimentacion = num(input.tarifaAlimentacion);
+    if (!['propio', 'asignado', 'ninguno'].includes(v.propiedad)) e['vehiculo.propiedad'] = 'Elige si el vehículo es propio, asignado o si no tiene vehículo.';
+    if (!sinVehiculo) {
+      if (vehiculo.tipo && !TIPOS_VEHICULO.includes(vehiculo.tipo)) e['vehiculo.tipo'] = 'Elige el tipo de vehículo.';
+      if (!COMBUSTIBLES.includes(vehiculo.combustible)) e['vehiculo.combustible'] = 'Elige el tipo de combustible.';
+      if (vehiculo.combustible !== 'electrico' && (!Number.isFinite(vehiculo.rendimiento) || vehiculo.rendimiento <= 0 || vehiculo.rendimiento > 200)) e['vehiculo.rendimiento'] = 'Escribe el rendimiento real en km por galón.';
+      if (vehiculo.anio != null && (!Number.isInteger(vehiculo.anio) || vehiculo.anio < 1980 || vehiculo.anio > Number(hoy().slice(0, 4)) + 1)) e['vehiculo.anio'] = 'Año no válido.';
+    }
+    const tarifaAlimentacion = sinVehiculo && (input.tarifaAlimentacion == null || input.tarifaAlimentacion === '') ? 0 : num(input.tarifaAlimentacion);
     if (!Number.isFinite(tarifaAlimentacion) || tarifaAlimentacion < 0) e.tarifaAlimentacion = 'Escribe la tarifa diaria de alimentación en RD$.';
     const reembolsoPorKm = num(input.reembolsoPorKm);
     if (reembolsoPorKm != null && (!Number.isFinite(reembolsoPorKm) || reembolsoPorKm <= 0)) e.reembolsoPorKm = 'Escribe un monto por km mayor que cero, o déjalo vacío.';
     if (reembolsoPorKm != null && vehiculo.propiedad !== 'propio') e.reembolsoPorKm = 'El reembolso por km solo aplica a vehículos propios.';
     const topeCombustible = num(input.topeCombustible);
     if (topeCombustible != null && (!Number.isFinite(topeCombustible) || topeCombustible <= 0)) e.topeCombustible = 'Escribe un tope mensual mayor que cero, o déjalo vacío para usar el global.';
+    // Montos propios de transporte público (vacío = se usa el monto global)
+    let publico = null;
+    if (sinVehiculo) {
+      publico = {};
+      for (const k of TARIFAS_PUBLICO) {
+        const x = num(input.publico?.[k]);
+        if (x != null && (!Number.isFinite(x) || x < 0)) e[`publico.${k}`] = 'Escribe un monto en RD$, o déjalo vacío para usar el global.';
+        publico[k] = x == null ? null : r2(x);
+      }
+    }
     if (Object.keys(e).length) invalido(e);
+    return { residencia, vehiculo, tarifaAlimentacion: r2(tarifaAlimentacion), reembolsoPorKm: reembolsoPorKm == null ? null : r2(reembolsoPorKm), topeCombustible: topeCombustible == null ? null : r2(topeCombustible), publico };
+  }
+  async function guardarPerfil(actor, representanteId, input) {
+    permitir(rol(actor, ['administrador', 'gerencia', 'supervisor']), 'Solo la gerencia o los supervisores configuran perfiles de viático.');
+    await rep(representanteId);
+    const d = prepararPerfil(input);
     const antes = await perfilDe(representanteId);
-    const datos = { representanteId, residencia, vehiculo, tarifaAlimentacion: r2(tarifaAlimentacion), reembolsoPorKm: reembolsoPorKm == null ? null : r2(reembolsoPorKm), topeCombustible: topeCombustible == null ? null : r2(topeCombustible), actualizadoPor: actor.id };
+    const datos = { representanteId, ...d, actualizadoPor: actor.id };
     const p = antes ? await data.update('perfiles', antes.id, datos) : await data.insert('perfiles', datos);
     await audit({ actorId: actor.id, action: 'perfil_viatico_guardado', entity: 'perfil_viatico', entityId: p.id,
-      before: antes ? { vehiculo: antes.vehiculo, tarifaAlimentacion: antes.tarifaAlimentacion, reembolsoPorKm: antes.reembolsoPorKm, topeCombustible: antes.topeCombustible ?? null } : null,
-      after: { vehiculo, tarifaAlimentacion: datos.tarifaAlimentacion, reembolsoPorKm: datos.reembolsoPorKm, topeCombustible: datos.topeCombustible } });
+      before: antes ? { vehiculo: antes.vehiculo, tarifaAlimentacion: antes.tarifaAlimentacion, reembolsoPorKm: antes.reembolsoPorKm, topeCombustible: antes.topeCombustible ?? null, publico: antes.publico ?? null } : null,
+      after: { vehiculo: d.vehiculo, tarifaAlimentacion: d.tarifaAlimentacion, reembolsoPorKm: d.reembolsoPorKm, topeCombustible: d.topeCombustible, publico: d.publico } });
     return p;
+  }
+  // ------------------------------------------------------------ montos globales de transporte público
+  async function verTarifasPublico() {
+    const [c] = await data.list('configuracion', { clave: 'tarifas_publico' });
+    return Object.fromEntries(TARIFAS_PUBLICO.map((k) => [k, c?.valor?.[k] ?? null]));
+  }
+  async function guardarTarifasPublico(actor, input) {
+    permitir(rol(actor, ['administrador', 'gerencia']), 'Solo la administración o la gerencia fijan los montos de transporte público.');
+    const e = {}; const valor = {};
+    for (const k of TARIFAS_PUBLICO) {
+      const x = input?.[k] === '' || input?.[k] == null ? null : num(input[k]);
+      if (x != null && (!Number.isFinite(x) || x < 0)) e[k] = 'Escribe un monto en RD$.';
+      valor[k] = x == null ? null : r2(x);
+    }
+    if (Object.keys(e).length) invalido(e);
+    const antes = await verTarifasPublico();
+    const [c] = await data.list('configuracion', { clave: 'tarifas_publico' });
+    if (c) await data.update('configuracion', c.id, { valor, actualizadoPor: actor.id }); else await data.insert('configuracion', { clave: 'tarifas_publico', valor, actualizadoPor: actor.id });
+    await audit({ actorId: actor.id, action: 'tarifas_publico_global', entity: 'configuracion', entityId: 'tarifas_publico', before: antes, after: valor });
+    return valor;
   }
   async function verPerfil(actor, representanteId) {
     permitir(actor.id === representanteId || rol(actor, VEN_PERFIL));
@@ -388,6 +430,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
     const v = perfil.vehiculo;
     let combustible = 0; let galones = 0; const preciosUsados = {};
     const km = r2(js.reduce((s, j) => s + j.kmEstimados, 0));
+    if (v.propiedad === 'ninguno') return calcularPublico(perfil, js, km, faltan);
     const usaReembolso = v.propiedad === 'propio' && perfil.reembolsoPorKm != null;
     if (usaReembolso) {
       combustible = r2(km * perfil.reembolsoPorKm); // política expresa: reembolso por km sustituye al combustible, no se suman
@@ -432,6 +475,38 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
         combustibleCalculado, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
       },
       avisos: topado.topado ? [`El combustible calculado (RD$${combustibleCalculado.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [],
+    };
+  }
+  /** Sin vehículo: transporte y comida por día, dentro o fuera de su municipio de residencia, según el cronograma. */
+  async function calcularPublico(perfil, js, km, faltan) {
+    const global = await verTarifasPublico();
+    const tarifas = {}; const fuente = {};
+    for (const k of TARIFAS_PUBLICO) {
+      const propio = perfil.publico?.[k];
+      tarifas[k] = propio ?? global[k]; fuente[k] = propio != null ? 'representante' : 'global';
+    }
+    const sinMonto = TARIFAS_PUBLICO.filter((k) => tarifas[k] == null);
+    if (sinMonto.length) return { faltan: [...faltan, 'Faltan los montos de transporte público (transporte y comida, dentro y fuera de su municipio). Configúralos en Perfiles de viático.'] };
+    const r = calcularTransportePublico({ jornadas: js, residencia: perfil.residencia, tarifas });
+    const topeRep = perfil.topeCombustible ?? null;
+    const tope = topeRep ?? (await verTopeGlobal());
+    const topado = aplicarTope({ calculado: r.transporte, tope });
+    const hoteles = js.filter((j) => j.hospedaje);
+    const sinAprobar = hoteles.filter((j) => j.hospedaje.estado !== 'aprobado');
+    if (sinAprobar.length) faltan.push(`Hay ${sinAprobar.length} hospedaje(s) sin autorizar por la gerencia.`);
+    const hospedaje = hoteles.filter((j) => j.hospedaje.estado === 'aprobado')
+      .reduce((s, j) => s + calcularHospedaje({ noches: j.hospedaje.noches, tarifaNoche: j.hospedaje.tarifaNoche, cargos: j.hospedaje.cargos }), 0);
+    const sum = (k) => r2(js.reduce((s, j) => s + (j[k] || 0), 0));
+    const detalle = calcularPresupuesto({ combustible: 0, transporte: topado.aplicado, alimentacion: r.alimentacion, hospedaje: r2(hospedaje), peajes: sum('peajes'), estacionamiento: sum('estacionamiento'), otros: sum('otros') });
+    return {
+      faltan, detalle: detalle.detalle, total: detalle.total,
+      supuestos: {
+        jornadas: js.length, km, kmTipo: 'transporte público', galones: null, rendimiento: null, combustible: null, preciosUsados: {},
+        transportePublico: true, diasDentro: r.diasDentro, diasFuera: r.diasFuera, tarifas, tarifasFuente: fuente, dias: r.dias,
+        diasAlimentacion: r.diasDentro + r.diasFuera, tarifaAlimentacion: null, reembolsoPorKm: null, hospedajes: hoteles.length,
+        combustibleCalculado: r.transporte, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
+      },
+      avisos: topado.topado ? [`El transporte calculado (RD$${r.transporte.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [],
     };
   }
   const MES = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -585,7 +660,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
     crearJornada, actualizarJornada, listarJornadas, calcularKm,
     crearCronograma, listarCronogramas, anularCronograma,
     vistaPreviaRuta: async (actor, id) => { permitir(esRep(actor)); const r = await rutaDeCronograma(actor, id); return { fecha: r.cronograma.fecha, paradas: r.paradas, km: r.km, minutos: r.minutos ?? null, kmFuente: r.kmFuente, optimizado: r.optimizado }; }, mapasActivo: () => Boolean(mapas?.activo),
-    crearCronogramaLote, proponerCronograma, verTopeGlobal, guardarTopeGlobal,
+    crearCronogramaLote, proponerCronograma, verTopeGlobal, guardarTopeGlobal, prepararPerfil, verTarifasPublico, guardarTarifasPublico,
     verPresupuesto, solicitar, decidirPresupuesto, desembolsar, reportarGasto, revisarGasto, liquidar, consolidado, presupuestoPorId,
   };
 }

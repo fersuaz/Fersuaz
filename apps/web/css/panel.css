@@ -457,3 +457,34 @@ a.btn, a.btn-sec { display: inline-flex; align-items: center; justify-content: c
   .vsub-caja { padding-bottom: .75rem; }
   .vlinea .quitar { margin-bottom: .75rem; justify-self: end; }
 }
+
+/* Alta de representante y vehículo */
+.subtitulo-form { font: 600 1.02rem var(--serif); color: var(--marino); margin: 1.4rem 0 .6rem; padding-top: 1rem; border-top: 1px solid var(--linea); }
+.opciones-tarjeta { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .6rem; margin-bottom: 1rem; }
+.opcion-tarjeta { display: flex; gap: .7rem; align-items: flex-start; padding: .85rem 1rem; border: 1.5px solid var(--linea); border-radius: 14px; cursor: pointer; background: #fff; }
+.opcion-tarjeta:hover { border-color: var(--celeste); }
+.opcion-tarjeta:has(input:checked) { border-color: var(--marino); background: rgba(48, 133, 172, .08); }
+.opcion-tarjeta:has(input:focus-visible) { outline: 3px solid var(--celeste); outline-offset: 2px; }
+.opcion-tarjeta input { margin-top: .2rem; accent-color: var(--marino); width: 1.1rem; height: 1.1rem; flex: none; }
+.opcion-tarjeta strong { display: block; color: var(--marino); }
+.opcion-tarjeta small { display: block; color: var(--texto-2); font-size: .86rem; }
+.grupo-vehiculo { display: grid; gap: .5rem; }
+.epa { display: grid; gap: .4rem; padding: .85rem 1rem; border-radius: 14px; background: var(--canvas); }
+.epa .hint { margin: 0; }
+.epa-fila { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.6fr); gap: 0 .8rem; }
+.epa-fila select { width: 100%; min-height: 48px; padding: .7rem .9rem; border: 1.5px solid var(--linea); border-radius: 12px; font: inherit; background: #fff; color: var(--tinta); }
+.epa-fila select:disabled { opacity: .55; }
+.epa-fila select:focus-visible { outline: 3px solid var(--celeste); outline-offset: 1px; }
+@media (max-width: 900px) { .epa-fila { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .epa-version { grid-column: 1 / -1; } }
+.credenciales { margin-top: 1.25rem; padding: 1.1rem 1.25rem; border-radius: 16px; background: var(--marino); color: #fff; }
+.credenciales h3 { color: #fff; font-size: 1.1rem; margin: 0 0 .75rem; }
+.credenciales dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .6rem; margin: 0 0 .75rem; }
+.credenciales dl div { background: rgba(255, 255, 255, .1); border-radius: 12px; padding: .7rem .9rem; }
+.credenciales dt { font-size: .82rem; color: #C9E1EE; }
+.credenciales dd { margin: .2rem 0 0; font: 600 1.35rem ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; overflow-wrap: anywhere; }
+.credenciales p { color: #DCEAF3; font-size: .9rem; margin: 0; }
+.credenciales .btn-sec { background: transparent; color: #fff; border-color: rgba(255, 255, 255, .5); }
+.credenciales .btn { background: #fff; color: var(--marino); }
+.credenciales-lista { display: grid; grid-template-columns: auto 1fr; gap: .4rem 1rem; margin: 0 0 .5rem; }
+.credenciales-lista dd { margin: 0; font: 600 1.15rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cambio-clave { max-width: 30rem; }

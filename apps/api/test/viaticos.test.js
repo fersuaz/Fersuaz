@@ -437,3 +437,59 @@ test('vouchers: precio por unidad suma el total; el Vendedor carga a nombre de u
     assert.equal((await call('POST', `/api/vouchers/${v2.body.item.id}/anular`, null, t.rep2)).body.item.estado, 'anulado');
   } finally { server.close(); }
 });
+
+test('alta de representante: usuario y clave temporal, zona y perfil; debe cambiar la clave al entrar', async () => {
+  const { server, call, t } = await setup();
+  try {
+    const base = { nombre: 'José', apellido: 'Pérez Ejemplo', posicion: 'Visitador', telefono: '8095550101', provincias: ['Espaillat'], residencia: { provincia: 'Espaillat', municipio: 'Moca' },
+      vehiculo: { propiedad: 'propio', tipo: 'carro', marca: 'Toyota', modelo: 'Corolla', anio: 2022, combustible: 'gasolina_regular', rendimiento: 54.7, epaId: '45000', rendimientoFuente: 'epa' }, tarifaAlimentacion: 500 };
+    assert.equal((await call('POST', '/api/representantes', base, t.supervisor)).status, 403);
+    const malo = await call('POST', '/api/representantes', { ...base, posicion: 'Jefe', provincias: [], residencia: {} }, t.admin);
+    assert.equal(malo.status, 422); assert.ok(malo.body.fields.posicion && malo.body.fields.provincias && malo.body.fields['residencia.provincia']);
+    const r = await call('POST', '/api/representantes', base, t.admin);
+    assert.equal(r.status, 201, JSON.stringify(r.body)); assert.equal(r.body.representante.usuario, 'jperez'); assert.match(r.body.claveTemporal, /^[A-Za-z2-9]{10}$/);
+    const r2 = await call('POST', '/api/representantes', { ...base, nombre: 'Juan' }, t.admin);
+    assert.equal(r2.body.representante.usuario, 'jperez2', 'no repite usuarios');
+    // Entra con el usuario; solo puede cambiar la clave
+    const login = await call('POST', '/api/auth/login', { email: 'JPerez', password: r.body.claveTemporal });
+    assert.equal(login.status, 200); assert.equal(login.body.user.debeCambiarClave, true);
+    const tok = login.body.token;
+    assert.equal((await call('GET', '/api/inicio', null, tok)).body.cambiarClave, true);
+    assert.equal((await call('POST', '/api/auth/cambiar-clave', { actual: 'mala', nueva: 'NuevaClave2026' }, tok)).status, 422);
+    assert.equal((await call('POST', '/api/auth/cambiar-clave', { actual: r.body.claveTemporal, nueva: 'corta' }, tok)).status, 422);
+    assert.equal((await call('POST', '/api/auth/cambiar-clave', { actual: r.body.claveTemporal, nueva: 'NuevaClave2026' }, tok)).status, 200);
+    const ini = await call('GET', '/api/inicio?mes=2026-11', null, tok);
+    assert.equal(ini.status, 200); assert.deepEqual(ini.body.zona.provincias, ['Espaillat']);
+    const perfil = (await call('GET', `/api/viaticos/perfiles/${r.body.representante.id}`, null, t.admin)).body.item;
+    assert.equal(perfil.vehiculo.rendimiento, 54.7); assert.equal(perfil.vehiculo.rendimientoFuente, 'epa'); assert.equal(perfil.vehiculo.tipo, 'carro');
+    // Restablecer clave: nueva temporal, vuelve a exigir cambio
+    const rs = await call('POST', `/api/representantes/${r.body.representante.id}/clave`, null, t.admin);
+    assert.equal((await call('POST', '/api/auth/login', { email: 'jperez', password: rs.body.claveTemporal })).body.user.debeCambiarClave, true);
+  } finally { server.close(); }
+});
+
+test('sin vehículo: transporte y comida dentro o fuera de su municipio, con montos globales o propios', async () => {
+  const { server, call, t, id, planificar } = await setup();
+  try {
+    const data = setup.data;
+    const gh = await data.insert('establecimientos', { tipo: 'hospital', nombre: 'Hospital Ejemplo Gaspar', provincia: 'Espaillat', municipio: 'Gaspar Hernández', estado: 'validado', fuente: 'manual' });
+    await call('POST', `/api/viaticos/perfiles/${id.rep}`, { residencia: { provincia: 'Espaillat', municipio: 'Moca' }, vehiculo: { propiedad: 'ninguno' } }, t.gerente);
+    await planificar(jornada('2026-11-23', 10), t.rep); // hospital de Moca: dentro
+    let p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
+    assert.match(p.faltan.join(' '), /montos de transporte público/);
+    assert.equal((await call('POST', '/api/viaticos/tarifas-publico', { transporteDentro: 150 }, t.rep)).status, 403);
+    await call('POST', '/api/viaticos/tarifas-publico', { transporteDentro: 150, comidaDentro: 300, transporteFuera: 500, comidaFuera: 450 }, t.gerente);
+    // Un día fuera: cronograma con el hospital de Gaspar Hernández
+    const c = await call('POST', '/api/cronogramas', { representanteId: id.rep, fechas: ['2026-11-24'], lugares: [{ refTipo: 'establecimiento', refId: gh.id }] }, t.admin);
+    const j = await call('POST', '/api/viaticos/jornadas', { cronogramaId: c.body.items[0].id, kmEstimados: 60, conAlimentacion: true }, t.rep);
+    assert.equal(j.status, 201, JSON.stringify(j.body));
+    p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
+    assert.equal(p.supuestos.diasDentro, 1); assert.equal(p.supuestos.diasFuera, 1);
+    assert.equal(p.detalle.transporte, 650); assert.equal(p.detalle.alimentacion, 750); assert.equal(p.detalle.combustible, 0);
+    // Montos propios del representante mandan sobre los globales; el tope también limita el transporte
+    await call('POST', `/api/viaticos/perfiles/${id.rep}`, { residencia: { provincia: 'Espaillat', municipio: 'Moca' }, vehiculo: { propiedad: 'ninguno' }, publico: { transporteFuera: 800 }, topeCombustible: 900 }, t.gerente);
+    p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
+    assert.equal(p.supuestos.tarifasFuente.transporteFuera, 'representante'); assert.equal(p.detalle.transporte, 900, '150 + 800 = 950, topado a 900');
+    assert.equal(p.avisos.length, 1);
+  } finally { server.close(); }
+});
