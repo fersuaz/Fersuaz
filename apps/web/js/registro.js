@@ -60,7 +60,7 @@ form.addEventListener('submit', async (ev) => {
   showErrors(errors);
   if (Object.keys(errors).length) { setStatus('error', 'Revisa los campos marcados.'); return; }
 
-  const base = apiBase();
+  const base = apiBase() || (['localhost', '127.0.0.1'].includes(location.hostname) ? 'http://localhost:8080' : '');
   if (!base) { setStatus('error', 'El registro todavía no está conectado al servidor. Configura la URL de la API en el despliegue.'); return; }
 
   submit.disabled = true; submit.textContent = 'Enviando solicitud…'; setStatus('', '');
