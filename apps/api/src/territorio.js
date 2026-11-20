@@ -36,6 +36,18 @@ export function municipioOficial(provincia, v) {
   const alias = ALIAS_MUN[k];
   return alias && lista.includes(alias) ? alias : null;
 }
+// Palabras que indican un centro de salud, y palabras de negocios que no lo son.
+const SALUD = /(clinic|hospital|centro|unap|medic|salud|diagnost|consult|policlin|dental|odonto|pediatr|laborator|materno|ginec|cardio|oftalm|ortop|emergenc|especialid|sanatori|instituto|imagen|radiolog|terapia|rehabilit|dr\.?\s|dra\.?\s|doctor|enfermer|vacun|dispensari|cruz roja|dermat|neumo|nefro|oncolog|psiq|psicolog|fisiat|urolog|otorrin|endocrin|gastro|traumat|cirug|maternidad|atencion primaria|primer nivel|sonograf|mamograf|rayos|resonancia|tomograf)/;
+const AJENO = /(\bspa\b|hotel|motel|restaurant|bar\b|salon|gym|gimnasio|iglesia|colegio|escuela|liceo|banco|tienda|supermercado|colmado|ferreter|bomba|estacion de|parque|hostal|villa\b|apartament|residencial|plaza\b|recovery|experience|estetica|spa\b|barber|unas|nails|veterin)/;
+/** ¿El nombre parece no ser un centro de salud? (dirección en vez de nombre, negocio ajeno o sin palabra de salud) */
+export function posibleError(nombre) {
+  const n = String(nombre ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  if (!n) return true;
+  if (/^\d|^(calle|c\/|av\.?|avenida|carretera|km\b|#)/.test(n) || /^[a-z0-9]{4}\+[a-z0-9]{2,3}/.test(n)) return true;
+  if (AJENO.test(n)) return true;
+  return !SALUD.test(`${n} `);
+}
+
 /** ¿Ese municipio está dentro de la zona? Una provincia sin lista de municipios cubre todos los suyos. */
 export function dentroDeZona(zona, provincia, municipio) {
   if (!zona?.provincias?.includes(provincia)) return false;
@@ -183,15 +195,48 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     await audit({ actorId: actor.id, action: 'establecimiento_creado', entity: 'establecimiento', entityId: x.id, after: { nombre: x.nombre, municipio: x.municipio, fuente } });
     return x;
   }
-  async function listarEstablecimientos(actor, { provincia, municipio, tipo, q } = {}) {
+  /**
+   * Lista establecimientos. `ver`: 'activos' (por defecto), 'revisar' (posibles errores de Google) o
+   * 'descartados' (marcados como "no es un centro de salud"; solo gestión).
+   */
+  async function listarEstablecimientos(actor, { provincia, municipio, tipo, q, ver = 'activos' } = {}) {
     permitir(activo(actor));
     const zona = await zonaActor(actor);
     const filtro = {};
     if (municipio) filtro.municipio = municipio;
     let xs = await data.list('establecimientos', filtro);
-    xs = xs.filter((x) => (!zona || dentroDeZona(zona, x.provincia, x.municipio)) && (!provincia || x.provincia === provincia) && (!tipo || x.tipo === tipo) && x.estado !== 'inactivo');
+    const descartados = ver === 'descartados' && rol(actor, GESTION);
+    xs = xs.filter((x) => (!zona || dentroDeZona(zona, x.provincia, x.municipio)) && (!provincia || x.provincia === provincia) && (!tipo || x.tipo === tipo) && (descartados ? x.estado === 'inactivo' : x.estado !== 'inactivo'));
     if (q) { const k = sinAcentos(q); xs = xs.filter((x) => sinAcentos(`${x.nombre} ${x.sector ?? ''} ${x.direccion ?? ''}`).includes(k)); }
+    xs = xs.map((x) => ({ ...x, revisar: x.estado !== 'inactivo' && posibleError(x.nombre) }));
+    if (ver === 'revisar') xs = xs.filter((x) => x.revisar);
     return xs.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  }
+  /** Marca uno o varios registros como "no es un centro de salud": salen de zonas, cronogramas y propuestas. Reversible. */
+  async function descartarEstablecimientos(actor, ids, motivo) {
+    permitir(rol(actor, GESTION), 'Solo la administración, la gerencia o la supervisión pueden descartar registros.');
+    const lista = [...new Set(Array.isArray(ids) ? ids.map(String) : [])];
+    if (!lista.length) invalido({ ids: 'Elige al menos un registro.' });
+    if (lista.length > 500) invalido({ ids: 'Máximo 500 registros por vez.' });
+    const m = normalizeName(motivo).slice(0, 200) || 'No es un centro de salud';
+    let n = 0;
+    for (const id of lista) {
+      const x = await data.get('establecimientos', id);
+      if (!x || x.estado === 'inactivo') continue;
+      await data.update('establecimientos', id, { estado: 'inactivo', descarteMotivo: m, descartadoPor: actor.id });
+      await audit({ actorId: actor.id, action: 'establecimiento_descartado', entity: 'establecimiento', entityId: id, before: { estado: x.estado, nombre: x.nombre }, after: { estado: 'inactivo', motivo: m } });
+      n++;
+    }
+    return { descartados: n };
+  }
+  async function restaurarEstablecimiento(actor, id) {
+    permitir(rol(actor, GESTION));
+    const x = await data.get('establecimientos', id);
+    if (!x) throw new HttpError(404, 'El establecimiento no existe.');
+    if (x.estado !== 'inactivo') return x;
+    const out = await data.update('establecimientos', id, { estado: 'validado', descarteMotivo: null, descartadoPor: null });
+    await audit({ actorId: actor.id, action: 'establecimiento_restaurado', entity: 'establecimiento', entityId: id, before: { estado: 'inactivo', motivo: x.descarteMotivo ?? null }, after: { estado: 'validado' } });
+    return out;
   }
   async function validarEstablecimiento(actor, id) {
     permitir(rol(actor, ['administrador', 'gerencia', 'supervisor']));
@@ -362,7 +407,7 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
 
   return {
     division: () => ({ provincias: PROVINCIAS, municipios: DIVISION, tipos: TIPOS_ESTABLECIMIENTO }),
-    provinciasDe, zonaActor, asignarZona, verZona, lugaresDeZona,
+    provinciasDe, zonaActor, asignarZona, verZona, lugaresDeZona, descartarEstablecimientos, restaurarEstablecimiento,
     crearEstablecimiento, listarEstablecimientos, validarEstablecimiento,
     buscarPreregistro, confirmarPreregistro, listarPreregistros, anularPreregistro,
     importar, historialPrecio,

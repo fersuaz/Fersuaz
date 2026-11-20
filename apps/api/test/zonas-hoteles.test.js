@@ -61,3 +61,10 @@ test('propuesta: empieza en el municipio de residencia, agrupa por cercanía y n
   assert.equal(corto.dias.length, 1); assert.equal(corto.sinDia.length, 4, 'lo que no cabe se informa');
   assert.ok(Math.abs(distanciaKm({ lat: 19.394, lng: -70.525 }, { lat: 19.485, lng: -70.611 }) - 13.5) < 1.5);
 });
+
+test('posible error de Google: direcciones, negocios ajenos y nombres sin palabra de salud', async () => {
+  const { posibleError } = await import('../src/territorio.js');
+  for (const n of ['5 de mayo #258', 'AgnusDei Experience Recovery & Spa', 'Calle Duarte 12', 'J3RR+996', 'Hotel Ejemplo', 'Colmado Ejemplo', 'AgusDei']) assert.equal(posibleError(n), true, n);
+  for (const n of ['Clínica Ejemplo', 'Hospital Municipal Ejemplo', 'UNAP Ejemplo', 'Centro Médico Ejemplo', 'Consultorio Dr. Ejemplo', 'Ac. Dental. Odontología Especializada', 'Laboratorio Clínico Ejemplo', 'Policlínica Ejemplo'])
+    assert.equal(posibleError(n), false, n);
+});

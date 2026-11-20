@@ -1067,13 +1067,15 @@ V.establecimientos = async () => {
   if (!provincias.length) return vista('Establecimientos', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Aún no tienes provincias asignadas'), 'Pide a tu supervisor que te asigne las provincias que visitas.'));
   const fprov = param('provincia') || (provincias.length === 1 ? provincias[0] : '');
   const fmun = param('municipio') || ''; const ftipo = param('tipo') || '';
-  const qs = new URLSearchParams(Object.entries({ provincia: fprov, municipio: fmun, tipo: ftipo }).filter(([, v]) => v));
+  const fver = GESTION_T() && ['revisar', 'descartados'].includes(param('ver')) ? param('ver') : '';
+  const qs = new URLSearchParams(Object.entries({ provincia: fprov, municipio: fmun, tipo: ftipo, ver: fver }).filter(([, v]) => v));
   const { items } = await api('GET', `/api/territorio/establecimientos?${qs}`);
   const tipos = Object.entries(div.tipos);
   const fz = selectorZona(provincias, div.municipios, { provincia: fprov, municipio: fmun, prefijo: 'f' });
   const ft = campo('ftipo', 'Tipo', { options: tipos.map(([value, label]) => ({ value, label })), value: ftipo, placeholder: 'Todos los tipos' });
-  const aplicar = () => irA('establecimientos', Object.fromEntries(Object.entries({ sec: 'lista', provincia: fz.sp.value, municipio: fz.sm.value, tipo: ft.querySelector('select').value }).filter(([, v]) => v)));
-  fz.sm.addEventListener('change', aplicar); ft.querySelector('select').addEventListener('change', aplicar);
+  const fv = GESTION_T() ? campo('fver', 'Mostrar', { options: [{ value: '', label: 'Todos los activos' }, { value: 'revisar', label: 'Posibles errores de Google' }, { value: 'descartados', label: 'No son centros de salud' }], value: fver }) : null;
+  const aplicar = () => irA('establecimientos', Object.fromEntries(Object.entries({ sec: 'lista', provincia: fz.sp.value, municipio: fz.sm.value, tipo: ft.querySelector('select').value, ver: fv?.querySelector('select').value }).filter(([, v]) => v)));
+  fz.sm.addEventListener('change', aplicar); ft.querySelector('select').addEventListener('change', aplicar); fv?.querySelector('select').addEventListener('change', aplicar);
   fz.sp.addEventListener('change', () => { if (!fz.sp.value) aplicar(); });
   const z = selectorZona(provincias, div.municipios, { provincia: fprov, municipio: fmun });
   const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar establecimiento');
@@ -1082,10 +1084,29 @@ V.establecimientos = async () => {
     h('p', { class: 'hint' }, GESTION_T() ? 'Queda validado de inmediato.' : 'Queda pendiente hasta que tu supervisor lo valide.'), h('div', { class: 'acciones' }, b));
   f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/territorio/establecimientos', { tipo: f.tipo.value, nombre: f.nombre.value, provincia: z.sp.value, municipio: z.sm.value, sector: f.sector.value, direccion: f.direccion.value, telefono: f.telefono.value }))) irA('establecimientos', {}); });
   const validar = async (x) => { try { await api('POST', `/api/territorio/establecimientos/${x.id}/validar`); router(); } catch (e) { alert(e.message); } };
-  const bloques = [S('nuevo', 'Nuevo', f), S('lista', `Registrados (${fmtN.format(items.length)})`, h('div', { class: 'form-fila' }, fz.fp, fz.fm, ft),
-    tabla([{ t: 'Nombre', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] }, { t: 'Tipo', v: (x) => div.tipos[x.tipo] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` },
-      { t: 'Estado', v: (x) => chip(x.estado) }, { t: '', v: (x) => GESTION_T() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar(x) }, 'Validar') : '' }],
-    items, ['No hay establecimientos con estos filtros', 'Regístralos en "Nuevo"; tu supervisor también puede importarlos desde Excel.']))];
+  // "No es un centro de salud": por fila o varios marcados a la vez. Se puede restaurar.
+  const marcados = new Set();
+  const bDesc = h('button', { class: 'btn-sec', type: 'button', disabled: true }, 'Marcar como no es centro de salud');
+  const contar = () => { bDesc.disabled = !marcados.size; bDesc.textContent = marcados.size ? `Marcar ${fmtN.format(marcados.size)} como no es centro de salud` : 'Marcar como no es centro de salud'; };
+  const descartar = async (ids) => {
+    if (!(await confirmar('No es un centro de salud', `${fmtN.format(ids.length)} registro(s) saldrán de las zonas, los cronogramas y las propuestas. El registro automático no los volverá a traer. Puedes restaurarlos en "No son centros de salud".`, { okTexto: 'Marcar' }))) return;
+    try { await api('POST', '/api/territorio/establecimientos/descartar', { ids }); router(); } catch (e) { alert(e.message); }
+  };
+  bDesc.addEventListener('click', () => descartar([...marcados]));
+  const restaurar = async (x) => { try { await api('POST', `/api/territorio/establecimientos/${x.id}/restaurar`); router(); } catch (e) { alert(e.message); } };
+  const columnas = [
+    ...(GESTION_T() && fver !== 'descartados' ? [{ t: '', v: (x) => h('input', { type: 'checkbox', class: 'marca', 'aria-label': `Marcar ${x.nombre}`, checked: marcados.has(x.id), onchange: (e) => { e.target.checked ? marcados.add(x.id) : marcados.delete(x.id); contar(); } }) }] : []),
+    { t: 'Nombre', v: (x) => [x.nombre, x.revisar && GESTION_T() ? h('span', { class: 'chip pendiente', style: 'margin-left:.5rem' }, 'Revisar') : null, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] },
+    { t: 'Tipo', v: (x) => div.tipos[x.tipo] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` },
+    { t: 'Estado', v: (x) => (x.estado === 'inactivo' ? [h('span', { class: 'chip anulado' }, 'No es centro de salud'), x.descarteMotivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.descarteMotivo) : null] : chip(x.estado)) },
+    { t: '', v: (x) => !GESTION_T() ? '' : x.estado === 'inactivo' ? h('button', { class: 'btn-sec btn-peq', onclick: () => restaurar(x) }, 'Restaurar')
+      : [x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar(x) }, 'Validar') : null, h('button', { class: 'btn-enlace', onclick: () => descartar([x.id]) }, 'No es centro de salud')] },
+  ];
+  const vacioTxt = fver === 'revisar' ? ['No hay posibles errores con estos filtros', 'Todos los nombres parecen de centros de salud.'] : fver === 'descartados' ? ['Nada descartado', 'Aquí aparecen los registros que marques como "no es centro de salud".'] : ['No hay establecimientos con estos filtros', 'Regístralos en "Nuevo"; tu supervisor también puede importarlos desde Excel.'];
+  const bloques = [S('nuevo', 'Nuevo', f), S('lista', `Registrados (${fmtN.format(items.length)})`, h('div', { class: 'form-fila' }, fz.fp, fz.fm, ft, fv),
+    fver === 'revisar' ? h('div', { class: 'aviso' }, 'Nombres que parecen una dirección, un negocio ajeno (spa, hotel, colmado…) o que no dicen ser de salud. Revisa y marca los que no son centros de salud; los que sí lo son, déjalos.') : null,
+    GESTION_T() && fver !== 'descartados' ? h('div', { class: 'acciones', style: 'margin:0 0 .75rem' }, bDesc) : null,
+    tabla(columnas, items, vacioTxt))];
   if (GESTION_T()) bloques.push(S('importar', 'Importar Excel', importador('establecimientos', 'Importar clínicas, hospitales, UNAP y centros', 'Tipo, nombre, provincia y municipio son obligatorios. Los que ya existen en el mismo municipio no se duplican.', router)),
     S('google', 'Buscar en Google', await buscadorGoogle(tipos, null)), ES_GER() ? S('auto', 'Registro automático', await registroAutomatico([['salud', 'Hospitales, clínicas, UNAP y centros de primer nivel (todo junto)'], ...tipos])) : null);
   return vistaS('establecimientos', ['lista', 'nuevo', 'importar', 'google', 'auto'], 'Establecimientos', 'Clínicas, hospitales, UNAP y centros de primer nivel por municipio. Se usan como paradas exactas de las jornadas.', ...bloques);
@@ -1375,30 +1396,146 @@ V.inicio = async () => {
 
 // ---------------------------------------------------------------- menú por rol
 let yo;
+// Íconos de trazo simple (24×24, esquinas redondeadas), dibujados para FERSUAZ.
+const ICONOS = {
+  inicio: '<path d="M4 11.5 12 5l8 6.5"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/>',
+  cronogramas: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4M16 3v4M4 10h16"/><path d="M8.5 14h2M13.5 14h2M8.5 17h2"/>',
+  viaticos: '<rect x="3.5" y="6.5" width="17" height="11" rx="2.5"/><circle cx="12" cy="12" r="2.4"/><path d="M7 9.5v.01M17 14.5v.01"/>',
+  revisar: '<path d="M7 3.5h7l4 4V20a.5.5 0 0 1-.5.5h-10A.5.5 0 0 1 7 20Z"/><path d="M14 3.5V8h4"/><path d="m9.5 14 2 2 3.5-4"/>',
+  comisiones: '<path d="M5 19 19 5"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="16.5" cy="16.5" r="2.5"/>',
+  reportes: '<path d="M5 20V10M10 20V5M15 20v-7M20 20v-4"/>',
+  misRecetas: '<rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M9 8h6M9 12h6M9 16h3"/>',
+  alertas: '<path d="M12 4 3 19.5h18Z"/><path d="M12 10v4.5M12 17.2v.01"/>',
+  perfiles: '<circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19c.6-3 2.8-4.8 5.5-4.8s4.9 1.8 5.5 4.8"/><path d="M15.5 6.2a3 3 0 0 1 0 5.6M17.5 14.6c1.6.6 2.7 2.1 3 4.4"/>',
+  precios: '<path d="M6 20V6a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v14"/><path d="M4.5 20h12"/><path d="M8 8h5"/><path d="M15 10h2a1.5 1.5 0 0 1 1.5 1.5V16a1.3 1.3 0 0 0 2.6 0V9l-2.6-2.6"/>',
+  representantes: '<path d="M12 21s-6.5-5.7-6.5-11a6.5 6.5 0 0 1 13 0c0 5.3-6.5 11-6.5 11Z"/><circle cx="12" cy="10" r="2.4"/>',
+  establecimientos: '<path d="M5 20V8l7-4 7 4v12"/><path d="M3.5 20h17"/><path d="M12 9.5v5M9.5 12h5"/>',
+  hoteles: '<path d="M3.5 18V7M3.5 14h17v4"/><path d="M20.5 14v-2.5a3 3 0 0 0-3-3H11v5.5"/><circle cx="7.3" cy="11" r="1.8"/>',
+  catalogo: '<path d="m12 3.5 8 4.5-8 4.5L4 8Z"/><path d="m4 12 8 4.5 8-4.5"/><path d="m4 16 8 4.5 8-4.5"/>',
+  inventario: '<path d="M4 8.5 12 4l8 4.5v7L12 20l-8-4.5Z"/><path d="M4 8.5 12 13l8-4.5M12 13v7"/>',
+  solicitudes: '<circle cx="10" cy="8.5" r="3.3"/><path d="M4 19.5c.7-3.2 3-5 6-5 1.4 0 2.6.4 3.6 1"/><path d="M18 14v6M15 17h6"/>',
+  jornadas: '<circle cx="6.5" cy="17.5" r="2"/><circle cx="17.5" cy="6.5" r="2"/><path d="M8.5 17.5H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5"/>',
+  presupuesto: '<rect x="3.5" y="6.5" width="17" height="11" rx="2.5"/><circle cx="12" cy="12" r="2.4"/><path d="M7 9.5v.01M17 14.5v.01"/>',
+  voucher: '<rect x="4" y="6" width="16" height="13" rx="3"/><path d="M9 6 10.5 4h3L15 6"/><circle cx="12" cy="12.5" r="3.2"/>',
+  misVouchers: '<path d="M6 3.5h12v17l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4-2 1.4Z"/><path d="M9 8.5h6M9 12h6M9 15.5h3"/>',
+  comision: '<path d="M5 19 19 5"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="16.5" cy="16.5" r="2.5"/>',
+  operativo: '<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>',
+  receta: '<rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M12 8.5v6M9 11.5h6"/>',
+};
+const icono = (id) => { const sp = h('span', { class: 'menu-icono', 'aria-hidden': 'true' }); sp.innerHTML = `<svg viewBox="0 0 24 24">${ICONOS[id] ?? ICONOS.inicio}</svg>`; return sp; };
+
+/**
+ * Menú por rol: primero accesos directos (sin título), luego hasta 3 grupos de hasta 5 ítems,
+ * y utilidades en la base. Formato: [título|null, [[id, etiqueta], ...], 'pie'?]
+ */
 function menuPara(u) {
   const G = ['administrador', 'gerencia', 'supervisor', 'finanzas'].includes(u.role);
-  const s = [['Panel', [['inicio', 'Inicio']]]];
-  if (u.role === 'dependiente') s.push(['Mi trabajo', [['voucher', 'Cargar voucher'], ['misVouchers', 'Mis vouchers'], ['comision', 'Mi comisión']]]);
-  if (u.role === 'representante' && u.position === 'Promotora') s.push(['Mi trabajo', [['operativo', 'Operativo de hoy'], ['receta', 'Cargar receta'], ['misRecetas', 'Mis recetas'], ['alertas', 'Alertas']]]);
-  if (u.role === 'representante' && u.position === 'Vendedor') s.push(['Mi trabajo', [['inventario', 'Inventario'], ['catalogo', 'Farmacias']]]);
-  if (u.role === 'representante') s.push(['Rutas y viáticos', [['jornadas', 'Mis jornadas'], ['presupuesto', 'Mi presupuesto'], ['establecimientos', 'Establecimientos']]]);
-  if (G) {
-    s.push(['Dependientes', [['revisar', 'Vouchers por revisar'], ['comisiones', 'Comisiones']]]);
-    s.push(['Promotoras', [['reportes', 'Reporte de recetas'], ['misRecetas', 'Recetas'], ['alertas', 'Alertas']]]);
-    s.push(['Rutas y viáticos', [['viaticos', 'Presupuestos'], ['perfiles', 'Perfiles de viático'], ['precios', 'Precios de combustible'], ['viatico', null]]]);
-    s.push(['Territorio', [['cronogramas', 'Cronogramas'], ['establecimientos', 'Establecimientos'], ['hoteles', 'Hoteles'], ...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : [])]]);
-    s.push(['Administración', [['inventario', 'Inventario'], ['catalogo', 'Catálogo'], ...(u.role !== 'finanzas' ? [['solicitudes', 'Solicitudes de cuenta']] : [])]]);
+  if (u.role === 'dependiente') return [[null, [['inicio', 'Inicio'], ['voucher', 'Cargar voucher'], ['misVouchers', 'Mis vouchers'], ['comision', 'Mi comisión']]]];
+  if (u.role === 'representante') {
+    const s = [];
+    if (u.position === 'Promotora') {
+      s.push([null, [['inicio', 'Inicio'], ['operativo', 'Operativo de hoy'], ['receta', 'Cargar receta'], ['jornadas', 'Mis jornadas']]]);
+      s.push(['Mi trabajo', [['misRecetas', 'Mis recetas'], ['alertas', 'Alertas'], ['presupuesto', 'Mi presupuesto'], ['establecimientos', 'Establecimientos']]]);
+    } else {
+      s.push([null, [['inicio', 'Inicio'], ['jornadas', 'Mis jornadas'], ['presupuesto', 'Mi presupuesto']]]);
+      s.push(['Mi zona', [['establecimientos', 'Establecimientos'], ...(u.position === 'Vendedor' ? [['catalogo', 'Farmacias'], ['inventario', 'Inventario']] : [])]]);
+    }
+    return s;
   }
-
-  return s;
+  if (!G) return [[null, [['inicio', 'Inicio']]]];
+  return [
+    [null, [['inicio', 'Inicio'], ['cronogramas', 'Cronogramas'], ['viaticos', 'Presupuestos'], ['revisar', 'Vouchers por revisar'], ['viatico', null]]],
+    ['Territorio', [...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : []), ['establecimientos', 'Establecimientos'], ['hoteles', 'Hoteles'], ['catalogo', 'Catálogo']]],
+    ['Ventas y recetas', [['comisiones', 'Comisiones'], ['reportes', 'Reporte de recetas'], ['misRecetas', 'Recetas'], ['alertas', 'Alertas'], ['inventario', 'Inventario']]],
+    ['Viáticos', [['perfiles', 'Perfiles de viático'], ['precios', 'Precios de combustible']]],
+    ...(u.role !== 'finanzas' ? [['', [['solicitudes', 'Cuentas y accesos']], 'pie']] : []),
+  ];
 }
 function pintarMenu(secciones, actual) {
   const padre = { viatico: 'viaticos' }[actual] ?? actual;
-  $('#menu').replaceChildren(...secciones.flatMap(([titulo, items]) => [h('h3', {}, titulo), ...items.filter(([, label]) => label).map(([id, label]) => h('a', { href: `#${id}`, 'aria-current': id === padre ? 'page' : null }, label))]));
-  // En celular el menú es una fila deslizable: deja visible la sección actual.
-  const activo = $('#menu a[aria-current="page"]');
-  if (activo && matchMedia('(max-width: 900px)').matches) activo.scrollIntoView({ block: 'nearest', inline: 'center' });
+  const enlace = ([id, label]) => h('a', { href: `#${id}`, 'aria-current': id === padre ? 'page' : null, 'data-tip': label }, icono(id), h('span', { class: 'etq' }, label));
+  const grupo = ([titulo, items]) => {
+    const vis = items.filter(([, label]) => label);
+    return h('div', { class: 'menu-grupo' }, titulo ? h('h3', {}, titulo) : null, titulo ? h('hr', { class: 'menu-divisor', 'aria-hidden': 'true' }) : null, vis.map(enlace));
+  };
+  $('#menu').replaceChildren(...secciones.filter((x) => x[2] !== 'pie').map(grupo));
+  $('#menu-pie').replaceChildren(...secciones.filter((x) => x[2] === 'pie').flatMap(([, items]) => items.filter(([, l]) => l).map(enlace)));
+  $('#menu-pie').hidden = !$('#menu-pie').children.length;
 }
+
+// ---------------------------------------------------------------- menú lateral: colapsar, panel deslizable y perfil
+const MQ_MOVIL = matchMedia('(max-width: 767px)');
+const MQ_TABLETA = matchMedia('(min-width: 768px) and (max-width: 1023px)');
+const leerPref = () => { try { return localStorage.getItem('fersuaz.menu'); } catch { return null; } };
+const guardarPref = (v) => { try { localStorage.setItem('fersuaz.menu', v); } catch { /* sin almacenamiento */ } };
+function aplicarMenu() {
+  const panel = $('#panel'); const col = $('#colapsar');
+  if (MQ_MOVIL.matches) { panel.classList.remove('colapsado', 'flotante'); cerrarCajon(false); }
+  else {
+    const pref = leerPref();
+    const colapsado = MQ_TABLETA.matches ? !panel.classList.contains('flotante') : pref === 'colapsado';
+    panel.classList.toggle('colapsado', colapsado);
+  }
+  const expandido = !$('#panel').classList.contains('colapsado');
+  col.setAttribute('aria-expanded', String(expandido));
+  col.setAttribute('aria-label', expandido ? 'Colapsar menú' : 'Expandir menú');
+  col.dataset.tip = expandido ? 'Colapsar menú' : 'Expandir menú';
+  // La campana va en la barra superior en celular y en el menú en pantallas grandes.
+  const caja = $('#campana-caja');
+  (MQ_MOVIL.matches ? $('#topbar-campana') : $('#cabeza-acciones')).prepend(caja);
+}
+function alternarColapso() {
+  const panel = $('#panel');
+  if (MQ_TABLETA.matches) { panel.classList.toggle('flotante'); $('#velo').hidden = !panel.classList.contains('flotante'); }
+  else guardarPref(panel.classList.contains('colapsado') ? 'expandido' : 'colapsado');
+  aplicarMenu();
+}
+function abrirCajon() {
+  $('#panel').classList.add('cajon-abierto'); $('#velo').hidden = false;
+  $('#abrir-menu').setAttribute('aria-expanded', 'true');
+  ($('#menu a[aria-current="page"]') ?? $('#menu a'))?.focus();
+}
+function cerrarCajon(devolverFoco = true) {
+  const panel = $('#panel'); const abierto = panel.classList.contains('cajon-abierto') || panel.classList.contains('flotante');
+  panel.classList.remove('cajon-abierto');
+  if (MQ_TABLETA.matches) panel.classList.remove('flotante');
+  $('#velo').hidden = true;
+  $('#abrir-menu').setAttribute('aria-expanded', 'false');
+  if (abierto && devolverFoco && MQ_MOVIL.matches) $('#abrir-menu').focus();
+}
+function iniciarMenu() {
+  $('#colapsar').addEventListener('click', alternarColapso);
+  $('#abrir-menu').addEventListener('click', abrirCajon);
+  $('#cerrar-menu').addEventListener('click', () => cerrarCajon());
+  $('#velo').addEventListener('click', () => { cerrarCajon(); aplicarMenu(); });
+  // Al elegir una ruta se cierra el panel deslizable o flotante.
+  $('#lateral').addEventListener('click', (e) => { if (e.target.closest('#menu a, #menu-pie a')) { cerrarCajon(false); aplicarMenu(); } });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!$('#perfil-menu').hidden) { cerrarPerfil(); $('#perfil').focus(); return; }
+    if ($('#panel').classList.contains('cajon-abierto') || $('#panel').classList.contains('flotante')) { cerrarCajon(); aplicarMenu(); }
+  });
+  // Perfil: menú flotante con la cuenta y Cerrar sesión
+  $('#perfil').addEventListener('click', () => { const abierto = !$('#perfil-menu').hidden; abierto ? cerrarPerfil() : abrirPerfil(); });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.perfil')) cerrarPerfil(); });
+  MQ_MOVIL.addEventListener('change', aplicarMenu); MQ_TABLETA.addEventListener('change', aplicarMenu);
+  // Globo con el nombre de la sección, solo con el menú colapsado
+  const tip = h('div', { id: 'tip-lateral', role: 'tooltip', hidden: true }); document.body.append(tip);
+  const mostrar = (e) => {
+    const el = e.target.closest?.('#lateral [data-tip]');
+    if (!el || !$('#panel').classList.contains('colapsado') || MQ_MOVIL.matches) return;
+    const r = el.getBoundingClientRect();
+    tip.textContent = el.dataset.tip; tip.style.left = `${r.right + 10}px`; tip.style.top = `${r.top + r.height / 2}px`; tip.hidden = false;
+    el.setAttribute('aria-describedby', 'tip-lateral');
+  };
+  const ocultar = (e) => { tip.hidden = true; e.target.closest?.('[data-tip]')?.removeAttribute('aria-describedby'); };
+  $('#lateral').addEventListener('pointerover', mostrar); $('#lateral').addEventListener('pointerout', ocultar);
+  $('#lateral').addEventListener('focusin', mostrar); $('#lateral').addEventListener('focusout', ocultar);
+  $('#menu').addEventListener('scroll', () => { tip.hidden = true; }, { passive: true });
+  aplicarMenu();
+}
+function abrirPerfil() { $('#perfil-menu').hidden = false; $('#perfil').setAttribute('aria-expanded', 'true'); $('#salir').focus(); }
+function cerrarPerfil() { $('#perfil-menu').hidden = true; $('#perfil').setAttribute('aria-expanded', 'false'); }
 let secciones;
 async function router() {
   const ruta = location.hash.slice(1).split('?')[0];
@@ -1421,6 +1558,11 @@ $('#salir').addEventListener('click', salir);
   try { yo = (await api('GET', '/api/auth/me')).user; }
   catch (e) { $('#vista').replaceChildren(h('h1', {}, 'No pudimos abrir tu panel'), h('div', { class: 'aviso error' }, e.message)); return; }
   $('#usuario-nombre').textContent = yo.fullName;
+  $('#perfil-nombre').textContent = yo.fullName;
+  $('#perfil-correo').textContent = yo.email ?? '';
+  $('#avatar').textContent = yo.fullName.split(/\s+/).filter(Boolean).slice(0, 2).map((x) => x[0]).join('').toUpperCase();
+  $('#perfil').setAttribute('aria-label', `Tu cuenta: ${yo.fullName}`);
+  iniciarMenu();
   $('#usuario-rol').textContent = `${ROLES[yo.role]}${yo.position ? `, ${yo.position}` : ''}`;
   secciones = menuPara(yo);
   addEventListener('hashchange', router);
