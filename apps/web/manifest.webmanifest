@@ -4,8 +4,8 @@
   "lang": "es-DO",
   "start_url": "./entrar.html",
   "display": "standalone",
-  "background_color": "#08201C",
-  "theme_color": "#08201C",
+  "background_color": "#003463",
+  "theme_color": "#003463",
   "icons": [
     { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]

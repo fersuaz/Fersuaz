@@ -27,9 +27,15 @@ La especificación funcional completa está en `docs/PROMPT-MAESTRO-TERRITORIOS.
 8. Cambios pequeños y reversibles. Un PR por funcionalidad. Explicar cómo revertir.
 9. Estados vacíos, de carga y de error en cada pantalla. Accesible: teclado, foco visible, contraste AA, `prefers-reduced-motion`.
 
-## Identidad visual (lujo sobrio)
-- Colores: Verde Caribe `#08201C`, Bosque `#123A33`, Champán `#C9A96E`, Perla `#E6EBE8`, Niebla `#8FA39D`, Alerta `#D2644A`.
-- Tipografía: **Bodoni Moda** (títulos), **Figtree** (texto e interfaz).
+## Identidad visual (colores corporativos de Laboratorio FERSUAZ)
+- Logo: `apps/web/assets/brand/fersuaz-logo-color.svg` (fondos claros) y `fersuaz-logo-blanco.svg` (fondos azules). No redibujar ni recolorear.
+- Colores, muestreados del logo oficial:
+  - Azul marino `#003463` (SUAZ): títulos, botón principal, fondos de contraste.
+  - Celeste `#3085AC` (FER): acentos gráficos, líneas, títulos grandes. No usarlo en texto pequeño (contraste 3.9:1).
+  - Celeste texto `#246C8E`: enlaces y texto pequeño en celeste (5.5:1).
+  - Blanco clínico `#F5F8FB` (fondo), Panel `#E9F0F6`, Línea `#C7D6E3`, Tinta `#0F2A44`, Texto secundario `#52677A`, Alerta `#C0462C`.
+- Prohibido el verde u otros colores ajenos a la marca en páginas, imágenes o video.
+- Tipografía: **Poppins** 500/600 (títulos, geométrica como el logo) y **Figtree** 400/500/600 (texto e interfaz).
 - Un solo momento de movimiento memorable por página. Nada de animar cada tarjeta.
 
 ## Páginas cinematográficas (skill `10k-websites` + Higgsfield)

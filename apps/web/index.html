@@ -3,20 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FERSUAZ — Gestión comercial</title>
+  <title>FERSUAZ, gestión comercial</title>
   <meta name="description" content="Territorios, visitas, recetas, vouchers y viáticos de la fuerza comercial de FERSUAZ en una sola plataforma.">
-  <meta name="theme-color" content="#08201C">
+  <meta name="theme-color" content="#003463">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,500;1,6..96,400&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/site.css">
+  <link rel="stylesheet" href="css/hero.css">
+  <!-- DEPLOY STEP: og:url y og:image se completan con la URL pública al desplegar -->
+  <meta property="og:title" content="FERSUAZ, una receta mueve a todo un equipo">
+  <meta property="og:url" content="">
+  <meta property="og:image" content="">
 </head>
 <body>
   <a class="skip" href="#contenido">Saltar al contenido</a>
 
   <header class="bar">
-    <a class="brand" href="./" aria-label="FERSUAZ, inicio">FERSUAZ</a>
+    <a class="brand" href="./" aria-label="FERSUAZ, inicio"><img src="assets/brand/fersuaz-logo-color.svg" alt="FERSUAZ Laboratorio Farmacéutico" width="180" height="51"></a>
     <nav aria-label="Principal">
       <a href="#jornada">La jornada</a>
       <a href="#cuentas">Tipos de cuenta</a>
@@ -25,13 +30,55 @@
   </header>
 
   <main id="contenido">
-    <section class="hero">
-      <h1>Cada kilómetro, cada receta y cada peso del equipo comercial, en su lugar.</h1>
-      <div class="hero-foot">
-        <p>FERSUAZ reúne territorios, visitas médicas, recetas, vouchers de farmacia y viáticos de toda la República Dominicana. La gerencia ve el país entero; cada representante ve su ruta del día.</p>
+    <section class="cine" id="inicio" aria-label="Una receta mueve a todo un equipo">
+      <div class="cine-stage">
+        <div class="cine-poster" aria-hidden="true"></div>
+        <video class="cine-video" preload="none" muted playsinline aria-hidden="true" tabindex="-1"></video>
+        <div class="cine-scrim" aria-hidden="true"></div>
+
+        <div class="band band-left" data-band="0" data-a="0" data-b="0.20" data-fx="blur">
+          <p class="band-line">Todo empieza con alguien que necesita sentirse mejor.</p>
+        </div>
+        <div class="band band-left band-top" data-band="1" data-a="0.27" data-b="0.46" data-fx="write">
+          <p class="band-line">Un médico la escucha y le receta un medicamento FERSUAZ.</p>
+        </div>
+        <div class="band band-left" data-band="2" data-a="0.52" data-b="0.71" data-fx="halves">
+          <p class="band-line">En la farmacia del barrio, el dependiente tiene lo que el médico recetó.</p>
+        </div>
+        <div class="band band-left on-sky" data-band="3" data-a="0.745" data-b="0.875" data-fx="breath">
+          <p class="band-line">Ella sigue su tratamiento y vuelve a respirar tranquila.</p>
+        </div>
+        <div class="band band-settle on-sky" data-band="4" data-a="0.885" data-b="1" data-fx="rise">
+          <h1 class="band-line">Una receta mueve a todo un equipo.</h1>
+          <p class="settle-sub">El visitador llegó al médico. El vendedor surtió la farmacia. La promotora registró la receta. FERSUAZ conecta cada paso.</p>
+          <p class="settle-cta"><a class="btn" href="registro.html">Solicitar una cuenta</a></p>
+        </div>
+
+        <svg class="cine-ring" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="126" style="stroke-dashoffset:var(--ld,126)"/></svg>
+      </div>
+
+      <div class="cine-static">
+        <h1>Una receta mueve a todo un equipo.</h1>
+        <p>Del consultorio a la farmacia, FERSUAZ conecta a visitadores, vendedores, promotoras y dependientes en una sola plataforma.</p>
         <a class="btn" href="registro.html">Solicitar una cuenta</a>
       </div>
-      <svg class="hero-thread" viewBox="0 0 100 300" preserveAspectRatio="none" aria-hidden="true"><path d="M50 0 V300"/></svg>
+    </section>
+
+    <section id="tio-dex" class="producto" aria-labelledby="producto-titulo">
+      <figure class="producto-foto">
+        <img src="assets/producto/tio-dex-frasco-y-caja.jpg" srcset="assets/producto/tio-dex-frasco-y-caja-512.jpg 512w, assets/producto/tio-dex-frasco-y-caja.jpg 1024w" sizes="(max-width: 860px) 80vw, 38vw" width="1024" height="1536" alt="Caja y frasco de Tio-Dex jarabe, 120 mL, de FERSUAZ" loading="lazy">
+      </figure>
+      <div class="producto-texto">
+        <p class="producto-marca">Laboratorio FERSUAZ</p>
+        <h2 id="producto-titulo">Tio-Dex jarabe</h2>
+        <p class="producto-tipo">Antitusivo, descongestionante nasal y bronquial. Vía oral, 120 mL.</p>
+        <dl class="producto-datos">
+          <div><dt>Principios activos</dt><dd>Dextrometorfano y sulfaguayacolato</dd></div>
+          <div><dt>Elaborado por</dt><dd>FERSUAZ Farmacéutica S.R.L., La Vega, República Dominicana</dd></div>
+          <div><dt>Registro sanitario</dt><dd>09-0243</dd></div>
+        </dl>
+        <p class="producto-aviso">Lea el prospecto y consulte a su médico.</p>
+      </div>
     </section>
 
     <section id="jornada" class="story" aria-label="Una jornada en FERSUAZ">
@@ -119,11 +166,93 @@
     </section>
   </main>
 
-  <footer class="foot">
-    <span>FERSUAZ, Santo Domingo, República Dominicana</span>
-    <a href="privacidad.html">Política de privacidad</a>
+  <footer class="pie" aria-labelledby="pie-titulo">
+    <h2 id="pie-titulo" class="sr-only">Pie de página</h2>
+    <div class="pie-grid">
+      <div class="pie-marca">
+        <a href="./" class="pie-logo" aria-label="FERSUAZ, inicio"><img src="assets/brand/fersuaz-logo-blanco.svg" alt="FERSUAZ Laboratorio Farmacéutico" width="200" height="56" loading="lazy"></a>
+        <p>Laboratorio farmacéutico dominicano. Esta plataforma conecta a visitadores, vendedores, promotoras y dependientes con la gerencia, del consultorio a la farmacia.</p>
+        <ul class="pie-chips">
+          <li>RNC 1-03-03243-5</li>
+          <li>Reg. Ind. 18704</li>
+          <li>La Vega, República Dominicana</li>
+        </ul>
+      </div>
+      <nav class="pie-col" aria-label="Plataforma">
+        <h3>Plataforma</h3>
+        <ul>
+          <li><a href="./">Inicio</a></li>
+          <li><a href="./#jornada">La jornada</a></li>
+          <li><a href="./#cuentas">Tipos de cuenta</a></li>
+          <li><a href="./#tio-dex">Tio-Dex</a></li>
+        </ul>
+      </nav>
+      <nav class="pie-col" aria-label="Equipo comercial">
+        <h3>Equipo comercial</h3>
+        <ul>
+          <li><a href="registro.html?rol=representante">Representantes</a></li>
+          <li><a href="registro.html?rol=dependiente">Dependientes de farmacia</a></li>
+          <li><a href="registro.html?rol=supervisor">Supervisores</a></li>
+          <li><a href="registro.html?rol=gerencia">Gerencia y finanzas</a></li>
+        </ul>
+      </nav>
+      <nav class="pie-col" aria-label="Cuenta">
+        <h3>Tu cuenta</h3>
+        <ul>
+          <li><a href="registro.html">Crear cuenta</a></li>
+          <li><a href="entrar.html">Iniciar sesión</a></li>
+          <li><a href="entrar.html#recuperar">Recuperar acceso</a></li>
+        </ul>
+      </nav>
+      <nav class="pie-col" aria-label="Legal del sitio">
+        <h3>Legal y contacto</h3>
+        <ul>
+          <li><a href="terminos.html">Términos y condiciones</a></li>
+          <li><a href="privacidad.html">Política de privacidad</a></li>
+          <li><a href="seguridad.html">Seguridad y trazabilidad</a></li>
+          <li><a href="mailto:lfersuaz@gmail.com">lfersuaz@gmail.com</a></li>
+        </ul>
+      </nav>
+    </div>
+
+    <section class="pie-app" aria-labelledby="app-titulo">
+      <div class="pie-telefonos" aria-hidden="true">
+        <div class="tel tel-a">
+          <div class="tel-pantalla">
+            <div class="tel-isla"></div>
+            <img class="tel-logo" src="assets/brand/fersuaz-logo-blanco.svg" alt="" width="90" height="25">
+            <p class="tel-etq">Ruta de hoy</p>
+            <ol class="tel-ruta"><li><span></span>Residencia</li><li><span></span>Clínica</li><li><span></span>Hospital</li><li><span></span>Farmacia</li></ol>
+            <p class="tel-km">Ejemplo</p>
+          </div>
+        </div>
+        <div class="tel tel-b">
+          <div class="tel-pantalla">
+            <div class="tel-isla"></div>
+            <img class="tel-logo" src="assets/brand/fersuaz-logo-blanco.svg" alt="" width="90" height="25">
+            <div class="tel-tarjeta"><p>Comisión de la quincena</p><strong>RD$ 5,000</strong><small>Ejemplo · 100 vouchers al 10 %</small></div>
+            <div class="tel-botones"><span>Cargar voucher</span><span>Ver detalle</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="pie-app-texto">
+        <p class="pie-app-etq">App móvil para iOS y Android</p>
+        <h3 id="app-titulo">FERSUAZ en tu bolsillo</h3>
+        <p>Tu ruta del día, tus recetas y tus vouchers desde el celular. Mientras llega a las tiendas, instálala desde el navegador: abre la web y elige «Agregar a pantalla de inicio».</p>
+        <ul class="pie-tiendas">
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 12.6c0-2.4 2-3.5 2-3.6-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.2-2.8.9-3.5.9-.7 0-1.8-.8-3-.8-1.6 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.7zM14.1 5.6c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.7-1.3z"/></svg><span><small>Próximamente en</small>App Store</span></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 2.3 13.4 12l-9.8 9.7c-.4-.2-.6-.6-.6-1.1V3.4c0-.5.2-.9.6-1.1zm11 8.5 2.6-2.6 3.2 1.8c.9.5.9 1.8 0 2.3l-3.2 1.8-2.6-2.6-.6-.7zm-1.2 1.2 2.4 2.4L5.1 21l8.3-9zm0 0L5.1 3l10.7 6.6-2.4 2.4z"/></svg><span><small>Próximamente en</small>Google Play</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="pie-final">
+      <p>© 2026 FERSUAZ Farmacéutica S.R.L. Todos los derechos reservados. La Vega, República Dominicana.</p>
+      <p>Las personas que aparecen en los videos son generadas con inteligencia artificial.</p>
+    </div>
   </footer>
 
   <script src="js/story.js" defer></script>
+  <script src="js/hero.js" defer></script>
 </body>
 </html>

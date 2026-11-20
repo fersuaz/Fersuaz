@@ -13,8 +13,20 @@ jobs:
     runs-on: ubuntu-latest
     environment: production   # exige aprobación manual si la configuras en GitHub → Environments
     steps:
+      - name: Verificar secretos obligatorios
+        env:
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          DO_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        run: |
+          [ -n "$DO_TOKEN" ] || { echo "::error::Falta el secreto DIGITALOCEAN_ACCESS_TOKEN"; exit 1; }
+          [ ${#SESSION_SECRET} -ge 32 ] || { echo "::error::SESSION_SECRET falta o tiene menos de 32 caracteres"; exit 1; }
       - uses: actions/checkout@v4
       - uses: digitalocean/app_action/deploy@v2
+        env:   # reemplazan los ${...} de .do/app.yaml; los opcionales pueden no existir
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+          SPACES_KEY: ${{ secrets.SPACES_KEY }}
+          SPACES_SECRET: ${{ secrets.SPACES_SECRET }}
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
           app_spec_location: .do/app.yaml
