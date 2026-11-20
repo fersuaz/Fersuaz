@@ -15,6 +15,7 @@ import { actualizarDesdeMicm } from './combustible-micm.js';
 import { SinLugares, crearLugares } from './lugares.js';
 import { createBarrido } from './barrido-google.js';
 import { createHoteles, REQUISITOS } from './hoteles.js';
+import { createInicio } from './inicio.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -73,6 +74,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     if (body.tipo === 'hotel') return { item: await hoteles.crear(me, { ...base, calificacion: d.calificacion }, { fuente: 'google' }) };
     return { item: await t.crearEstablecimiento(me, { ...base, tipo: body.tipo }, { fuente: 'google', verificado: true }) };
   }
+
+  const inicio = createInicio({ data, users: store, v, c, t, now: now ?? (() => new Date()) });
 
   // Registro automático desde Google Maps (recorre municipios y guarda lo que falte)
   const barrido = createBarrido({
@@ -133,6 +136,10 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     return { user, token: signSession({ sub: user.id, role: user.role }, sessionSecret) };
   }, { auth: false });
   ruta('GET', '/api/auth/me', ({ me }) => ({ user: publico(me) }));
+  // Panel de inicio por rol
+  ruta('GET', '/api/inicio', async ({ me, q }) => inicio.resumen(me, q.get('mes')));
+  ruta('GET', '/api/usuarios/dependientes', async ({ me }) => ({ items: await inicio.dependientes(me) }));
+  ruta('POST', /^\/api\/usuarios\/([\w-]+)\/farmacia$/, async ({ me, p, body }) => ({ item: await inicio.ligarFarmacia(me, p[1], body?.farmaciaId, (e) => store.addAudit(e)) }));
   ruta('GET', '/api/auth/pending', async ({ me }) => ({
     pending: (await store.listUsersByStatus('pendiente_aprobacion')).map(publico).filter((u) => u.id !== me.id),
   }));

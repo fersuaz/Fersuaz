@@ -45,7 +45,7 @@ export class PostgresStore {
   #map(r) {
     return r && {
       id: r.id, fullName: r.full_name, email: r.email, phone: r.phone, role: r.role,
-      position: r.position, pharmacy: r.pharmacy_text, province: r.province_text, passwordHash: r.password_hash, status: r.status,
+      position: r.position, pharmacy: r.pharmacy_text, province: r.province_text, farmaciaId: r.farmacia_id ?? null, passwordHash: r.password_hash, status: r.status,
       approvedBy: r.approved_by, createdAt: r.created_at,
     };
   }
@@ -70,8 +70,9 @@ export class PostgresStore {
     const { rows } = await this.pool.query(
       `UPDATE users SET status = COALESCE($2, status), approved_by = COALESCE($3, approved_by),
        email = COALESCE($4, email), password_hash = COALESCE($5, password_hash), position = COALESCE($6, position),
+       farmacia_id = CASE WHEN $7::boolean THEN $8::uuid ELSE farmacia_id END,
        updated_at = now() WHERE id = $1 RETURNING *`,
-      [id, patch.status ?? null, patch.approvedBy ?? null, patch.email ?? null, patch.passwordHash ?? null, patch.position ?? null],
+      [id, patch.status ?? null, patch.approvedBy ?? null, patch.email ?? null, patch.passwordHash ?? null, patch.position ?? null, 'farmaciaId' in patch, patch.farmaciaId ?? null],
     );
     return this.#map(rows[0]);
   }

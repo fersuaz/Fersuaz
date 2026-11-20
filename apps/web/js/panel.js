@@ -88,6 +88,21 @@ const tabla = (cols, filas, vacio) => filas.length
       h('tbody', {}, filas.map((f) => h('tr', {}, cols.map((c) => h('td', { 'data-label': c.t, class: c.num ? 'num' : null }, h('span', { class: 'celda' }, c.v(f)))))))))
   : h('div', { class: 'tarjeta vacio' }, h('strong', {}, vacio[0]), vacio[1]);
 const vista = (titulo, sub, ...contenido) => [h('h1', {}, titulo), sub ? h('p', { class: 'vista-sub' }, sub) : null, ...contenido];
+/** Marca bloques como una sección; `vistaS` las muestra con un control segmentado (una a la vez). */
+const S = (id, label, ...nodos) => ({ __sec: id, label, nodos: nodos.flat().filter(Boolean) });
+function vistaS(ruta, orden, titulo, sub, ...contenido) {
+  const fijos = []; const grupos = new Map();
+  for (const b of contenido.flat()) {
+    if (!b) continue;
+    if (b.__sec) { const g = grupos.get(b.__sec) ?? { label: b.label, nodos: [] }; g.nodos.push(...b.nodos); grupos.set(b.__sec, g); } else fijos.push(b);
+  }
+  const ids = [...orden.filter((id) => grupos.get(id)?.nodos.length), ...[...grupos.keys()].filter((id) => !orden.includes(id) && grupos.get(id).nodos.length)];
+  if (!ids.length) return vista(titulo, sub, ...fijos);
+  const q = Object.fromEntries(new URLSearchParams(location.hash.split('?')[1]));
+  const actual = ids.includes(q.sec) ? q.sec : ids[0];
+  const seg = ids.length > 1 ? segmentos(titulo, ids.map((id) => [id, grupos.get(id).label]), actual, (id) => irA(ruta, { ...q, sec: id })) : null;
+  return vista(titulo, sub, ...fijos, seg, ...grupos.get(actual).nodos);
+}
 
 // ---------------------------------------------------------------- catálogos compartidos
 let cache = {};
@@ -341,12 +356,37 @@ V.solicitudes = async () => {
     try { await api('POST', `/api/auth/requests/${u.id}/${ok ? 'aprobar' : 'rechazar'}`); } catch (e) { alert(e.message); }
     router();
   };
-  return vista('Solicitudes de cuenta', 'Solo puedes decidir las solicitudes que tu rol permite aprobar.', tabla([
+  const deps = await api('GET', '/api/usuarios/dependientes').then((x) => x.items).catch(() => []);
+  const ligar = async (d) => {
+    const opciones = d.candidatas.length ? d.candidatas : [];
+    const dlg = $('#dialogo'); $('#dialogo-titulo').textContent = `Farmacia de ${d.nombre}`;
+    const sel = h('select', { id: 'dep-farm', style: 'width:100%;padding:.6rem;border:1.5px solid var(--linea);border-radius:12px;font:inherit' }, h('option', { value: '' }, 'Elige la farmacia'), ...opciones.map((f) => h('option', { value: f.id }, `${f.nombre} (${f.municipio}, ${f.provincia})`)));
+    const busc = h('input', { id: 'dep-busca', type: 'search', placeholder: 'Escribe parte del nombre', style: 'width:100%;padding:.6rem;border:1.5px solid var(--linea);border-radius:12px;font:inherit' });
+    let todas = null;
+    busc.addEventListener('input', async () => {
+      todas ??= (await api('GET', '/api/catalogo/farmacias')).items;
+      const k = busc.value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const xs = todas.filter((f) => f.nombre.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(k)).slice(0, 40);
+      sel.replaceChildren(h('option', { value: '' }, xs.length ? 'Elige la farmacia' : 'Sin resultados'), ...xs.map((f) => h('option', { value: f.id }, `${f.nombre} (${f.municipio}, ${f.provincia})`)));
+    });
+    $('#dialogo-cuerpo').replaceChildren(h('p', { class: 'hint' }, `Escribió: ${d.escrita ?? 'sin farmacia'}${d.provinciaEscrita ? `, ${d.provinciaEscrita}` : ''}.`), h('label', { for: 'dep-busca', class: 'hint' }, 'Buscar en el catálogo'), busc, h('label', { for: 'dep-farm', class: 'hint', style: 'display:block;margin-top:.75rem' }, 'Farmacia'), sel);
+    $('#dialogo-ok').textContent = 'Guardar'; dlg.showModal();
+    const ok = await new Promise((res) => dlg.addEventListener('close', () => res(dlg.returnValue === 'ok'), { once: true }));
+    if (!ok || !sel.value) return;
+    try { await api('POST', `/api/usuarios/${d.id}/farmacia`, { farmaciaId: sel.value }); } catch (e) { alert(e.message); }
+    router();
+  };
+  const tablaDeps = tabla([
+    { t: 'Dependiente', v: (d) => [d.nombre, d.escrita ? h('small', { style: 'display:block;color:var(--texto-2)' }, `Escribió: ${d.escrita}`) : null] },
+    { t: 'Farmacia', v: (d) => d.farmacia ? [d.farmacia.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, [d.farmacia.sector, d.farmacia.municipio, d.farmacia.provincia].filter(Boolean).join(', '))] : h('span', { class: 'chip pendiente' }, 'Sin ligar') },
+    { t: '', v: (d) => yo.role !== 'finanzas' ? h('button', { class: 'btn-sec btn-peq', onclick: () => ligar(d) }, d.farmacia ? 'Cambiar' : 'Ligar') : '' },
+  ], deps, ['No hay dependientes activas', 'Aparecen aquí cuando se aprueban sus cuentas.']);
+  return vistaS('solicitudes', ['pendientes', 'dependientes'], 'Solicitudes de cuenta', 'Solo puedes decidir las solicitudes que tu rol permite aprobar. Liga a cada dependiente con su farmacia del catálogo para ubicarla por provincia, municipio y sector.', S('dependientes', `Dependientes y su farmacia (${fmtN.format(deps.length)})`, tablaDeps), S('pendientes', `Pendientes (${fmtN.format(pending.length)})`, tabla([
     { t: 'Nombre', v: (u) => [u.fullName, h('small', { style: 'display:block;color:var(--texto-2)' }, u.email)] },
     { t: 'Rol', v: (u) => `${ROLES[u.role]}${u.position ? `, ${u.position}` : ''}` }, { t: 'Farmacia', v: (u) => u.pharmacy ? `${u.pharmacy}, ${u.province}` : '' },
     { t: 'Fecha', v: (u) => fecha(u.createdAt) },
     { t: '', v: (u) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' }, h('button', { class: 'btn btn-peq', onclick: () => decidir(u, true) }, 'Aprobar'), h('button', { class: 'btn-sec btn-peq', onclick: () => decidir(u, false) }, 'Rechazar')) },
-  ], pending, ['No hay solicitudes pendientes', 'Las nuevas cuentas aparecerán aquí.']));
+  ], pending, ['No hay solicitudes pendientes', 'Las nuevas cuentas aparecerán aquí.'])));
 };
 V.pronto = async () => vista('Tu panel', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay módulos para tu rol todavía'), 'Pide a la gerencia que revise los permisos de tu cuenta.'));
 
@@ -414,23 +454,21 @@ V.jornadas = async () => {
     return vista('Crear jornada', 'Los lugares y el día los programó el administrador. El sistema calcula el recorrido, el combustible y los viáticos.', form);
   }
   bloques.push(filtroMes(mes, 'jornadas', null, { futuro: true }),
-    h('h2', { style: 'margin:1rem 0 .75rem;font-size:1.2rem' }, 'Mi cronograma'),
-    tabla([
+    S('cronograma', `Mi cronograma (${fmtN.format(crons.length)})`, tabla([
       { t: 'Día', v: (c) => fecha(c.fecha) },
       { t: 'Lugares', v: (c) => c.lugares.map((l) => l.lugar).join(', ') },
       { t: 'Estado', v: (c) => c.jornadaId ? h('span', { class: 'chip aprobado' }, 'Jornada creada') : h('span', { class: 'chip pendiente' }, 'Por planificar') },
       { t: '', v: (c) => c.jornadaId ? '' : h('a', { class: 'btn btn-peq', href: `#jornadas?mes=${mes}&cron=${c.id}` }, 'Crear jornada') },
-    ], crons, ['No tienes días programados este mes', 'El administrador programa tu cronograma; te llegará una notificación.']),
-    h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Jornadas del mes'),
-    tabla([
+    ], crons, ['No tienes días programados este mes', 'El administrador programa tu cronograma; te llegará una notificación.'])),
+    S('jornadas', `Jornadas del mes (${fmtN.format(items.length)})`, tabla([
       { t: 'Fecha', v: (j) => fecha(j.fecha) }, { t: 'Recorrido', v: (j) => j.paradas.map((p) => p.lugar).join(' → ') },
       { t: 'Km', num: true, v: (j) => [fmtN.format(j.kmEstimados), h('small', { style: 'display:block;color:var(--texto-2)' }, j.kmFuente === 'google' ? 'mapa' : 'manual'), j.kmReales != null ? h('small', { style: 'display:block' }, `real ${fmtN.format(j.kmReales)}`) : null] },
       { t: 'Hotel', v: (j) => j.hospedaje ? [`${j.hospedaje.noches} noche(s)`, ' ', chipP(j.hospedaje.estado)] : 'No' },
       { t: 'Estado', v: (j) => chipP(j.estado) },
       { t: '', v: (j) => j.estado === 'planificada' ? h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' },
         j.fecha <= hoy() ? h('button', { class: 'btn btn-peq', onclick: () => accion(j, 'realizada') }, 'Realizada') : null, h('button', { class: 'btn-sec btn-peq', onclick: () => accion(j, 'cancelar') }, 'Cancelar')) : '' },
-    ], items, ['No hay jornadas en este mes', 'Crea tus jornadas desde tu cronograma.']));
-  return vista('Mis jornadas', 'Tu cronograma lo programa el administrador; desde cada día creas tu jornada y el sistema calcula la ruta y los viáticos.', ...bloques);
+    ], items, ['No hay jornadas en este mes', 'Crea tus jornadas desde tu cronograma.'])));
+  return vistaS('jornadas', ['cronograma', 'jornadas'], 'Mis jornadas', 'Tu cronograma lo programa el administrador; desde cada día creas tu jornada y el sistema calcula la ruta y los viáticos.', ...bloques);
 };
 
 /** Propuesta automática del mes (solo administrador): el sistema reparte los lugares de la zona; el admin ajusta y aprueba. */
@@ -480,7 +518,7 @@ async function propuestaMes(rep, mes, div) {
         .filter((d) => d.lugares.length);
       if (!(await confirmar('Aprobar cronograma', `Se aprobarán ${dias.length} día(s) con ${dias.reduce((n, d) => n + d.lugares.length, 0)} lugares. El representante recibirá un aviso y podrá crear sus jornadas.`, { okTexto: 'Aprobar' }))) return;
       aprobar.disabled = true; aprobar.textContent = 'Aprobando…';
-      try { await api('POST', '/api/cronogramas/lote', { representanteId: rep, dias }); router(); }
+      try { await api('POST', '/api/cronogramas/lote', { representanteId: rep, dias }); irA('cronogramas', { mes, rep, sec: 'dias' }); }
       catch (err) { const a = h('div', { role: 'status' }); estado(a, 'error', err.message); salida.prepend(a); contar(); }
     });
     const avisos = [];
@@ -505,7 +543,7 @@ V.cronogramas = async () => {
   if (esAdmin) {
     if (!zona.provincias.length) bloques.push(h('div', { class: 'aviso error' }, 'Este representante no tiene provincias asignadas. ', h('a', { href: `#representantes?rep=${rep}` }, 'Asignar provincias')));
     else {
-      bloques.push(await propuestaMes(rep, mes, div));
+      bloques.push(S('propuesta', 'Propuesta automática', await propuestaMes(rep, mes, div)));
       const lugares = [...lz.establecimientos.map((x) => ({ ...x, refTipo: 'establecimiento', etiqueta: div.tipos[x.tipo] })), ...lz.farmacias.map((x) => ({ ...x, refTipo: 'farmacia', etiqueta: 'Farmacia' }))]
         .sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
       // Días del mes como botones
@@ -522,7 +560,7 @@ V.cronogramas = async () => {
       const lista = h('div', { class: 'lugares-lista' }, lugares.map((l) => h('label', { dataset: { mun: l.municipio } }, h('input', { type: 'checkbox', name: 'lugar', value: `${l.refTipo}:${l.id}` }), h('span', {}, l.nombre, h('small', {}, `${l.etiqueta} · ${l.municipio}, ${l.provincia}`)))));
       fmun.querySelector('select').addEventListener('change', (e) => lista.querySelectorAll('label').forEach((x) => { x.hidden = !!e.target.value && x.dataset.mun !== e.target.value; }));
       const b = h('button', { class: 'btn', type: 'submit' }, 'Aprobar cronograma');
-      const f = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-top:1.25rem' }, h('h2', {}, 'Programar días a mano'),
+      const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Programar días a mano'),
         h('p', { class: 'hint' }, `Zona: ${zona.provincias.map((p) => (zona.municipios?.[p]?.length ? `${p} (${zona.municipios[p].join(', ')})` : p)).join('; ')}. Elige los días y los lugares; el orden de visita lo calcula el sistema por distancia.`),
         h('p', { class: 'error', dataset: { for: 'fechas' } }), dias,
         lugares.length ? [fmun, h('p', { class: 'error', dataset: { for: 'lugares' } }), lista] : h('div', { class: 'aviso' }, 'No hay lugares registrados en sus provincias. ', h('a', { href: '#establecimientos' }, 'Registrar establecimientos')),
@@ -530,18 +568,18 @@ V.cronogramas = async () => {
       f.addEventListener('submit', async (e) => {
         e.preventDefault();
         const sel = [...f.querySelectorAll('[name=lugar]:checked')].map((x) => { const [refTipo, refId] = x.value.split(':'); return { refTipo, refId }; });
-        if (await enviar(f, b, () => api('POST', '/api/cronogramas', { representanteId: rep, fechas: [...elegidos].sort(), lugares: sel, nota: f.nota.value }))) router();
+        if (await enviar(f, b, () => api('POST', '/api/cronogramas', { representanteId: rep, fechas: [...elegidos].sort(), lugares: sel, nota: f.nota.value }))) irA('cronogramas', { mes, rep, sec: 'dias' });
       });
-      bloques.push(f);
+      bloques.push(S('mano', 'Programar a mano', f));
     }
   }
   const anular = async (c) => { const m = await confirmar('Anular cronograma', `El representante dejará de ver el día ${fecha(c.fecha)}. Escribe el motivo.`, { okTexto: 'Anular', pedirMotivo: true }); if (m == null) return; try { await api('POST', `/api/cronogramas/${c.id}/anular`, { motivo: m }); } catch (e) { alert(e.message); } router(); };
-  bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Días programados'),
+  bloques.push(S('dias', `Días programados (${fmtN.format(crons.filter((c) => c.estado === 'aprobado').length)})`,
     tabla([{ t: 'Día', v: (c) => fecha(c.fecha) }, { t: 'Lugares', v: (c) => c.lugares.map((l) => l.lugar).join(', ') },
       { t: 'Estado', v: (c) => c.estado === 'anulado' ? [h('span', { class: 'chip anulado' }, 'Anulado'), c.motivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, c.motivo) : null] : c.jornadaId ? h('span', { class: 'chip aprobado' }, 'Jornada creada') : h('span', { class: 'chip pendiente' }, 'Aprobado') },
       { t: '', v: (c) => esAdmin && c.estado === 'aprobado' && !c.jornadaId ? h('button', { class: 'btn-sec btn-peq', onclick: () => anular(c) }, 'Anular') : '' }],
-    crons, ['Sin días programados en este mes', esAdmin ? 'Elige días y lugares arriba.' : 'El administrador aún no programa este mes.']));
-  return vista('Cronogramas', 'El administrador programa y aprueba los días y lugares de cada representante.', ...bloques);
+    crons, ['Sin días programados en este mes', esAdmin ? 'Usa la propuesta automática o programa a mano.' : 'El administrador aún no programa este mes.'])));
+  return vistaS('cronogramas', ['propuesta', 'mano', 'dias'], 'Cronogramas', 'El administrador programa y aprueba los días y lugares de cada representante.', ...bloques);
 };
 
 // ---------------------------------------------------------------- campana de notificaciones
@@ -601,10 +639,10 @@ V.presupuesto = async () => {
         } }, 'Solicitar viáticos'))));
     }
   } else {
-    bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Presupuesto solicitado'), desglose(p.detalle, p.total)), bloqueResumen(p));
+    bloques.push(S('resumen', 'Presupuesto', h('div', { class: 'tarjeta' }, h('h2', {}, 'Presupuesto solicitado'), desglose(p.detalle, p.total)), bloqueResumen(p)));
     if (['aprobado', 'desembolsado'].includes(p.estado)) {
       const b = h('button', { class: 'btn', type: 'submit' }, 'Reportar gasto');
-      const f = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-top:1.25rem' }, h('h2', {}, 'Reportar un gasto'),
+      const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Reportar un gasto'),
         h('div', { class: 'form-fila' }, campo('categoria', 'Categoría', { options: Object.entries(CAT).map(([value, label]) => ({ value, label })) }), campo('monto', 'Monto RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }),
           campo('fecha', 'Fecha', { type: 'date', value: hoy().startsWith(mes) ? hoy() : `${mes}-01`, min: `${mes}-01`, max: hoy() }), campo('referencia', 'Factura o NCF')),
         campo('adjunto', 'Comprobante', { type: 'file', accept: 'image/jpeg,image/png,image/webp,application/pdf', capture: 'environment' }, '(foto o PDF, hasta 5 MB)'), campo('nota', 'Nota', {}, '(opcional)'),
@@ -619,11 +657,11 @@ V.presupuesto = async () => {
         });
         if (r) router();
       });
-      bloques.push(f);
+      bloques.push(S('reportar', 'Reportar gasto', f));
     }
-    bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Gastos reportados'), tablaGastos(p));
+    bloques.push(S('gastos', `Gastos reportados (${fmtN.format(p.gastos?.length ?? 0)})`, tablaGastos(p)));
   }
-  return vista('Mi presupuesto de viáticos', 'Se calcula con tus jornadas del mes, el rendimiento de tu vehículo y el precio vigente del combustible.', ...bloques);
+  return vistaS('presupuesto', ['resumen', 'reportar', 'gastos'], 'Mi presupuesto de viáticos', 'Se calcula con tus jornadas del mes, el rendimiento de tu vehículo y el precio vigente del combustible.', ...bloques);
 };
 
 V.perfiles = async () => {
@@ -643,13 +681,13 @@ V.perfiles = async () => {
     if (ES_GER()) {
       const { item: tg } = await api('GET', '/api/viaticos/tope-global');
       const bt = h('button', { class: 'btn', type: 'submit' }, 'Guardar tope');
-      const ft = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-bottom:1.5rem' }, h('h2', {}, 'Tope mensual global de combustible o transporte'),
+      const ft = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Tope mensual global de combustible o transporte'),
         h('p', { class: 'hint' }, 'Se aplica a todos los representantes que no tengan un tope propio. El combustible se calcula por los km del cronograma; si pasa del tope, se presupuesta el tope y se avisa. Déjalo vacío para no usar tope.'),
         h('div', { class: 'form-fila' }, campo('monto', 'Tope mensual RD$', { type: 'number', min: 0, step: 0.01, value: tg.monto ?? '', inputmode: 'decimal' })), h('div', { class: 'acciones' }, bt));
       ft.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(ft, bt, () => api('POST', '/api/viaticos/tope-global', { monto: ft.monto.value || null }))) router(); });
-      bloques.push(ft);
+      bloques.push(S('tope', 'Tope global', ft));
     }
-    return vista('Perfiles de viático', 'Vehículo, residencia, tarifa y tope de cada representante. La dirección exacta solo la ven la gerencia y el propio representante.', ...bloques, lista);
+    return vistaS('perfiles', ['lista', 'tope'], 'Perfiles de viático', 'Vehículo, residencia, tarifa y tope de cada representante. La dirección exacta solo la ven la gerencia y el propio representante.', S('lista', 'Representantes', lista), ...bloques);
   }
   const r = reps.find((x) => x.id === id); const pf = (await api('GET', `/api/viaticos/perfiles/${id}`)).item;
   const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar perfil');
@@ -690,22 +728,21 @@ V.precios = async () => {
       try { await api('POST', '/api/viaticos/precios/micm'); } catch (e) { alert(e.message); }
       router();
     } }, 'Revisar el MICM ahora')) : null);
-  bloques.push(estadoMicm);
+  bloques.push(S('micm', 'Actualización MICM', estadoMicm));
   if (puede) {
     const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar precio');
-    const f = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-top:1.25rem' }, h('h2', {}, 'Registrar a mano'),
+    const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Registrar a mano'),
       h('p', { class: 'hint' }, 'Úsalo solo si el MICM no se pudo leer. Un precio registrado a mano no se sobrescribe.'),
       h('div', { class: 'form-fila' }, campo('combustible', 'Combustible', { options: combs.filter((c) => !['hibrido', 'electrico'].includes(c.value)) }),
         campo('precioGalon', 'Precio por galón RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }), campo('vigenteDesde', 'Vigente desde', { type: 'date', value: hoy() })),
       h('div', { class: 'acciones' }, b));
-    f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/viaticos/precios', { combustible: f.combustible.value, precioGalon: f.precioGalon.value, vigenteDesde: f.vigenteDesde.value }))) router(); });
-    bloques.push(f);
+    f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/viaticos/precios', { combustible: f.combustible.value, precioGalon: f.precioGalon.value, vigenteDesde: f.vigenteDesde.value }))) irA('precios', {}); });
+    bloques.push(S('manual', 'Registrar a mano', f));
   }
-  bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Historial de precios'),
-    tabla([{ t: 'Combustible', v: (p) => combs.find((c) => c.value === p.combustible)?.label ?? p.combustible }, { t: 'Precio por galón', num: true, v: (p) => RD(p.precioGalon) }, { t: 'Vigente desde', v: (p) => fecha(p.vigenteDesde) },
+  bloques.push(S('historial', 'Historial de precios', tabla([{ t: 'Combustible', v: (p) => combs.find((c) => c.value === p.combustible)?.label ?? p.combustible }, { t: 'Precio por galón', num: true, v: (p) => RD(p.precioGalon) }, { t: 'Vigente desde', v: (p) => fecha(p.vigenteDesde) },
       { t: 'Fuente', v: (p) => p.fuente === 'micm' ? h('a', { href: p.enlace, target: '_blank', rel: 'noopener' }, 'Aviso MICM') : 'Manual' }],
-    items, ['Aún no hay precios registrados', 'Se cargarán solos con el próximo aviso del MICM, o puedes revisarlo ahora.']));
-  return vista('Precios de combustible', 'Cada jornada usa el precio vigente en su fecha. Los presupuestos ya aprobados no cambian.', ...bloques);
+    items, ['Aún no hay precios registrados', 'Se cargarán solos con el próximo aviso del MICM, o puedes revisarlo ahora.'])));
+  return vistaS('precios', ['historial', 'micm', 'manual'], 'Precios de combustible', 'Cada jornada usa el precio vigente en su fecha. Los presupuestos ya aprobados no cambian.', ...bloques);
 };
 V.viaticos = async () => {
   const mes = mesDe();
@@ -927,7 +964,7 @@ async function registroAutomatico(tipos) {
 
 V.catalogo = async () => {
   const ver = param('ver') || 'medicamentos';
-  const seg = segmentos('Secciones del catálogo', [['medicamentos', 'Medicamentos'], ['farmacias', 'Farmacias'], ['medicos', 'Médicos']], ver, (id) => irA('catalogo', { ver: id }));
+  const seg = h('div', { class: 'segmentos-doble' }, segmentos('Secciones del catálogo', [['medicamentos', 'Medicamentos'], ['farmacias', 'Farmacias'], ['medicos', 'Médicos']], ver, (id) => irA('catalogo', { ver: id })));
   const validar = async (col, id) => { try { await api('POST', `/api/catalogo/${col}/${id}/validar`); router(); } catch (e) { alert(e.message); } };
   const bloques = [seg];
   if (ver === 'medicamentos') {
@@ -937,18 +974,17 @@ V.catalogo = async () => {
       const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo medicamento'),
         h('div', { class: 'form-fila' }, campo('nombre', 'Nombre'), campo('linea', 'Línea', {}, '(opcional)'), campo('presentacion', 'Presentación', {}, '(opcional)'), campo('precio', 'Precio RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }, '(opcional)')),
         h('div', { class: 'acciones' }, b));
-      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/medicamentos', { nombre: f.nombre.value, linea: f.linea.value, presentacion: f.presentacion.value, precio: f.precio.value || undefined }))) { cache = {}; router(); } });
-      bloques.push(f);
+      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/medicamentos', { nombre: f.nombre.value, linea: f.linea.value, presentacion: f.presentacion.value, precio: f.precio.value || undefined }))) { cache = {}; irA('catalogo', { ver: 'medicamentos' }); } });
+      bloques.push(S('nuevo', 'Nuevo medicamento', f));
     }
     const historial = async (m) => {
       const { items } = await api('GET', `/api/catalogo/medicamentos/${m.id}/precios`);
       await confirmar(`Precios de ${m.nombre}`, items.length ? items.map((p) => `${fecha(p.vigenteDesde)}: ${RD(p.precio)} (${p.fuente})`).join('  ·  ') : 'Sin historial de precios.', { okTexto: 'Cerrar' });
     };
-    bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Medicamentos'),
-      tabla([{ t: 'Nombre', v: (m) => m.nombre }, { t: 'Línea', v: (m) => m.linea ?? '' }, { t: 'Presentación', v: (m) => m.presentacion ?? '' },
+    bloques.push(S('lista', `Medicamentos (${fmtN.format(ms.length)})`, tabla([{ t: 'Nombre', v: (m) => m.nombre }, { t: 'Línea', v: (m) => m.linea ?? '' }, { t: 'Presentación', v: (m) => m.presentacion ?? '' },
         { t: 'Precio', num: true, v: (m) => m.precio != null ? RD(m.precio) : 'Sin precio' },
-        { t: '', v: (m) => h('button', { class: 'btn-enlace', type: 'button', onclick: () => historial(m) }, 'Historial') }], ms, ['Catálogo vacío', 'Agrega los medicamentos de FERSUAZ o impórtalos desde Excel.']));
-    if (ES_GER()) bloques.push(h('div', { style: 'margin-top:1.5rem' }, importador('medicamentos', 'Importar medicamentos y precios', 'Si el medicamento ya existe con esa presentación, se actualiza el precio y el anterior queda en el historial.', router)));
+        { t: '', v: (m) => h('button', { class: 'btn-enlace', type: 'button', onclick: () => historial(m) }, 'Historial') }], ms, ['Catálogo vacío', 'Agrega los medicamentos de FERSUAZ o impórtalos desde Excel.'])));
+    if (ES_GER()) bloques.push(S('importar', 'Importar Excel', importador('medicamentos', 'Importar medicamentos y precios', 'Si el medicamento ya existe con esa presentación, se actualiza el precio y el anterior queda en el historial.', router)));
   } else if (ver === 'farmacias') {
     const [fs, div] = await Promise.all([api('GET', '/api/catalogo/farmacias'), division()]);
     const fprov = param('provincia') || '';
@@ -956,24 +992,25 @@ V.catalogo = async () => {
       const z = selectorZona(div.provincias, div.municipios);
       const b = h('button', { class: 'btn', type: 'submit' }, 'Agregar farmacia');
       const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nueva farmacia'),
-        h('div', { class: 'form-fila' }, campo('nombre', 'Nombre'), z.fp, z.fm, campo('sector', 'Sector', {}, '(opcional)'), campo('direccion', 'Dirección', {}, '(opcional)'), campo('telefono', 'Teléfono', { inputmode: 'tel' }, '(opcional)')),
+        h('div', { class: 'form-fila' }, campo('nombre', 'Nombre'), z.fp, z.fm, campo('sector', 'Sector o distrito municipal', {}, '(opcional)'), campo('direccion', 'Dirección', {}, '(opcional)'), campo('telefono', 'Teléfono', { inputmode: 'tel' }, '(opcional)')),
         h('div', { class: 'acciones' }, b));
-      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/farmacias', { nombre: f.nombre.value, provincia: z.sp.value, municipio: z.sm.value, sector: f.sector.value, direccion: f.direccion.value, telefono: f.telefono.value }))) router(); });
-      bloques.push(f);
+      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/farmacias', { nombre: f.nombre.value, provincia: z.sp.value, municipio: z.sm.value, sector: f.sector.value, direccion: f.direccion.value, telefono: f.telefono.value }))) irA('catalogo', { ver: 'farmacias' }); });
+      bloques.push(S('nueva', 'Nueva farmacia', f));
     }
     const filtro = campo('fprov', 'Filtrar por provincia', { options: div.provincias.map((p) => ({ value: p, label: p })), value: fprov, placeholder: 'Todas las provincias' });
     filtro.querySelector('select').addEventListener('change', (e) => irA('catalogo', { ver: 'farmacias', provincia: e.target.value }));
     const lista = fs.items.filter((x) => !fprov || x.provincia === fprov).sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
-    bloques.push(h('div', { style: 'display:flex;justify-content:space-between;align-items:end;gap:1rem;flex-wrap:wrap;margin:1.5rem 0 .75rem' }, h('h2', { style: 'margin:0;font-size:1.2rem' }, `Farmacias (${fmtN.format(lista.length)})`), h('div', { style: 'min-width:14rem' }, filtro)),
+    bloques.push(S('lista', `Farmacias (${fmtN.format(lista.length)})`, h('div', { style: 'max-width:20rem;margin-bottom:1rem' }, filtro),
       tabla([{ t: 'Nombre', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
-        { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('farmacias', x.id) }, 'Validar') : '' }], lista, ['Aún no hay farmacias', 'Agrégalas a mano, impórtalas desde Excel o búscalas en Google Maps.']));
-    if (GESTION_T()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, importador('farmacias', 'Importar farmacias', 'Provincia y municipio deben ser oficiales. Las que ya existen en el mismo municipio no se duplican.', router), await buscadorGoogle([['farmacia', 'Farmacias']], null), ES_GER() ? await registroAutomatico([['farmacia', 'Farmacias']]) : null));
+        { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('farmacias', x.id) }, 'Validar') : '' }], lista, ['Aún no hay farmacias', 'Agrégalas a mano, impórtalas desde Excel o búscalas en Google Maps.'])));
+    if (GESTION_T()) bloques.push(S('importar', 'Importar Excel', importador('farmacias', 'Importar farmacias', 'Provincia y municipio deben ser oficiales. Las que ya existen en el mismo municipio no se duplican.', router)),
+      S('google', 'Buscar en Google', await buscadorGoogle([['farmacia', 'Farmacias']], null)), ES_GER() ? S('auto', 'Registro automático', await registroAutomatico([['farmacia', 'Farmacias']])) : null);
   } else {
     const mds = await api('GET', '/api/catalogo/medicos');
     bloques.push(tabla([{ t: 'Nombre', v: (x) => x.nombre }, { t: 'Especialidad', v: (x) => x.especialidad }, { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
       { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('medicos', x.id) }, 'Validar') : '' }], mds.items, ['Aún no hay médicos', 'Las promotoras los agregan al cargar recetas.']));
   }
-  return vista('Catálogo', 'Lo que agregan las promotoras y los vendedores queda pendiente hasta que la gerencia lo valida.', ...bloques);
+  return vistaS('catalogo', ['lista', 'nuevo', 'nueva', 'importar', 'google', 'auto'], 'Catálogo', 'Lo que agregan las promotoras y los vendedores queda pendiente hasta que la gerencia lo valida.', ...bloques);
 };
 
 V.establecimientos = async () => {
@@ -987,22 +1024,23 @@ V.establecimientos = async () => {
   const tipos = Object.entries(div.tipos);
   const fz = selectorZona(provincias, div.municipios, { provincia: fprov, municipio: fmun, prefijo: 'f' });
   const ft = campo('ftipo', 'Tipo', { options: tipos.map(([value, label]) => ({ value, label })), value: ftipo, placeholder: 'Todos los tipos' });
-  const aplicar = () => irA('establecimientos', Object.fromEntries(Object.entries({ provincia: fz.sp.value, municipio: fz.sm.value, tipo: ft.querySelector('select').value }).filter(([, v]) => v)));
+  const aplicar = () => irA('establecimientos', Object.fromEntries(Object.entries({ sec: 'lista', provincia: fz.sp.value, municipio: fz.sm.value, tipo: ft.querySelector('select').value }).filter(([, v]) => v)));
   fz.sm.addEventListener('change', aplicar); ft.querySelector('select').addEventListener('change', aplicar);
   fz.sp.addEventListener('change', () => { if (!fz.sp.value) aplicar(); });
   const z = selectorZona(provincias, div.municipios, { provincia: fprov, municipio: fmun });
   const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar establecimiento');
   const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo establecimiento'),
-    h('div', { class: 'form-fila' }, campo('tipo', 'Tipo', { options: tipos.map(([value, label]) => ({ value, label })) }), campo('nombre', 'Nombre'), z.fp, z.fm, campo('sector', 'Sector', {}, '(opcional)'), campo('direccion', 'Dirección', {}, '(opcional)'), campo('telefono', 'Teléfono', { inputmode: 'tel' }, '(opcional)')),
+    h('div', { class: 'form-fila' }, campo('tipo', 'Tipo', { options: tipos.map(([value, label]) => ({ value, label })) }), campo('nombre', 'Nombre'), z.fp, z.fm, campo('sector', 'Sector o distrito municipal', {}, '(opcional)'), campo('direccion', 'Dirección', {}, '(opcional)'), campo('telefono', 'Teléfono', { inputmode: 'tel' }, '(opcional)')),
     h('p', { class: 'hint' }, GESTION_T() ? 'Queda validado de inmediato.' : 'Queda pendiente hasta que tu supervisor lo valide.'), h('div', { class: 'acciones' }, b));
-  f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/territorio/establecimientos', { tipo: f.tipo.value, nombre: f.nombre.value, provincia: z.sp.value, municipio: z.sm.value, sector: f.sector.value, direccion: f.direccion.value, telefono: f.telefono.value }))) router(); });
+  f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/territorio/establecimientos', { tipo: f.tipo.value, nombre: f.nombre.value, provincia: z.sp.value, municipio: z.sm.value, sector: f.sector.value, direccion: f.direccion.value, telefono: f.telefono.value }))) irA('establecimientos', {}); });
   const validar = async (x) => { try { await api('POST', `/api/territorio/establecimientos/${x.id}/validar`); router(); } catch (e) { alert(e.message); } };
-  const bloques = [f, h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, `Registrados (${fmtN.format(items.length)})`), h('div', { class: 'form-fila' }, fz.fp, fz.fm, ft),
+  const bloques = [S('nuevo', 'Nuevo', f), S('lista', `Registrados (${fmtN.format(items.length)})`, h('div', { class: 'form-fila' }, fz.fp, fz.fm, ft),
     tabla([{ t: 'Nombre', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] }, { t: 'Tipo', v: (x) => div.tipos[x.tipo] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` },
       { t: 'Estado', v: (x) => chip(x.estado) }, { t: '', v: (x) => GESTION_T() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar(x) }, 'Validar') : '' }],
-    items, ['No hay establecimientos con estos filtros', 'Regístralos aquí; tu supervisor también puede importarlos desde Excel.'])];
-  if (GESTION_T()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, importador('establecimientos', 'Importar clínicas, hospitales, UNAP y centros', 'Tipo, nombre, provincia y municipio son obligatorios. Los que ya existen en el mismo municipio no se duplican.', router), await buscadorGoogle(tipos, null), ES_GER() ? await registroAutomatico([['salud', 'Hospitales, clínicas, UNAP y centros de primer nivel (todo junto)'], ...tipos]) : null));
-  return vista('Establecimientos', 'Clínicas, hospitales, UNAP y centros de primer nivel por municipio. Se usan como paradas exactas de las jornadas.', ...bloques);
+    items, ['No hay establecimientos con estos filtros', 'Regístralos en "Nuevo"; tu supervisor también puede importarlos desde Excel.']))];
+  if (GESTION_T()) bloques.push(S('importar', 'Importar Excel', importador('establecimientos', 'Importar clínicas, hospitales, UNAP y centros', 'Tipo, nombre, provincia y municipio son obligatorios. Los que ya existen en el mismo municipio no se duplican.', router)),
+    S('google', 'Buscar en Google', await buscadorGoogle(tipos, null)), ES_GER() ? S('auto', 'Registro automático', await registroAutomatico([['salud', 'Hospitales, clínicas, UNAP y centros de primer nivel (todo junto)'], ...tipos])) : null);
+  return vistaS('establecimientos', ['lista', 'nuevo', 'importar', 'google', 'auto'], 'Establecimientos', 'Clínicas, hospitales, UNAP y centros de primer nivel por municipio. Se usan como paradas exactas de las jornadas.', ...bloques);
 };
 
 V.hoteles = async () => {
@@ -1032,7 +1070,7 @@ V.hoteles = async () => {
   const bloques = [];
   if (rec) bloques.push(h('div', { class: 'tarjeta recomendado' }, h('h2', {}, 'Recomendado'), h('p', {}, h('strong', {}, rec.hotel.nombre), ` en ${rec.hotel.municipio}: ${RD(rec.hotel.precioNoche)} por noche. Es el más económico ${rec.alcance === 'municipio' ? 'del municipio' : 'de la provincia'} que cumple todos los requisitos.`)));
   else if (fprov) bloques.push(h('div', { class: 'aviso' }, `Aún no hay un hotel verificado en ${fmun || fprov} que cumpla todos los requisitos.`));
-  bloques.push(h('div', { class: 'form-fila' }, fz.fp, fz.fm),
+  bloques.push(S('lista', `Hoteles (${fmtN.format(items.length)})`, h('div', { class: 'form-fila' }, fz.fp, fz.fm),
     tabla([
       { t: 'Hotel', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, [x.direccion, x.telefono].filter(Boolean).join('. '))] },
       { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` },
@@ -1040,9 +1078,9 @@ V.hoteles = async () => {
       { t: 'Por noche', num: true, v: (x) => x.precioNoche ? RD(x.precioNoche) : 'Sin confirmar' },
       { t: 'Requisitos', v: (x) => x.estado === 'inactivo' ? h('span', { class: 'chip anulado' }, 'No usar') : x.cumple ? h('span', { class: 'chip validado' }, 'Cumple todo') : h('span', { class: 'chip pendiente', title: x.faltan.map((k) => reqs.find((r) => r.value === k)?.label).join(', ') }, `Faltan ${x.faltan.length}`) },
       { t: '', v: (x) => ES_GER() ? h('button', { class: 'btn-sec btn-peq', onclick: () => editar(x) }, x.precioNoche ? 'Editar' : 'Confirmar') : '' },
-    ], items, ['No hay hoteles con estos filtros', ES_GER() ? 'Tráelos de Google Maps con el registro automático de abajo.' : 'La administración los registra y verifica.']));
-  if (ES_GER()) bloques.push(h('div', { style: 'margin-top:1.5rem;display:grid;gap:1.5rem' }, await buscadorGoogle([['hotel', 'Hoteles']], null), await registroAutomatico([['hotel', 'Hoteles']])));
-  return vista('Hoteles', 'Para el hospedaje de los representantes. Google Maps trae los hoteles; la administración confirma precio y requisitos: servicios básicos, aire, agua, cama cómoda, higiene, parqueo y seguridad. Se recomienda el más económico que cumple todo.', ...bloques);
+    ], items, ['No hay hoteles con estos filtros', ES_GER() ? 'Tráelos de Google Maps en "Registro automático".' : 'La administración los registra y verifica.'])));
+  if (ES_GER()) bloques.push(S('google', 'Buscar en Google', await buscadorGoogle([['hotel', 'Hoteles']], null)), S('auto', 'Registro automático', await registroAutomatico([['hotel', 'Hoteles']])));
+  return vistaS('hoteles', ['lista', 'google', 'auto'], 'Hoteles', 'Para el hospedaje de los representantes. Google Maps trae los hoteles; la administración confirma precio y requisitos: servicios básicos, aire, agua, cama cómoda, higiene, parqueo y seguridad. Se recomienda el más económico que cumple todo.', ...bloques);
 };
 
 V.representantes = async () => {
@@ -1086,10 +1124,10 @@ V.representantes = async () => {
       e.preventDefault();
       const provincias = [...f.querySelectorAll('[name=prov]:checked')].map((x) => x.value);
       const municipios = Object.fromEntries(provincias.map((p) => [p, [...f.querySelectorAll(`[name="mun:${p}"]:checked`)].map((x) => x.value)]).filter(([, ms]) => ms.length));
-      if (await enviar(f, b, () => api('POST', `/api/territorio/zonas/${id}`, { provincias, municipios, posicion: f.posicion.value || undefined }))) router();
+      if (await enviar(f, b, () => api('POST', `/api/territorio/zonas/${id}`, { provincias, municipios, posicion: f.posicion.value || undefined }))) irA('representantes', { rep: id, sec: 'lugares' });
     });
     const T = (n) => (n ? fmtN.format(n) : '');
-    const lugares = h('div', {}, h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, `Lugares de su zona (${fmtN.format(lz.farmacias.length + lz.establecimientos.length)})`),
+    const lugares = h('div', {},
       tabla([{ t: 'Municipio', v: (x) => [x.municipio, h('small', { style: 'display:block;color:var(--texto-2)' }, x.provincia)] },
         { t: 'Farmacias', num: true, v: (x) => T(x.farmacia) }, { t: 'Hospitales', num: true, v: (x) => T(x.hospital) }, { t: 'Clínicas', num: true, v: (x) => T(x.clinica) },
         { t: 'UNAP', num: true, v: (x) => T(x.unap) }, { t: 'Primer nivel', num: true, v: (x) => T(x.cpn) },
@@ -1097,7 +1135,7 @@ V.representantes = async () => {
       lz.resumen, ['Su zona aún no tiene lugares registrados', 'Usa el registro automático en Catálogo → Farmacias y en Establecimientos.']),
       lz.resumen.length ? h('p', { class: 'hint' }, 'Los lugares sin ubicación no entran en el cálculo de distancia; regístralos desde Google Maps para tener km exactos.') : null,
       lz.resumen.length && yo.role === 'administrador' ? h('div', { class: 'acciones' }, h('a', { class: 'btn', href: `#cronogramas?rep=${id}` }, 'Programar su cronograma')) : null);
-    return vista('Zona del representante', 'Posición, provincias y municipios que visita. De aquí salen sus lugares, su cronograma, los km, el combustible y sus viáticos.', f, lugares);
+    return vistaS('representantes', ['zona', 'lugares'], 'Zona del representante', `${r?.fullName ?? ''}: posición, provincias y municipios que visita. De aquí salen sus lugares, su cronograma, los km, el combustible y sus viáticos.`, S('zona', 'Zona y posición', f), S('lugares', `Lugares de su zona (${fmtN.format(lz.farmacias.length + lz.establecimientos.length)})`, lugares));
   }
   const zonas = await Promise.all(reps.map((r) => api('GET', `/api/territorio/zonas/${r.id}`).then((z) => z.item).catch(() => ({ provincias: [], municipios: {} }))));
   const texto = (z) => z.provincias.map((p) => (z.municipios?.[p]?.length ? `${p} (${z.municipios[p].join(', ')})` : p)).join('; ');
@@ -1107,11 +1145,191 @@ V.representantes = async () => {
       { t: '', v: (r) => GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, 'Editar zona') : '' }], reps, ['Aún no hay representantes activos', 'Impórtalos en "Pre-registro por Excel".']));
 };
 
+
+// ---------------------------------------------------------------- panel de inicio (tipo tablero)
+const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const nombreMes = (m) => { const [y, n] = m.split('-').map(Number); return `${MESES[n - 1]} ${String(y).slice(2)}`; };
+const pct = (n) => `${fmtN.format(Math.round(n))} %`;
+const fmtC = new Intl.NumberFormat('es-DO', { notation: 'compact', maximumFractionDigits: 1 });
+const RDc = (n) => `RD$ ${fmtC.format(n)}`;
+
+/** Tarjeta de gráfico: título, nota, el gráfico y su tabla de datos (accesible). */
+function tg(titulo, nota, grafico, filas, { ancho = 1, cols } = {}) {
+  const tabla = filas?.length ? h('details', { class: 'tg-tabla' }, h('summary', {}, 'Ver como tabla'),
+    h('table', { class: 'tabla' }, h('thead', {}, h('tr', {}, (cols ?? ['Elemento', 'Valor']).map((c) => h('th', { scope: 'col' }, c)))), h('tbody', {}, filas.map((f) => h('tr', {}, f.map((c) => h('td', {}, c))))))) : null;
+  return h('section', { class: `tg tg-${ancho}` }, h('header', {}, h('h2', {}, titulo), nota ? h('p', {}, nota) : null), grafico, tabla);
+}
+
+/** Barras horizontales de una serie: etiqueta, barra y valor en la punta. Pasa el cursor o el foco para ver el detalle. */
+function barras(items, { fmt = fmtN.format, max, enlace, detalle, vacio = 'Sin datos todavía.' } = {}) {
+  if (!items.length) return h('p', { class: 'tg-vacio' }, vacio);
+  const tope = max ?? Math.max(...items.map((x) => x.valor), 1);
+  return h('ul', { class: 'barras' }, items.map((x) => {
+    const w = Math.max(x.valor > 0 ? 1.5 : 0, (x.valor / tope) * 100);
+    const contenido = [h('span', { class: 'barras-etq' }, x.nombre), h('span', { class: 'barras-pista' }, h('span', { class: 'barras-fill', style: `--w:${w}%` })), h('span', { class: 'barras-val' }, fmt(x.valor)),
+      h('span', { class: 'tip', role: 'tooltip' }, detalle ? detalle(x) : `${x.nombre}: ${fmt(x.valor)}`)];
+    return h('li', {}, enlace ? h('a', { href: enlace(x), class: 'barras-fila' }, contenido) : h('div', { class: 'barras-fila', tabindex: '0' }, contenido));
+  }));
+}
+
+/** Barras apiladas de dos series (farmacias y centros) con leyenda y separación de 2px. */
+function barrasDobles(items, series, { enlace } = {}) {
+  if (!items.length) return h('p', { class: 'tg-vacio' }, 'Sin datos todavía.');
+  const tope = Math.max(...items.map((x) => series.reduce((s, [k]) => s + x[k], 0)), 1);
+  return h('div', {}, h('ul', { class: 'leyenda' }, series.map(([, l], i) => h('li', {}, h('span', { class: `sw s${i}` }), l))),
+    h('ul', { class: 'barras' }, items.map((x) => {
+      const total = series.reduce((s, [k]) => s + x[k], 0);
+      const contenido = [h('span', { class: 'barras-etq' }, x.nombre),
+        h('span', { class: 'barras-pista apilada' }, series.map(([k], i) => (x[k] ? h('span', { class: `barras-fill s${i}`, style: `--w:${(x[k] / tope) * 100}%` }) : null))),
+        h('span', { class: 'barras-val' }, fmtN.format(total)),
+        h('span', { class: 'tip', role: 'tooltip' }, `${x.nombre}: ${series.map(([k, l]) => `${fmtN.format(x[k])} ${l.toLowerCase()}`).join(', ')}`)];
+      return h('li', {}, enlace ? h('a', { href: enlace(x), class: 'barras-fila' }, contenido) : h('div', { class: 'barras-fila', tabindex: '0' }, contenido));
+    })));
+}
+
+/** Columnas por mes (una serie), valor en el tope de la columna. */
+function columnas(items, { fmt = fmtN.format, corto = fmt } = {}) {
+  const tope = Math.max(...items.map((x) => x.valor), 1);
+  return h('div', { class: 'columnas', role: 'img', 'aria-label': items.map((x) => `${x.nombre}: ${fmt(x.valor)}`).join('; ') },
+    items.map((x) => h('div', { class: 'col', tabindex: '0' }, h('span', { class: 'col-val' }, x.valor ? corto(x.valor) : ''), h('span', { class: 'col-pista' }, h('span', { class: 'col-fill', style: `--h:${x.valor ? Math.max(2, (x.valor / tope) * 100) : 0}%` })), h('span', { class: 'col-etq' }, x.nombre),
+      h('span', { class: 'tip', role: 'tooltip' }, `${x.nombre}: ${fmt(x.valor)}`))));
+}
+
+/** Medidor: cuánto de un total (cobertura, combustible frente al tope). */
+function medidor(valor, total, { etiqueta, fmt = fmtN.format, marca, marcaTexto } = {}) {
+  const lim = Math.max(total, valor, marca ?? 0, 1);
+  const p = Math.min(100, (valor / lim) * 100);
+  return h('div', { class: 'medidor' }, etiqueta ? h('div', { class: 'medidor-cab' }, h('span', {}, etiqueta), h('strong', {}, fmt(valor))) : null,
+    h('div', { class: 'medidor-pista', role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': String(lim), 'aria-valuenow': String(valor), 'aria-label': etiqueta ?? 'Avance' },
+      h('span', { class: `medidor-fill${marca != null && valor > marca ? ' excede' : ''}`, style: `--w:${p}%` }),
+      marca != null ? h('span', { class: 'medidor-marca', style: `left:${Math.min(100, (marca / lim) * 100)}%` }) : null),
+    marcaTexto ? h('p', { class: 'medidor-nota' }, marcaTexto) : null);
+}
+
+const kpi = (dt, dd, nota, { destacada, enlace } = {}) => {
+  const cont = [h('dt', {}, dt), h('dd', {}, dd), nota ? h('p', { class: 'kpi-nota' }, nota) : null];
+  return h('div', { class: `cifra kpi${destacada ? ' destacada' : ''}` }, enlace ? h('a', { href: enlace }, cont) : cont);
+};
+const chipsZona = (z) => z.provincias.length ? h('ul', { class: 'chips-zona' }, z.provincias.map((p) => h('li', {}, h('strong', {}, p), z.municipios?.[p]?.length ? h('span', {}, z.municipios[p].join(', ')) : h('span', {}, 'toda la provincia')))) : h('p', { class: 'kpi-nota' }, 'Sin zona asignada todavía.');
+
+function encabezadoInicio(r, extra) {
+  const hora = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Santo_Domingo', hour: 'numeric', hour12: false }));
+  const saludo = hora < 12 ? 'Buenos días' : hora < 19 ? 'Buenas tardes' : 'Buenas noches';
+  return h('div', { class: 'inicio-cabeza' }, h('div', {}, h('p', { class: 'inicio-saludo' }, `${saludo}, ${r.usuario.nombre.split(' ')[0]}`),
+    h('h1', {}, 'Tu panel'), h('p', { class: 'vista-sub' }, `${ROLES[r.usuario.rol]}${r.usuario.posicion ? `, ${r.usuario.posicion}` : ''}. Todo lo que pasa en tu trabajo, en una sola vista.`)), extra);
+}
+
+async function inicioRepresentante(r) {
+  const v = r.viaticos; const c = r.cronograma;
+  const viat = v.detalle ? Object.entries(CAT).map(([k, l]) => ({ nombre: l, valor: v.detalle[k] ?? 0 })).filter((x) => x.valor > 0) : [];
+  const prox = c.proximo;
+  const tarjetas = [
+    tg('Tu zona', `${fmtN.format(r.lugares.total)} lugares para visitar`, chipsZona(r.zona), null, { ancho: 1 }),
+    tg('Próximo día', prox ? fecha(prox.fecha) : 'Sin días pendientes este mes', prox ? h('div', {}, h('ol', { class: 'prox-lista' }, prox.lugares.map((l) => h('li', {}, h('strong', {}, l.lugar), h('span', {}, l.municipio)))),
+      h('div', { class: 'acciones' }, prox.jornadaId ? h('a', { class: 'btn-sec', href: `#jornadas?mes=${r.mes}&sec=jornadas` }, 'Ver mi jornada') : h('a', { class: 'btn', href: `#jornadas?mes=${r.mes}&cron=${prox.id}` }, 'Crear mi jornada')))
+      : h('p', { class: 'tg-vacio' }, 'El administrador te avisará en la campana cuando programe tus días.'), null, { ancho: 1 }),
+    tg('Cobertura del mes', `${fmtN.format(c.lugaresProgramados)} de ${fmtN.format(r.lugares.total)} lugares de tu zona tienen día`, h('div', {}, medidor(c.lugaresProgramados, r.lugares.total, { etiqueta: 'Lugares programados', fmt: (n) => `${fmtN.format(n)} (${pct(c.cobertura)})` }),
+      medidor(c.conJornada, c.dias, { etiqueta: 'Días con jornada creada', fmt: (n) => `${fmtN.format(n)} de ${fmtN.format(c.dias)}` })), null, { ancho: 1 }),
+    tg('Lugares por tipo', 'Farmacias y centros de salud de tu zona', barras(r.lugares.porTipo), r.lugares.porTipo.map((x) => [x.nombre, fmtN.format(x.valor)]), { ancho: 1 }),
+    tg('Lugares por municipio', r.lugares.sinUbicacion ? `${fmtN.format(r.lugares.sinUbicacion)} sin ubicación en el mapa` : 'Todos con ubicación en el mapa', barras(r.lugares.porMunicipio.slice(0, 10), { detalle: (x) => `${x.nombre}, ${x.provincia}: ${fmtN.format(x.valor)} lugares` }), r.lugares.porMunicipio.map((x) => [`${x.nombre}, ${x.provincia}`, fmtN.format(x.valor)]), { ancho: 2 }),
+    tg('Viáticos del mes', v.detalle ? `Estimado: ${RD(v.total)}. Estado: ${EST_P[v.estado] ?? v.estado}.` : 'Se calcula cuando tengas jornadas y perfil de viático',
+      v.detalle ? h('div', {}, barras(viat, { fmt: RD }), v.tope != null ? medidor(v.combustibleCalculado, v.tope, { etiqueta: 'Combustible calculado frente al tope', fmt: RD, marca: v.tope, marcaTexto: `Tope ${v.topeFuente === 'representante' ? 'propio' : 'global'}: ${RD(v.tope)}${v.combustibleCalculado > v.tope ? '. Se presupuesta el tope.' : ''}` }) : null)
+        : h('div', { class: 'tg-vacio' }, v.faltan?.length ? v.faltan.join(' ') : 'Sin datos todavía.'),
+      viat.map((x) => [x.nombre, RD(x.valor)]), { ancho: 2 }),
+  ];
+  return [
+    encabezadoInicio(r, filtroMes(r.mes, 'inicio', null, { futuro: true })),
+    h('dl', { class: 'rejilla kpis' },
+      kpi('Lugares en tu zona', fmtN.format(r.lugares.total), `${fmtN.format(r.zona.provincias.length)} provincia(s)`),
+      kpi('Días programados', fmtN.format(c.dias), `${fmtN.format(c.conJornada)} con jornada`, { enlace: `#jornadas?mes=${r.mes}` }),
+      kpi('Km del mes', fmtN.format(r.jornadas.km), r.jornadas.kmReales ? `${fmtN.format(r.jornadas.kmReales)} km reales` : `${fmtN.format(r.jornadas.total)} jornada(s)`),
+      kpi('Galones', v.galones != null ? fmtN.format(v.galones) : 'Sin calcular', v.tope != null ? `Tope ${RD(v.tope)}` : null),
+      r.recetas != null ? kpi('Recetas del mes', fmtN.format(r.recetas), null, { enlace: '#misRecetas' }) : null,
+      kpi('Viáticos estimados', v.detalle ? RD(v.total) : 'Sin calcular', EST_P[v.estado] ?? null, { destacada: true, enlace: `#presupuesto?mes=${r.mes}` })),
+    ...(v.avisos ?? []).map((a) => h('div', { class: 'aviso' }, a)),
+    h('div', { class: 'tablero' }, tarjetas),
+  ];
+}
+
+async function inicioDependiente(r) {
+  const c = r.comision; const f = r.farmacia;
+  let ficha;
+  if (f) {
+    ficha = h('dl', { class: 'ficha' }, [['Farmacia', f.nombre], ['Provincia', f.provincia], ['Municipio', f.municipio], ['Sector o distrito municipal', f.sector ?? 'Sin registrar'], ['Dirección', f.direccion ?? 'Sin registrar'], ['Teléfono', f.telefono ?? 'Sin registrar']]
+      .map(([dt, dd]) => h('div', {}, h('dt', {}, dt), h('dd', {}, dd))));
+  } else {
+    const sel = campo('farmaciaId', 'Elige tu farmacia', { options: r.candidatas.map((x) => ({ value: x.id, label: `${x.nombre} (${x.municipio}, ${x.provincia})` })), placeholder: r.candidatas.length ? 'Elige tu farmacia' : 'No encontramos coincidencias' });
+    const b = h('button', { class: 'btn', type: 'submit', disabled: !r.candidatas.length }, 'Esta es mi farmacia');
+    ficha = h('form', { novalidate: true }, h('p', { class: 'hint' }, `Escribiste "${r.farmaciaEscrita.nombre ?? ''}". Elige tu farmacia del catálogo para ubicarla por provincia, municipio y sector. Solo puedes hacerlo una vez; después lo cambia tu supervisor.`), sel, h('div', { class: 'acciones' }, b));
+    ficha.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(ficha, b, () => api('POST', `/api/usuarios/${yo.id}/farmacia`, { farmaciaId: ficha.farmaciaId.value }))) router(); });
+  }
+  const est = r.vouchers.porEstado;
+  const porEstado = [['aprobado', 'Aprobados'], ['pendiente', 'Pendientes'], ['rechazado', 'Rechazados'], ['anulado', 'Anulados']].map(([k, l]) => ({ nombre: l, valor: est[k] ?? 0 })).filter((x) => x.valor);
+  const porMed = c.configurado ? Object.entries(c.porMedicamento ?? {}).map(([nombre, valor]) => ({ nombre, valor })).sort((a, b) => b.valor - a.valor) : [];
+  const meses = r.vouchers.ventasPorMes.map((x) => ({ nombre: nombreMes(x.nombre), valor: x.valor }));
+  return [
+    encabezadoInicio(r, null),
+    h('dl', { class: 'rejilla kpis' },
+      kpi('Ventas aprobadas', c.configurado ? RD(c.ventasAprobadas) : 'Sin configurar', c.configurado ? `${fecha(c.periodo.desde)} al ${fecha(c.periodo.hasta)}` : null),
+      kpi('Comisión del período', c.configurado ? RD(c.comision) : 'Sin configurar', c.configurado ? `${fmtN.format(c.porcentaje)} % de las ventas aprobadas` : c.mensaje, { destacada: true, enlace: '#comision' }),
+      kpi('Vouchers por revisar', fmtN.format(c.configurado ? c.vouchers.pendientes : est.pendiente ?? 0), null, { enlace: '#misVouchers' }),
+      kpi('Vouchers aprobados', fmtN.format(c.configurado ? c.vouchers.aprobados : est.aprobado ?? 0), c.configurado && c.vouchers.rechazados ? `${fmtN.format(c.vouchers.rechazados)} rechazado(s)` : null)),
+    h('div', { class: 'tablero' },
+      tg('Tu farmacia', f ? 'Dónde trabajas' : 'Aún no está ligada al catálogo', ficha, null, { ancho: 2 }),
+      tg('Ventas aprobadas por mes', 'Últimos 6 meses', columnas(meses, { fmt: RD, corto: RDc }), meses.map((x) => [x.nombre, RD(x.valor)]), { ancho: 2, cols: ['Mes', 'Ventas'] }),
+      tg('Ventas por medicamento', 'Período actual', barras(porMed, { fmt: RD, vacio: 'Aún no hay vouchers aprobados en este período.' }), porMed.map((x) => [x.nombre, RD(x.valor)]), { ancho: 2 }),
+      tg('Tus vouchers', `${fmtN.format(r.vouchers.total)} en total`, barras(porEstado, { enlace: () => '#misVouchers', vacio: 'Aún no has cargado vouchers.' }), porEstado.map((x) => [x.nombre, fmtN.format(x.valor)]), { ancho: 1 }),
+      h('section', { class: 'tg tg-1 tg-accion' }, h('h2', {}, '¿Vendiste hoy?'), h('p', {}, 'Carga la foto del voucher; la gerencia lo revisa y suma a tu comisión.'), h('a', { class: 'btn', href: '#voucher' }, 'Cargar voucher'))),
+  ];
+}
+
+async function inicioGestion(r) {
+  const k = r.catalogo; const e = r.equipo; const v = r.viaticos;
+  const alertas = [
+    e.solicitudes ? h('a', { href: '#solicitudes?sec=pendientes' }, `${fmtN.format(e.solicitudes)} solicitud(es) de cuenta por decidir`) : null,
+    e.sinZona ? h('a', { href: '#representantes' }, `${fmtN.format(e.sinZona)} representante(s) sin zona asignada`) : null,
+    e.dependientesSinFarmacia ? h('a', { href: '#solicitudes?sec=dependientes' }, `${fmtN.format(e.dependientesSinFarmacia)} dependiente(s) sin farmacia ligada`) : null,
+    r.vouchersPendientes ? h('a', { href: '#revisar' }, `${fmtN.format(r.vouchersPendientes)} voucher(s) por revisar`) : null,
+    k.sinUbicacion ? h('a', { href: '#establecimientos?sec=auto' }, `${fmtN.format(k.sinUbicacion)} lugar(es) sin ubicación en el mapa`) : null,
+  ].filter(Boolean);
+  const viajes = v ? v.porRepresentante.filter((x) => x.valor > 0).sort((a, b) => b.valor - a.valor) : [];
+  return [
+    encabezadoInicio(r, filtroMes(r.mes, 'inicio', null, { futuro: true })),
+    h('dl', { class: 'rejilla kpis' },
+      kpi('Equipo activo', fmtN.format(e.activos), `${fmtN.format(e.porPosicion.reduce((s, x) => s + x.valor, 0))} representantes`),
+      kpi('Farmacias', fmtN.format(k.farmacias), null, { enlace: '#catalogo?ver=farmacias' }),
+      kpi('Centros de salud', fmtN.format(k.centros), 'Hospitales, clínicas, UNAP y más', { enlace: '#establecimientos' }),
+      kpi('Hoteles verificados', `${fmtN.format(k.hotelesVerificados)} de ${fmtN.format(k.hoteles)}`, null, { enlace: '#hoteles' }),
+      kpi('Días programados', fmtN.format(r.cronogramas.dias), `${fmtN.format(r.cronogramas.representantesConDias)} representante(s)`, { enlace: '#cronogramas' }),
+      v ? kpi('Viáticos solicitados', RD(v.totales.total), `${RD(v.totales.entregado)} entregados`, { destacada: true, enlace: `#viaticos?mes=${r.mes}` }) : null),
+    alertas.length ? h('div', { class: 'aviso alertas-inicio' }, h('strong', {}, 'Para atender: '), h('ul', {}, alertas.map((a) => h('li', {}, a)))) : null,
+    h('div', { class: 'tablero' },
+      tg('Lugares por provincia', 'Toca una provincia para ver sus farmacias', barrasDobles(k.provincias.slice(0, 12), [['farmacias', 'Farmacias'], ['centros', 'Centros de salud']], { enlace: (x) => `#catalogo?ver=farmacias&provincia=${encodeURIComponent(x.nombre)}` }),
+        k.provincias.map((x) => [x.nombre, fmtN.format(x.farmacias), fmtN.format(x.centros)]), { ancho: 2, cols: ['Provincia', 'Farmacias', 'Centros'] }),
+      tg('Centros de salud por tipo', `${fmtN.format(k.centros)} en total`, barras(k.porTipo), k.porTipo.map((x) => [x.nombre, fmtN.format(x.valor)]), { ancho: 1 }),
+      tg('Equipo por posición', 'Representantes activos', barras(e.porPosicion), e.porPosicion.map((x) => [x.nombre, fmtN.format(x.valor)]), { ancho: 1 }),
+      tg('Cobertura por representante', 'Lugares de su zona con día este mes', r.cobertura.length ? h('div', { class: 'medidores' }, r.cobertura.map((x) => h('a', { href: `#cronogramas?rep=${x.id}&mes=${r.mes}`, class: 'medidor-enlace' },
+        medidor(x.programados, x.lugares, { etiqueta: `${x.nombre}${x.posicion ? `, ${x.posicion}` : ''}`, fmt: () => (x.lugares ? `${fmtN.format(x.programados)} de ${fmtN.format(x.lugares)} (${pct(x.cobertura)})` : 'Sin lugares en su zona') }))))
+        : h('p', { class: 'tg-vacio' }, 'Aún no hay representantes activos.'), r.cobertura.map((x) => [x.nombre, `${fmtN.format(x.programados)} de ${fmtN.format(x.lugares)}`, pct(x.cobertura)]), { ancho: 2, cols: ['Representante', 'Programados', 'Cobertura'] }),
+      tg('Viáticos por representante', v ? `Presupuestos de ${nombreMes(r.mes)}` : 'Solo para gestión y finanzas', v ? barras(viajes, { fmt: RD, enlace: () => `#viaticos?mes=${r.mes}`, vacio: 'Nadie ha solicitado viáticos este mes.' }) : h('p', { class: 'tg-vacio' }, 'Sin acceso.'), viajes.map((x) => [x.nombre, RD(x.valor), EST_P[x.estado] ?? x.estado]), { ancho: 2, cols: ['Representante', 'Presupuesto', 'Estado'] }),
+      tg('Equipo por rol', `${fmtN.format(e.activos)} cuentas activas`, barras(e.porRol.map((x) => ({ nombre: ROLES[x.nombre] ?? x.nombre, valor: x.valor }))), e.porRol.map((x) => [ROLES[x.nombre] ?? x.nombre, fmtN.format(x.valor)]), { ancho: 1 }),
+      tg('Ubicación en el mapa', 'Lugares con coordenadas para calcular km', medidor(k.farmacias + k.centros - k.sinUbicacion, k.farmacias + k.centros, { etiqueta: 'Con ubicación', fmt: (n) => `${fmtN.format(n)} de ${fmtN.format(k.farmacias + k.centros)}` }), null, { ancho: 1 }),
+      h('section', { class: 'tg tg-2 tg-accion' }, h('h2', {}, 'Accesos rápidos'), h('p', {}, 'Lo que más se usa para mover el trabajo del mes.'),
+        h('div', { class: 'accesos' }, [['#cronogramas', 'Programar cronogramas'], ['#representantes', 'Zonas de representantes'], ['#establecimientos?sec=auto', 'Registrar centros de salud'], ['#hoteles', 'Verificar hoteles'], [`#viaticos?mes=${r.mes}`, 'Presupuestos de viáticos']].map(([href, t]) => h('a', { class: 'btn', href }, t))))),
+  ];
+}
+
+V.inicio = async () => {
+  const r = await api('GET', `/api/inicio?mes=${mesDe()}`);
+  const partes = r.tipo === 'representante' ? await inicioRepresentante(r) : r.tipo === 'dependiente' ? await inicioDependiente(r) : r.tipo === 'gestion' ? await inicioGestion(r) : vista('Tu panel', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay módulos para tu rol todavía'), 'Pide a la gerencia que revise los permisos de tu cuenta.'));
+  return [h('div', { class: 'inicio' }, partes)];
+};
+
 // ---------------------------------------------------------------- menú por rol
 let yo;
 function menuPara(u) {
   const G = ['administrador', 'gerencia', 'supervisor', 'finanzas'].includes(u.role);
-  const s = [];
+  const s = [['Panel', [['inicio', 'Inicio']]]];
   if (u.role === 'dependiente') s.push(['Mi trabajo', [['voucher', 'Cargar voucher'], ['misVouchers', 'Mis vouchers'], ['comision', 'Mi comisión']]]);
   if (u.role === 'representante' && u.position === 'Promotora') s.push(['Mi trabajo', [['operativo', 'Operativo de hoy'], ['receta', 'Cargar receta'], ['misRecetas', 'Mis recetas'], ['alertas', 'Alertas']]]);
   if (u.role === 'representante' && u.position === 'Vendedor') s.push(['Mi trabajo', [['inventario', 'Inventario'], ['catalogo', 'Farmacias']]]);
@@ -1123,7 +1341,7 @@ function menuPara(u) {
     s.push(['Territorio', [['cronogramas', 'Cronogramas'], ['establecimientos', 'Establecimientos'], ['hoteles', 'Hoteles'], ...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : [])]]);
     s.push(['Administración', [['inventario', 'Inventario'], ['catalogo', 'Catálogo'], ...(u.role !== 'finanzas' ? [['solicitudes', 'Solicitudes de cuenta']] : [])]]);
   }
-  if (!s.length) s.push(['Mi trabajo', [['pronto', 'Inicio']]]);
+
   return s;
 }
 function pintarMenu(secciones, actual) {
