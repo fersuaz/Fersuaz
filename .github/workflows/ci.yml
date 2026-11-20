@@ -10,7 +10,7 @@ jobs:
     defaults: { run: { working-directory: apps/api } }
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env: { POSTGRES_PASSWORD: ci, POSTGRES_DB: fersuaz }
         ports: ['5432:5432']
         options: --health-cmd pg_isready --health-interval 5s --health-retries 10

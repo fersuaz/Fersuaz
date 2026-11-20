@@ -5,11 +5,11 @@ Ninguna clave se pega en el chat ni en el código: solo en **GitHub → Settings
 
 ## Lo que ya está listo
 - Web en Cloudflare Pages, con despliegue automático desde `main`.
-- API con pruebas automáticas (CI con PostgreSQL 16).
+- API con pruebas automáticas (CI con PostgreSQL 18).
 - Migraciones 001 a 004. Se aplican solas antes de cada despliegue (job `migrar` en `.do/app.yaml`).
 
 ## 1. Base de datos (DigitalOcean → Databases)
-1. Create Database Cluster → **PostgreSQL 16** → región **New York (NYC)** → nombre exacto **`fersuaz-db`**.
+1. Create Database Cluster → **PostgreSQL 18** → región **New York (NYC)** → nombre exacto **`fersuaz-db`**.
 2. Espera a que diga **Online** (unos 5 minutos).
 3. Settings → Trusted sources: déjala sin restricciones por ahora. Cuando la App exista, agrega la App `fersuaz-api` como fuente de confianza.
 
