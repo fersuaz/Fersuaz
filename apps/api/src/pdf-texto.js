@@ -31,13 +31,29 @@ function objetos(buf) {
   return objs;
 }
 
+function ascii85(b) {
+  const t = latin1(b).replace(/\s+/g, '').replace(/^<~/, '').replace(/~>.*$/, '');
+  const out = []; let grupo = [];
+  for (const ch of t) {
+    if (ch === 'z' && !grupo.length) { out.push(0, 0, 0, 0); continue; }
+    grupo.push(ch.charCodeAt(0) - 33);
+    if (grupo.length === 5) { let v = 0; for (const g of grupo) v = v * 85 + g; out.push((v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255); grupo = []; }
+  }
+  if (grupo.length) { const n = grupo.length; while (grupo.length < 5) grupo.push(84); let v = 0; for (const g of grupo) v = v * 85 + g; out.push(...[(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255].slice(0, n - 1)); }
+  return Buffer.from(out);
+}
+
 function decodificar(o) {
   if (!o?.datos) return null;
-  if (/\/FlateDecode/.test(o.dict) || /\/Fl\b/.test(o.dict)) {
-    try { return inflateSync(o.datos); } catch { try { return inflateSync(o.datos, { finishFlush: 2 }); } catch { return null; } }
+  const f = o.dict.match(/\/Filter\s*(\[[^\]]*\]|\/\w+)/)?.[1] ?? '';
+  const filtros = [...f.matchAll(/\/(\w+)/g)].map((m) => m[1]);
+  let d = o.datos;
+  for (const fl of filtros) {
+    if (fl === 'FlateDecode' || fl === 'Fl') { try { d = inflateSync(d); } catch { try { d = inflateSync(d, { finishFlush: 2 }); } catch { return null; } } }
+    else if (fl === 'ASCII85Decode' || fl === 'A85') d = ascii85(d);
+    else return null;
   }
-  if (/\/Filter/.test(o.dict)) return null;
-  return o.datos;
+  return d;
 }
 
 /** Expande los objetos guardados dentro de /ObjStm. */
@@ -160,9 +176,8 @@ function* tokens(t) {
 
 const mult = (a, b) => [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3], a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5]];
 
-function textoDePagina(contenido, fts) {
-  const items = [];
-  let ctm = [1, 0, 0, 1, 0, 0]; const pila = [];
+function textoDePagina(contenido, fts, { objs, recursos, ctm0 = [1, 0, 0, 1, 0, 0], prof = 0, items = [] } = {}) {
+  let ctm = ctm0.slice(); const pila = [];
   let tm = [1, 0, 0, 1, 0, 0], tlm = [1, 0, 0, 1, 0, 0], tl = 0, fuente = null, tam = 12;
   let ops = [];
   const emitir = (bytes) => {
@@ -180,7 +195,20 @@ function textoDePagina(contenido, fts) {
     const a = ops.map((o) => o.v); const op = tk.v; ops = [];
     switch (op) {
       case 'q': pila.push(ctm); break;
-      case 'Q': ctm = pila.pop() ?? [1, 0, 0, 1, 0, 0]; break;
+      case 'Q': ctm = pila.pop() ?? ctm0.slice(); break;
+      case 'Do': {
+        // Objetos de formulario (por ejemplo, una tabla de Excel pegada en Word): se leen con su propia matriz y fuentes.
+        if (!objs || prof > 4) break;
+        const xo = subDict(recursos, 'XObject', objs);
+        const r = xo?.match(new RegExp(`/${String(a[0]).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+(\\d+)\\s+\\d+\\s+R`));
+        const o = r && objs.get(Number(r[1]));
+        if (!o || !/\/Subtype\s*\/Form/.test(o.dict)) break;
+        const d = decodificar(o); if (!d) break;
+        const mat = o.dict.match(/\/Matrix\s*\[([^\]]+)\]/)?.[1].trim().split(/\s+/).map(Number);
+        const rec = subDict(o.dict, 'Resources', objs) ?? recursos;
+        textoDePagina(d, { ...fts, ...fuentes(rec, objs) }, { objs, recursos: rec, ctm0: mult(mat?.length === 6 ? mat : [1, 0, 0, 1, 0, 0], ctm), prof: prof + 1, items });
+        break;
+      }
       case 'cm': if (a.length >= 6) ctm = mult(a.slice(-6), ctm); break;
       case 'BT': tm = [1, 0, 0, 1, 0, 0]; tlm = [1, 0, 0, 1, 0, 0]; break;
       case 'Tf': fuente = fts[a[0]] ?? null; tam = a[1] ?? tam; break;
@@ -221,7 +249,7 @@ export function lineasPdf(buf) {
     const cont = p.dict.match(/\/Contents\s*(\[([^\]]*)\]|(\d+)\s+\d+\s+R)/);
     const ids = cont ? (cont[2] ? [...cont[2].matchAll(/(\d+)\s+\d+\s+R/g)].map((x) => Number(x[1])) : [Number(cont[3])]) : [];
     const datos = Buffer.concat(ids.map((id) => decodificar(objs.get(id)) ?? Buffer.alloc(0)).flatMap((b) => [b, Buffer.from('\n')]));
-    const items = textoDePagina(datos, fts).filter((it) => it.s.trim());
+    const items = textoDePagina(datos, fts, { objs, recursos }).filter((it) => it.s.trim());
     items.sort((a, b) => b.y - a.y || a.x - b.x);
     const lineas = [];
     for (const it of items) {

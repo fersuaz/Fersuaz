@@ -78,3 +78,7 @@ test('actualizar: errores claros si el MICM cambia o no responde', async () => {
   assert.match((await actualizarDesdeMicm({ data: d, audit: async () => {}, fetchImpl: async () => { throw new Error('red'); } })).mensaje, /No se pudo contactar al MICM/);
   assert.match((await actualizarDesdeMicm({ data: d, audit: async () => {}, fetchImpl: fetchFalso({ pdf: Buffer.from('%PDF-1.4\n%%EOF') }) })).mensaje, /No se pudo verificar/);
 });
+
+test('PDF: lee la tabla aunque venga dentro de un objeto de formulario (tabla de Excel pegada)', () => {
+  assert.deepEqual(preciosDePdf(fx('aviso-ejemplo-formulario.pdf')).precios, ESPERADO);
+});
