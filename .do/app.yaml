@@ -24,7 +24,7 @@ services:
       - { key: DATABASE_URL, scope: RUN_TIME, value: "${fersuaz-db.DATABASE_URL}" }
       - { key: DATABASE_CA, scope: RUN_TIME, value: "${fersuaz-db.CA_CERT}" }
       - { key: SESSION_SECRET, scope: RUN_TIME, type: SECRET, value: "${SESSION_SECRET}" }
-      - { key: ALLOWED_ORIGINS, scope: RUN_TIME, value: "https://fersuaz.net,https://www.fersuaz.net" }
+      - { key: ALLOWED_ORIGINS, scope: RUN_TIME, value: "https://fersuaz.net,https://www.fersuaz.net,https://fersuaz-web.pages.dev" }
       # Opcionales: si están vacíos, los km se escriben a mano y los archivos van al disco local.
       - { key: MAPS_API_KEY, scope: RUN_TIME, type: SECRET, value: "${MAPS_API_KEY}" }
       - { key: SPACES_KEY, scope: RUN_TIME, type: SECRET, value: "${SPACES_KEY}" }
