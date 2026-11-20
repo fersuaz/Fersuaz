@@ -100,18 +100,34 @@
             </select>
             <p class="error" id="position-error"></p>
           </div>
-          <div class="row2" data-for="dependiente" hidden>
+          <fieldset class="farmacia-buscar" data-for="dependiente" hidden>
+            <legend>Tu farmacia</legend>
+            <p class="hint">Elige la provincia y el municipio, y busca tu farmacia. Si está en nuestra lista, tu cuenta queda activa de inmediato.</p>
+            <div class="row2">
+              <div class="field">
+                <label for="dep-provincia">Provincia</label>
+                <select id="dep-provincia" name="depProvincia" aria-describedby="province-error"><option value="">Elige la provincia</option></select>
+                <p class="error" id="province-error"></p>
+              </div>
+              <div class="field">
+                <label for="dep-municipio">Municipio</label>
+                <select id="dep-municipio" name="depMunicipio" disabled><option value="">Elige primero la provincia</option></select>
+              </div>
+            </div>
             <div class="field">
-              <label for="pharmacy">Farmacia</label>
+              <label for="dep-buscar">Buscar farmacia</label>
+              <input id="dep-buscar" type="search" autocomplete="off" placeholder="Escribe parte del nombre" disabled>
+            </div>
+            <div id="dep-resultados" class="farmacia-resultados" role="radiogroup" aria-label="Farmacias encontradas" aria-describedby="farmaciaId-error"></div>
+            <p class="error" id="farmaciaId-error"></p>
+            <label class="check"><input type="checkbox" id="dep-no-esta"> <span>No encuentro mi farmacia</span></label>
+            <div class="field" id="dep-manual" hidden>
+              <label for="pharmacy">Nombre de tu farmacia</label>
               <input id="pharmacy" name="pharmacy" type="text" aria-describedby="pharmacy-error">
               <p class="error" id="pharmacy-error"></p>
+              <p class="hint">La gerencia revisará tu solicitud y la agregará al catálogo.</p>
             </div>
-            <div class="field">
-              <label for="province">Provincia</label>
-              <input id="province" name="province" type="text" aria-describedby="province-error">
-              <p class="error" id="province-error"></p>
-            </div>
-          </div>
+          </fieldset>
           <div class="field">
             <label for="password">Contraseña</label>
             <div class="clave">

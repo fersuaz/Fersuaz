@@ -378,3 +378,62 @@ test('no es un centro de salud: se descarta, sale de zona y propuesta, y se pued
     assert.ok((await call('GET', `/api/territorio/zonas/${id.rep}/lugares`, null, t.rep)).body.establecimientos.some((x) => x.id === malo.id));
   } finally { server.close(); }
 });
+
+test('dependiente: se registra eligiendo su farmacia del catálogo y queda activa y ligada', async () => {
+  const { server, call, t } = await setup();
+  try {
+    const data = setup.data;
+    const f = await data.insert('farmacias', { nombre: 'Farmacia Ejemplo Registro', provincia: 'Espaillat', municipio: 'Moca', sector: 'Centro', estado: 'validada', fuente: 'manual' });
+    assert.equal((await call('GET', '/api/publico/farmacias?provincia=Espaillat')).status, 422);
+    const pub = (await call('GET', '/api/publico/farmacias?provincia=Espaillat&municipio=Moca&q=registro')).body;
+    assert.deepEqual(pub.items.map((x) => x.nombre), ['Farmacia Ejemplo Registro']); assert.equal(pub.items[0].estado, undefined, 'solo datos públicos de la farmacia');
+    assert.ok((await call('GET', '/api/publico/division')).body.provincias.includes('Espaillat'));
+    const base = { role: 'dependiente', fullName: 'Dependiente Ejemplo Nueva', phone: '809-555-0101', password: 'ClaveSegura2026', acceptsPrivacy: true };
+    assert.equal((await call('POST', '/api/auth/register', { ...base, email: 'dep.nueva@ejemplo.do', farmaciaId: 'no-existe' })).status, 422);
+    const r = await call('POST', '/api/auth/register', { ...base, email: 'dep.nueva@ejemplo.do', farmaciaId: f.id });
+    assert.equal(r.status, 201, JSON.stringify(r.body)); assert.equal(r.body.user.status, 'activo'); assert.match(r.body.message, /Farmacia Ejemplo Registro/);
+    const login = await call('POST', '/api/auth/login', { email: 'dep.nueva@ejemplo.do', password: 'ClaveSegura2026' });
+    assert.equal(login.status, 200);
+    const ini = (await call('GET', '/api/inicio', null, login.body.token)).body;
+    assert.deepEqual([ini.farmacia.nombre, ini.farmacia.municipio, ini.farmacia.sector], ['Farmacia Ejemplo Registro', 'Moca', 'Centro']);
+    // Sin farmacia del catálogo sigue el camino de siempre: pendiente de aprobación
+    const sin = await call('POST', '/api/auth/register', { ...base, email: 'dep.otra@ejemplo.do', pharmacy: 'Farmacia que no está', province: 'Espaillat' });
+    assert.equal(sin.body.user.status, 'pendiente_aprobacion');
+    assert.ok((await call('GET', '/api/notificaciones', null, t.gerente)).body.items.some((x) => x.titulo === 'Nueva dependiente'));
+  } finally { server.close(); }
+});
+
+test('vouchers: precio por unidad suma el total; el Vendedor carga a nombre de una dependiente de su zona', async () => {
+  const { server, call, t, id } = await setup();
+  try {
+    const data = setup.data;
+    const med = await data.insert('medicamentos', { nombre: 'Medicamento Ejemplo', linea: 'Ejemplo', presentacion: 'Caja x 30', activo: true });
+    const fMoca = await data.insert('farmacias', { nombre: 'Farmacia Ejemplo Moca', provincia: 'Espaillat', municipio: 'Moca', estado: 'validada', fuente: 'manual' });
+    const fBonao = await data.insert('farmacias', { nombre: 'Farmacia Ejemplo Bonao', provincia: 'Monseñor Nouel', municipio: 'Bonao', estado: 'validada', fuente: 'manual' });
+    await call('POST', `/api/usuarios/${id.dep}/farmacia`, { farmaciaId: fMoca.id }, t.supervisor);
+    await call('POST', '/api/comisiones/config', { porcentaje: 10, periodo: 'mensual' }, t.gerente);
+    // Dependiente: 3 × 250 + 1 × 100 = 850
+    const v1 = await call('POST', '/api/vouchers', { referencia: 'EJ-001', fecha: '2026-11-19', items: [{ medicamentoId: med.id, cantidad: 3, precio: 250 }, { medicamentoId: med.id, cantidad: 1, precio: 100 }] }, t.dep);
+    assert.equal(v1.status, 201, JSON.stringify(v1.body)); assert.equal(v1.body.item.total, 850); assert.equal(v1.body.item.estado, 'pendiente');
+    assert.equal(v1.body.item.farmacia, 'Farmacia Ejemplo Moca'); assert.equal(v1.body.item.items[0].precio, 250);
+    assert.equal((await call('GET', '/api/vouchers/porcentaje', null, t.dep)).body.item.porcentaje, 10);
+    // Vendedor (rep2) con Espaillat en su zona
+    await call('POST', `/api/territorio/zonas/${id.rep2}`, { provincias: ['Espaillat'] }, t.gerente);
+    assert.equal((await call('GET', '/api/vouchers/dependientes', null, t.rep)).status, 403, 'un Visitador no carga vouchers');
+    const deps = (await call('GET', '/api/vouchers/dependientes', null, t.rep2)).body.items;
+    assert.deepEqual(deps.map((d) => d.id), [id.dep]);
+    assert.equal((await call('POST', '/api/vouchers', { referencia: 'EJ-002', fecha: '2026-11-19', items: [{ medicamentoId: med.id, cantidad: 2, precio: 300 }] }, t.rep2)).status, 422, 'falta la dependiente');
+    const v2 = await call('POST', '/api/vouchers', { dependienteId: id.dep, referencia: 'EJ-002', fecha: '2026-11-19', items: [{ medicamentoId: med.id, cantidad: 2, precio: 300 }] }, t.rep2);
+    assert.equal(v2.status, 201); assert.equal(v2.body.item.dependienteId, id.dep); assert.equal(v2.body.item.registradoPor, id.rep2); assert.equal(v2.body.item.total, 600);
+    assert.equal((await call('POST', '/api/vouchers', { dependienteId: id.dep, referencia: 'ej-001', fecha: '2026-11-19', items: [{ medicamentoId: med.id, cantidad: 1, precio: 1 }] }, t.rep2)).status, 409, 'mismo número para la misma dependiente');
+    // Dependiente de otra zona: no
+    await call('POST', `/api/usuarios/${id.dep}/farmacia`, { farmaciaId: fBonao.id }, t.supervisor);
+    assert.equal((await call('POST', '/api/vouchers', { dependienteId: id.dep, referencia: 'EJ-003', fecha: '2026-11-19', items: [{ medicamentoId: med.id, cantidad: 1, precio: 10 }] }, t.rep2)).status, 403);
+    const delVendedor = (await call('GET', '/api/vouchers', null, t.rep2)).body.items;
+    assert.deepEqual(delVendedor.map((v) => v.referencia), ['EJ-002']);
+    const deLaDep = (await call('GET', '/api/vouchers', null, t.dep)).body.items;
+    assert.equal(deLaDep.find((v) => v.referencia === 'EJ-002').cargadoPor, 'rep2');
+    assert.ok((await call('GET', '/api/notificaciones', null, t.dep)).body.items.some((x) => x.titulo === 'Voucher cargado a tu nombre'));
+    assert.equal((await call('POST', `/api/vouchers/${v2.body.item.id}/anular`, null, t.rep2)).body.item.estado, 'anulado');
+  } finally { server.close(); }
+});
