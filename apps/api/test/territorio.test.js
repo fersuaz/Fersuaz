@@ -43,7 +43,7 @@ test('hojas: lee la plantilla .xlsx oficial y CSV con punto y coma y comillas', 
 
 export async function arrancar({ data = new MemoryData(), lugares } = {}) {
   const store = new MemoryStore();
-  const server = createServer(createApp({ store, data, files: new MemoryFiles(), lugares, sessionSecret: 'x'.repeat(40), now: () => new Date('2026-11-20T16:00:00Z') })).listen(0);
+  const server = createServer(createApp({ store, data, files: new MemoryFiles(), lugares, barridoPausa: 0, sessionSecret: 'x'.repeat(40), now: () => new Date('2026-11-20T16:00:00Z') })).listen(0);
   const url = `http://127.0.0.1:${server.address().port}`;
   const call = async (m, p, b, tok) => { const r = await fetch(url + p, { method: m, headers: { 'content-type': 'application/json', ...(tok && { authorization: `Bearer ${tok}` }) }, body: b && JSON.stringify(b) }); return { status: r.status, body: await r.json() }; };
   const tok = {}; const ids = {};
@@ -158,6 +158,52 @@ test('Google Maps: sin clave avisa; con clave busca, marca los ya registrados y 
     assert.equal((await call('POST', '/api/territorio/google/agregar', { tipo: 'farmacia', placeId: lugar.placeId, provincia: 'Espaillat', municipio: 'Moca' }, tok.ger)).status, 409);
     assert.equal((await call('POST', '/api/territorio/google/agregar', { tipo: 'hospital', placeId: 'ChIJ_no_existe_00', provincia: 'Espaillat', municipio: 'Moca' }, tok.ger)).status, 404);
   } finally { server.close(); }
+});
+
+test('Google Maps: registro automático de una provincia, sin duplicar y descartando lo de otra provincia', async () => {
+  const L = (id, nombre, direccion) => ({ placeId: `ChIJ_ejemplo_${id}`, nombre, direccion, lat: 19.4, lng: -70.5, telefono: null, cerrado: false });
+  const A = L('aaaa1111', 'Farmacia Ejemplo Uno', 'Calle 1, Moca 56000');
+  const B = L('bbbb2222', 'Farmacia Ejemplo Dos', 'Calle 2, Gaspar Hernández');
+  const C = L('cccc3333', 'Farmacia Ejemplo Fuera', 'Av. 3, Santiago de los Caballeros 51000');
+  const pedidas = [];
+  const lugares = { activo: true, async buscar() { return []; }, async detalle() { return null; },
+    async pagina({ tipo, municipio }, token) {
+      pedidas.push(`${tipo}:${municipio}:${token ?? ''}`);
+      if (municipio === 'Moca') return token ? { items: [C, A], siguiente: null } : { items: [A, B], siguiente: 'pag2' };
+      return { items: municipio === 'Gaspar Hernández' ? [B] : [], siguiente: null };
+    } };
+  const { server, call, tok } = await arrancar({ lugares });
+  const esperar = async () => { for (let i = 0; i < 100; i++) { const e = (await call('GET', '/api/territorio/google/barrido', null, tok.ger)).body.item; if (e && e.estado !== 'en_curso') return e; await new Promise((r) => setTimeout(r, 10)); } throw new Error('no terminó'); };
+  try {
+    assert.equal((await call('POST', '/api/territorio/google/barrido', { tipo: 'farmacia', provincia: 'Espaillat' }, tok.sup)).status, 403);
+    assert.equal((await call('POST', '/api/territorio/google/barrido', { tipo: 'farmacia', provincia: 'Espaillat', municipio: 'Bonao' }, tok.ger)).status, 422);
+    assert.deepEqual((await call('GET', '/api/territorio/google/barrido/estimar?tipo=farmacia&provincia=Espaillat', null, tok.ger)).body.item, { municipios: 5, consultasMaximas: 15 });
+    assert.equal((await call('GET', '/api/territorio/google/barrido/estimar?tipo=farmacia', null, tok.ger)).body.item.municipios, 158);
+    assert.equal((await call('POST', '/api/territorio/google/barrido', { tipo: 'farmacia', provincia: 'Espaillat' }, tok.ger)).status, 202);
+    const e = await esperar();
+    assert.equal(e.estado, 'terminado'); assert.equal(e.agregados, 2); assert.equal(e.descartados, 1); assert.equal(e.consultas, 6);
+    assert.equal(pedidas.filter((x) => x.startsWith('farmacia:Moca')).length, 2, 'pide la segunda página');
+    const fs = (await call('GET', '/api/catalogo/farmacias', null, tok.ger)).body.items;
+    assert.deepEqual(fs.map((f) => `${f.nombre}|${f.municipio}|${f.fuente}`).sort(), ['Farmacia Ejemplo Dos|Gaspar Hernández|google', 'Farmacia Ejemplo Uno|Moca|google']);
+    const notis = (await call('GET', '/api/notificaciones', null, tok.ger)).body.items;
+    assert.ok(notis.some((x) => x.titulo === 'Registro automático terminado' && /2 nuevos/.test(x.texto)));
+    // Otra pasada no duplica nada
+    await call('POST', '/api/territorio/google/barrido', { tipo: 'farmacia', provincia: 'Espaillat' }, tok.ger);
+    const e2 = await esperar();
+    assert.equal(e2.agregados, 0); assert.equal((await call('GET', '/api/catalogo/farmacias', null, tok.ger)).body.items.length, 2);
+    // También sirve para centros de salud
+    await call('POST', '/api/territorio/google/barrido', { tipo: 'hospital', provincia: 'Espaillat', municipio: 'Moca' }, tok.ger);
+    const e3 = await esperar();
+    assert.equal(e3.agregados, 2, 'B es de Gaspar Hernández pero está en Espaillat, entra allí'); assert.equal(e3.total, 1);
+  } finally { server.close(); }
+});
+
+test('ubicarResultado: reconoce el municipio por la dirección', async () => {
+  const { ubicarResultado } = await import('../src/barrido-google.js');
+  assert.equal(ubicarResultado('Esq. Nicolás Mañón 84, Azua 71000', 'Azua', 'Peralta'), 'Azua de Compostela');
+  assert.equal(ubicarResultado('F736+79W', 'Azua', 'Peralta'), 'Peralta', 'sin municipio en la dirección se queda en el buscado');
+  assert.equal(ubicarResultado('Calle 1, Baní 94000', 'Azua', 'Peralta'), null, 'otra provincia se descarta');
+  assert.equal(ubicarResultado('Av. X, Santo Domingo Este 11506', 'Santo Domingo', 'Boca Chica'), 'Santo Domingo Este');
 });
 
 // Contra PostgreSQL real, si hay base de pruebas.

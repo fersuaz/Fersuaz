@@ -69,7 +69,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
     async listarMedicamentos() { return (await data.list('medicamentos')).filter((m) => m.activo); },
 
     /** `google`: datos verificados en el servidor (coordenadas, place id); nunca vienen del navegador. */
-    async crearFarmacia(actor, input, google = null) {
+    async crearFarmacia(actor, input, google = null, { revisado = false } = {}) {
       permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor']) || esVendedor(actor));
       const e = {};
       const nombre = texto(e, 'nombre', input.nombre, { etiqueta: 'El nombre', max: 160 });
@@ -82,7 +82,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const telefono = texto(e, 'telefono', input.telefono, { etiqueta: 'El teléfono', requerido: false, max: 30 });
       if (Object.keys(e).length) invalido(e);
       const sin = (x) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-      const dup = (await data.list('farmacias')).find((f) => (sin(f.nombre) === sin(nombre) && f.municipio === municipio) || (google?.placeId && f.placeId === google.placeId));
+      const dup = !revisado && (await data.list('farmacias')).find((f) => (sin(f.nombre) === sin(nombre) && f.municipio === municipio) || (google?.placeId && f.placeId === google.placeId));
       if (dup) throw new HttpError(409, 'Esa farmacia ya está registrada en ese municipio.', { nombre: 'Ya existe en ese municipio.' });
       const estado = tieneRol(actor, ['administrador', 'gerencia', 'supervisor']) ? 'validada' : 'pendiente';
       const f = await data.insert('farmacias', {
