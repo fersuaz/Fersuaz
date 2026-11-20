@@ -488,3 +488,9 @@ a.btn, a.btn-sec { display: inline-flex; align-items: center; justify-content: c
 .credenciales-lista { display: grid; grid-template-columns: auto 1fr; gap: .4rem 1rem; margin: 0 0 .5rem; }
 .credenciales-lista dd { margin: 0; font: 600 1.15rem ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cambio-clave { max-width: 30rem; }
+
+/* Cuenta de banco */
+.cuenta-banco { display: grid; gap: .2rem; padding: 1rem 1.15rem; border-radius: 14px; background: var(--marino); color: #DCEAF3; max-width: 26rem; }
+.cuenta-banco-nombre { font: 600 .9rem var(--sans); color: #C9E1EE; }
+.cuenta-banco-numero { font: 600 1.4rem ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; color: #fff; overflow-wrap: anywhere; }
+.cuenta-banco small { color: #C9E1EE; }

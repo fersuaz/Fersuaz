@@ -275,6 +275,33 @@ function resumenComision(r) {
 }
 V.comision = async () => vista('Mi comisión', null, resumenComision(await api('GET', '/api/comisiones/resumen')));
 
+/** Tarjeta con la cuenta de banco (número completo o enmascarado según quién la ve). */
+function tarjetaCuenta(c, nombre) {
+  if (!c) return h('div', { class: 'aviso' }, `${nombre ? `${nombre} aún no` : 'Aún no'} ha registrado su cuenta de banco.`);
+  return h('div', { class: 'cuenta-banco' }, h('span', { class: 'cuenta-banco-nombre' }, c.bancoNombre),
+    h('strong', { class: 'cuenta-banco-numero' }, c.numero), h('span', {}, `Cuenta de ${c.tipoNombre.toLowerCase()} a nombre de ${c.titular}`), h('small', {}, `Aviso de transferencia: ${c.correo}`));
+}
+V.banco = async () => {
+  const [{ bancos, tipos }, r] = await Promise.all([api('GET', '/api/banco/opciones'), api('GET', '/api/banco/mia')]);
+  const c = r.cuenta;
+  const b = h('button', { class: 'btn', type: 'submit' }, c ? 'Actualizar cuenta' : 'Guardar cuenta');
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, c ? 'Actualizar tu cuenta' : 'Agrega tu cuenta'),
+    h('div', { class: 'form-fila' },
+      campo('banco', 'Banco', { options: bancos, value: c?.banco, placeholder: 'Elige el banco' }),
+      campo('tipo', 'Tipo de cuenta', { options: tipos, value: c?.tipo, placeholder: 'Ahorro o corriente' }),
+      campo('numero', 'Número de cuenta', { inputmode: 'numeric', autocomplete: 'off', value: c?.numero ?? '', placeholder: 'Solo números' })),
+    h('div', { class: 'form-fila' },
+      campo('titular', 'Titular de la cuenta', { value: c?.titular ?? r.titularSugerido ?? '', autocomplete: 'name' }),
+      campo('correo', 'Correo para el aviso de la transferencia', { type: 'email', value: c?.correo ?? r.correoSugerido ?? '', autocomplete: 'email' }, '(se completa con el de tu cuenta)')),
+    h('p', { class: 'hint' }, 'Solo tú, finanzas y la gerencia ven el número completo. Si lo cambias, queda registrado.'),
+    h('div', { class: 'acciones' }, b));
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (await enviar(f, b, () => api('POST', '/api/banco/mia', { banco: f.banco.value, tipo: f.tipo.value, numero: f.numero.value, titular: f.titular.value, correo: f.correo.value }))) router();
+  });
+  return vista('Mi cuenta de banco', 'Aquí se te paga la comisión. Bancos disponibles: BHD, Banco Popular y Banreservas.', c ? h('div', { class: 'tarjeta' }, h('h2', {}, 'Cuenta registrada'), tarjetaCuenta(c)) : null, f);
+};
+
 // ---------------------------------------------------------------- vistas: promotora
 V.operativo = async () => {
   const { items } = await api('GET', `/api/operativos?fecha=${hoy()}`);
@@ -406,6 +433,7 @@ V.comisiones = async () => {
     try {
       const r = await api('GET', `/api/comisiones/resumen?dependienteId=${id}${p ? `&periodo=${encodeURIComponent(p)}` : ''}`);
       const kids = [resumenComision(r)];
+      try { const cb = await api('GET', `/api/banco/${id}`); kids.push(h('div', { class: 'tarjeta', style: 'margin-top:1rem' }, h('h2', {}, 'Cuenta para el pago'), tarjetaCuenta(cb.cuenta, deps.items.find((d) => d.id === id)?.fullName))); } catch { /* sin permiso */ }
       if (r.configurado && !r.cierre && puedeConfig) kids.push(h('div', { class: 'acciones' }, h('button', { class: 'btn', onclick: async () => {
         if (!(await confirmar('Cerrar período', `Cerrar ${r.periodo.clave} con una comisión de ${RD(r.comision)}. Después no se pueden aprobar ni cargar vouchers de ese período.`, { okTexto: 'Cerrar período' }))) return;
         try { await api('POST', '/api/comisiones/cierres', { dependienteId: id, periodo: r.periodo.clave }); ver(); } catch (e) { alert(e.message); }
@@ -457,6 +485,7 @@ V.solicitudes = async () => {
     router();
   };
   const deps = await api('GET', '/api/usuarios/dependientes').then((x) => x.items).catch(() => []);
+  const cuentas = await api('GET', '/api/banco/cuentas').then((x) => Object.fromEntries(x.items.map((c) => [c.usuarioId, c]))).catch(() => ({}));
   const ligar = async (d) => {
     const opciones = d.candidatas.length ? d.candidatas : [];
     const dlg = $('#dialogo'); $('#dialogo-titulo').textContent = `Farmacia de ${d.nombre}`;
@@ -479,6 +508,7 @@ V.solicitudes = async () => {
   const tablaDeps = tabla([
     { t: 'Dependiente', v: (d) => [d.nombre, d.escrita ? h('small', { style: 'display:block;color:var(--texto-2)' }, `Escribió: ${d.escrita}`) : null] },
     { t: 'Farmacia', v: (d) => d.farmacia ? [d.farmacia.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, [d.farmacia.sector, d.farmacia.municipio, d.farmacia.provincia].filter(Boolean).join(', '))] : h('span', { class: 'chip pendiente' }, 'Sin ligar') },
+    { t: 'Cuenta de banco', v: (d) => cuentas[d.id] ? [cuentas[d.id].bancoNombre, h('small', { style: 'display:block;color:var(--texto-2)' }, `${cuentas[d.id].tipoNombre}, ${cuentas[d.id].numero}`)] : h('span', { class: 'chip pendiente' }, 'Sin cuenta') },
     { t: '', v: (d) => yo.role !== 'finanzas' ? h('button', { class: 'btn-sec btn-peq', onclick: () => ligar(d) }, d.farmacia ? 'Cambiar' : 'Ligar') : '' },
   ], deps, ['No hay dependientes activas', 'Aparecen aquí cuando se aprueban sus cuentas.']);
   return vistaS('solicitudes', ['pendientes', 'dependientes'], 'Solicitudes de cuenta', 'Solo puedes decidir las solicitudes que tu rol permite aprobar. Liga a cada dependiente con su farmacia del catálogo para ubicarla por provincia, municipio y sector.', S('dependientes', `Dependientes y su farmacia (${fmtN.format(deps.length)})`, tablaDeps), S('pendientes', `Pendientes (${fmtN.format(pending.length)})`, tabla([
@@ -1549,6 +1579,7 @@ async function inicioRepresentante(r) {
 
 async function inicioDependiente(r) {
   const c = r.comision; const f = r.farmacia;
+  const cuenta = await api('GET', '/api/banco/mia').then((x) => x.cuenta).catch(() => null);
   let ficha;
   if (f) {
     ficha = h('dl', { class: 'ficha' }, [['Farmacia', f.nombre], ['Provincia', f.provincia], ['Municipio', f.municipio], ['Sector o distrito municipal', f.sector ?? 'Sin registrar'], ['Dirección', f.direccion ?? 'Sin registrar'], ['Teléfono', f.telefono ?? 'Sin registrar']]
@@ -1572,6 +1603,7 @@ async function inicioDependiente(r) {
       kpi('Vouchers aprobados', fmtN.format(c.configurado ? c.vouchers.aprobados : est.aprobado ?? 0), c.configurado && c.vouchers.rechazados ? `${fmtN.format(c.vouchers.rechazados)} rechazado(s)` : null)),
     h('div', { class: 'tablero' },
       tg('Tu farmacia', f ? 'Dónde trabajas' : 'Aún no está ligada al catálogo', ficha, null, { ancho: 2 }),
+      tg('Cuenta para tu comisión', cuenta ? 'Aquí se te paga' : 'Falta registrarla', cuenta ? h('div', {}, tarjetaCuenta(cuenta), h('div', { class: 'acciones' }, h('a', { class: 'btn-sec', href: '#banco' }, 'Cambiar'))) : h('div', {}, h('p', { class: 'tg-vacio' }, 'Agrega tu cuenta de BHD, Banco Popular o Banreservas para cobrar tu comisión.'), h('div', { class: 'acciones' }, h('a', { class: 'btn', href: '#banco' }, 'Agregar cuenta'))), null, { ancho: 2 }),
       tg('Ventas aprobadas por mes', 'Últimos 6 meses, en RD$', columnas(meses, { fmt: RD, corto: (n) => fmtC.format(n) }), meses.map((x) => [x.nombre, RD(x.valor)]), { ancho: 2, cols: ['Mes', 'Ventas'] }),
       tg('Ventas por medicamento', 'Período actual', barras(porMed, { fmt: RD, vacio: c.configurado ? 'Aún no hay vouchers aprobados en este período.' : 'Se muestra cuando la gerencia configure la comisión.' }), porMed.map((x) => [x.nombre, RD(x.valor)]), { ancho: 2 }),
       tg('Tus vouchers', `${fmtN.format(r.vouchers.total)} en total`, barras(porEstado, { enlace: () => '#misVouchers', vacio: 'Aún no has cargado vouchers.' }), porEstado.map((x) => [x.nombre, fmtN.format(x.valor)]), { ancho: 1 }),
@@ -1648,6 +1680,7 @@ const ICONOS = {
   comision: '<path d="M5 19 19 5"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="16.5" cy="16.5" r="2.5"/>',
   operativo: '<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>',
   receta: '<rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M12 8.5v6M9 11.5h6"/>',
+  banco: '<path d="M4 9.5 12 5l8 4.5"/><path d="M5 9.5h14M6.5 10v6.5M10 10v6.5M14 10v6.5M17.5 10v6.5M4.5 19.5h15"/>',
 };
 const icono = (id) => { const sp = h('span', { class: 'menu-icono', 'aria-hidden': 'true' }); sp.innerHTML = `<svg viewBox="0 0 24 24">${ICONOS[id] ?? ICONOS.inicio}</svg>`; return sp; };
 
@@ -1657,7 +1690,7 @@ const icono = (id) => { const sp = h('span', { class: 'menu-icono', 'aria-hidden
  */
 function menuPara(u) {
   const G = ['administrador', 'gerencia', 'supervisor', 'finanzas'].includes(u.role);
-  if (u.role === 'dependiente') return [[null, [['inicio', 'Inicio'], ['voucher', 'Cargar voucher'], ['misVouchers', 'Mis vouchers'], ['comision', 'Mi comisión']]]];
+  if (u.role === 'dependiente') return [[null, [['inicio', 'Inicio'], ['voucher', 'Cargar voucher'], ['misVouchers', 'Mis vouchers'], ['comision', 'Mi comisión'], ['banco', 'Mi cuenta de banco']]]];
   if (u.role === 'representante') {
     const s = [];
     if (u.position === 'Promotora') {

@@ -17,7 +17,7 @@ async function setup() {
   let store, data;
   if (PG) {
     pg ??= await PostgresStore.connect(PG);
-    await pg.pool.query('TRUNCATE hoteles, notificaciones, cronogramas, zonas_representante, establecimientos, presupuestos_viatico, jornadas, precios_combustible, perfiles_viatico, configuracion, inventario, recetas, operativos, cierres_comision, vouchers, medicos, farmacias, medicamentos, audit_logs, users CASCADE');
+    await pg.pool.query('TRUNCATE cuentas_banco, hoteles, notificaciones, cronogramas, zonas_representante, establecimientos, presupuestos_viatico, jornadas, precios_combustible, perfiles_viatico, configuracion, inventario, recetas, operativos, cierres_comision, vouchers, medicos, farmacias, medicamentos, audit_logs, users CASCADE');
     store = pg; data = new PgData(pg.pool);
   } else { store = new MemoryStore(); data = new MemoryData(); }
   const server = createServer(createApp({ store, data, files: new MemoryFiles(), sessionSecret: SECRET, now: NOW })).listen(0);
@@ -491,5 +491,27 @@ test('sin vehículo: transporte y comida dentro o fuera de su municipio, con mon
     p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
     assert.equal(p.supuestos.tarifasFuente.transporteFuera, 'representante'); assert.equal(p.detalle.transporte, 900, '150 + 800 = 950, topado a 900');
     assert.equal(p.avisos.length, 1);
+  } finally { server.close(); }
+});
+
+test('cuenta de banco de la dependiente: BHD, Popular o Banreservas; ahorro o corriente; correo de su cuenta', async () => {
+  const { server, call, t, id } = await setup();
+  try {
+    const ops = (await call('GET', '/api/banco/opciones', null, t.dep)).body;
+    assert.deepEqual(ops.bancos.map((b) => b.label), ['BHD', 'Banco Popular', 'Banreservas']); assert.deepEqual(ops.tipos.map((x) => x.value), ['ahorro', 'corriente']);
+    const vacia = (await call('GET', '/api/banco/mia', null, t.dep)).body;
+    assert.equal(vacia.cuenta, null); assert.equal(vacia.correoSugerido, 'dep@x.do');
+    const mal = await call('POST', '/api/banco/mia', { banco: 'otro', tipo: 'plazo', numero: '12ab' }, t.dep);
+    assert.equal(mal.status, 422); assert.ok(mal.body.fields.banco && mal.body.fields.tipo && mal.body.fields.numero);
+    const ok = await call('POST', '/api/banco/mia', { banco: 'bhd', tipo: 'ahorro', numero: '1234-5678-90' }, t.dep);
+    assert.equal(ok.status, 200, JSON.stringify(ok.body)); assert.equal(ok.body.item.numero, '1234567890'); assert.equal(ok.body.item.correo, 'dep@x.do', 'completa el correo de su cuenta');
+    assert.equal(ok.body.item.titular, 'dep');
+    // Quién ve qué
+    assert.equal((await call('GET', `/api/banco/${id.dep}`, null, t.finanzas)).body.cuenta.numero, '1234567890');
+    assert.equal((await call('GET', `/api/banco/${id.dep}`, null, t.supervisor)).body.cuenta.numero, '····7890');
+    assert.equal((await call('GET', `/api/banco/${id.dep}`, null, t.rep)).status, 403);
+    assert.equal((await call('POST', `/api/banco/${id.dep}`, { banco: 'popular', tipo: 'corriente', numero: '111222333' }, t.supervisor)).status, 403);
+    assert.equal((await call('POST', `/api/banco/${id.dep}`, { banco: 'popular', tipo: 'corriente', numero: '111222333' }, t.finanzas)).body.item.bancoNombre, 'Banco Popular');
+    assert.equal((await call('GET', '/api/banco/cuentas', null, t.supervisor)).body.items[0].numero, '····2333');
   } finally { server.close(); }
 });

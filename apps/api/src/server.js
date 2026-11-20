@@ -18,6 +18,7 @@ import { createHoteles, REQUISITOS } from './hoteles.js';
 import { createInicio } from './inicio.js';
 import { createVehiculos } from './vehiculos.js';
 import { createAltaRepresentantes } from './representantes.js';
+import { createBanco, BANCOS, TIPOS_CUENTA } from './banco.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -79,6 +80,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   }
 
   const vehiculos = createVehiculos({ fetchImpl: vehiculosFetch });
+  const banco = createBanco({ data, users: store, audit: (e) => store.addAudit(e) });
   const altas = createAltaRepresentantes({ store, t, v });
   const inicio = createInicio({ data, users: store, v, c, t, now: now ?? (() => new Date()) });
 
@@ -155,6 +157,13 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     return { user, token: signSession({ sub: user.id, role: user.role }, sessionSecret) };
   }, { auth: false });
   ruta('GET', '/api/auth/me', ({ me }) => ({ user: publico(me) }));
+  // Cuenta de banco de la dependiente
+  ruta('GET', '/api/banco/opciones', () => ({ bancos: Object.entries(BANCOS).map(([value, label]) => ({ value, label })), tipos: Object.entries(TIPOS_CUENTA).map(([value, label]) => ({ value, label })) }));
+  ruta('GET', '/api/banco/mia', async ({ me }) => banco.ver(me, me.id));
+  ruta('POST', '/api/banco/mia', async ({ me, body }) => ({ item: await banco.guardar(me, me.id, body ?? {}) }));
+  ruta('GET', '/api/banco/cuentas', async ({ me }) => ({ items: await banco.listar(me) }));
+  ruta('GET', /^\/api\/banco\/([\w-]+)$/, async ({ me, p }) => banco.ver(me, p[1]));
+  ruta('POST', /^\/api\/banco\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await banco.guardar(me, p[1], body ?? {}) }));
   ruta('POST', '/api/auth/cambiar-clave', async ({ me, body }) => ({ item: await auth.cambiarMiClave(me, body?.actual, body?.nueva) }));
   // Alta de representantes por el administrador
   ruta('POST', '/api/representantes', async ({ me, body }) => [201, await altas.alta(me, body ?? {})]);
