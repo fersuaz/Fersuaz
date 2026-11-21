@@ -339,9 +339,30 @@ V.receta = async () => {
   const foto = campo('adjunto', 'Foto de la receta', { type: 'file', accept: 'image/jpeg,image/png,image/webp,application/pdf', capture: 'environment' }, '(opcional, hasta 5 MB)');
   const boton = h('button', { class: 'btn', type: 'submit' }, 'Guardar receta');
   const alertas = h('div', {});
+  // Paciente: el teléfono lo identifica. Si ya existe, el nombre se completa solo y no se duplica.
+  const fTel = campo('paciente.telefono', 'Teléfono del paciente', { type: 'tel', inputmode: 'tel', autocomplete: 'off', required: true });
+  const fNom = campo('paciente.nombre', 'Nombre del paciente', { autocomplete: 'off', required: true });
+  const pacNota = h('p', { class: 'hint paciente-nota', 'aria-live': 'polite' }, 'Escribe primero el teléfono: si el paciente ya está registrado, su nombre aparece solo.');
+  const inTel = fTel.querySelector('input'); const inNom = fNom.querySelector('input');
+  let consulta = 0;
+  const reiniciarPaciente = () => { inNom.readOnly = false; inNom.value = ''; fNom.classList.remove('paciente-conocido'); pacNota.textContent = 'Escribe primero el teléfono: si el paciente ya está registrado, su nombre aparece solo.'; };
+  inTel.addEventListener('input', async () => {
+    const d = inTel.value.replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+    const n = ++consulta;
+    if (d.length < 10) { if (inNom.readOnly) reiniciarPaciente(); return; }
+    try {
+      const { paciente } = await api('GET', `/api/pacientes?telefono=${d}`);
+      if (n !== consulta) return;
+      if (paciente) {
+        inNom.value = paciente.nombre; inNom.readOnly = true; fNom.classList.add('paciente-conocido');
+        pacNota.textContent = `Paciente ya registrado, con ${fmtN.format(paciente.recetas)} receta(s). Esta receta se suma a su historial; no se duplica su contacto.`;
+      } else { if (inNom.readOnly) { inNom.readOnly = false; inNom.value = ''; fNom.classList.remove('paciente-conocido'); } pacNota.textContent = 'Paciente nuevo: escribe su nombre.'; }
+    } catch { /* si falla la búsqueda, se puede escribir el nombre igual */ }
+  });
+  const pacBloque = h('div', {}, h('h2', {}, 'Paciente'), h('div', { class: 'form-fila' }, fTel, fNom), pacNota);
   const form = h('form', { class: 'tarjeta', novalidate: true },
     campo('operativoId', 'Operativo', { options: recientes.map((o) => ({ value: o.id, label: `${o.centro}, ${o.municipio} (${fecha(o.fecha)})` })), value: recientes[0].id, required: true }),
-    selMedico, nuevoMed,
+    selMedico, nuevoMed, pacBloque,
     h('h2', {}, 'Medicamentos recetados'), h('p', { class: 'error', dataset: { for: 'items' } }), ed.el, h('div', { class: 'acciones' }, ed.boton),
     foto, h('div', { class: 'acciones' }, boton));
   form.addEventListener('submit', async (e) => {
@@ -361,10 +382,11 @@ V.receta = async () => {
         const b64 = await new Promise((ok, ko) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.onerror = ko; fr.readAsDataURL(file); });
         adjunto = { nombre: file.name, tipo: file.type, base64: b64 };
       }
-      return api('POST', '/api/recetas', { operativoId: form.operativoId.value, medicoId, items: ed.valores(), adjunto });
+      return api('POST', '/api/recetas', { operativoId: form.operativoId.value, medicoId, items: ed.valores(), adjunto, paciente: { telefono: inTel.value, nombre: inNom.value } });
     });
     if (r) {
-      estado(form.querySelector('.aviso'), 'ok', 'Receta guardada.');
+      estado(form.querySelector('.aviso'), 'ok', r.paciente?.nuevo === false ? `Receta guardada y sumada a ${r.paciente.nombre}.` : 'Receta guardada.');
+      inTel.value = ''; reiniciarPaciente();
       alertas.replaceChildren(...r.alertas.filter((a) => a.estado !== 'ok').map((a) => h('div', { class: `aviso ${a.estado === 'alerta' ? 'error' : ''}` },
         a.estado === 'alerta' ? `Alerta: en ${a.municipio} ya se recetaron ${fmtN.format(a.recetado)} unidades de ${a.medicamento} y las farmacias de la zona tienen ${fmtN.format(a.disponible)}. Coordina compra con el vendedor.` : `${a.medicamento}: ${a.mensaje}`)));
       form.adjunto.value = ''; ed.el.replaceChildren(); ed.boton.click();
@@ -377,7 +399,8 @@ V.misRecetas = async () => {
   const mes = new URLSearchParams(location.hash.split('?')[1]).get('mes') || mesActual();
   const { items } = await api('GET', `/api/recetas?mes=${mes}`);
   return vista('Recetas', null, filtroMes(mes, 'recetas'), tabla([
-    { t: 'Fecha', v: (r) => fecha(r.fecha) }, { t: 'Médico', v: (r) => `${r.medico}, ${r.especialidad}` }, { t: 'Zona', v: (r) => `${r.municipio}, ${r.provincia}` },
+    { t: 'Fecha', v: (r) => fecha(r.fecha) }, { t: 'Paciente', v: (r) => r.paciente ? [r.paciente.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, r.paciente.telefono)] : h('span', { style: 'color:var(--texto-2)' }, 'Sin registrar') },
+    { t: 'Médico', v: (r) => `${r.medico}, ${r.especialidad}` }, { t: 'Zona', v: (r) => `${r.municipio}, ${r.provincia}` },
     { t: 'Medicamentos', v: (r) => r.items.map((i) => `${i.medicamento} ×${i.unidades}`).join(', ') },
     { t: 'Foto', v: (r) => r.adjunto ? h('button', { class: 'btn-sec btn-peq', onclick: () => verAdjunto(r.adjunto.clave) }, 'Ver') : 'Sin foto' },
   ], items.slice().reverse(), ['No hay recetas en este mes', 'Las recetas que registres aparecerán aquí.']));
