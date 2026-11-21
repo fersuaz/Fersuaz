@@ -121,6 +121,8 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
       if (x != null && (!Number.isFinite(x) || x < 0)) e[`${pre}${k}`] = 'Escribe un monto en RD$.';
       return [k, x == null ? null : r2(x)];
     }));
+    // Formato anterior (cuatro montos sueltos, de una pantalla abierta antes de actualizar): es un monto global.
+    if (!input?.modo && !input?.global && !input?.porPosicion && TARIFAS_PUBLICO.some((k) => input?.[k] != null && input[k] !== '')) input = { modo: 'global', global: input };
     const modo = input?.modo === 'global' ? 'global' : 'posicion';
     const valor = { modo, global: leer(input?.global, 'global.'), porPosicion: Object.fromEntries(POSITIONS.map((p) => [p, leer(input?.porPosicion?.[p], `${p}.`)])) };
     if (Object.keys(e).length) invalido(e);
