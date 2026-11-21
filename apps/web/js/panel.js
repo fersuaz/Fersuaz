@@ -1755,11 +1755,18 @@ async function buscarReferencia({ marca, modelo, anio }, boton, caja, usar) {
   boton.disabled = false; boton.textContent = texto0;
 }
 
+/** Cómo quedó el correo de bienvenida (usuario, pasos y enlace). */
+function estadoCorreo(e) {
+  const t = { enviado: 'Le enviamos un correo con su usuario, los pasos y el enlace para entrar.', sin_correo: 'No tiene correo registrado: entrégale los datos en persona. Puedes agregarle un correo con "Editar datos".',
+    no_configurado: 'El envío de correos aún no está activado en la plataforma; entrégale los datos en persona.', error: 'No se pudo enviar el correo ahora; entrégale los datos en persona.' }[e];
+  return t ? h('p', { class: `estado-correo ${e === 'enviado' ? 'ok' : ''}` }, t) : null;
+}
 /** Muestra el usuario y la contraseña para entregar al representante (la temporal solo se ve una vez). */
 function mostrarCredenciales(titulo, x, alCerrar) {
   $('#dialogo-titulo').textContent = titulo;
   $('#dialogo-cuerpo').replaceChildren(h('dl', { class: 'credenciales-lista' }, h('dt', {}, 'Usuario'), h('dd', {}, x.usuario),
     h('dt', {}, x.claveInicialGlobal ? 'Contraseña' : 'Contraseña temporal'), h('dd', {}, x.claveInicialGlobal ? 'La contraseña inicial global de FERSUAZ' : x.claveTemporal)),
+    estadoCorreo(x.correoBienvenida),
     h('p', { class: 'hint' }, x.claveInicialGlobal ? 'Al entrar por primera vez deberá cambiarla por una propia.' : 'No se volverá a mostrar. Entrégala por un medio seguro; al entrar deberá cambiarla.'));
   $('#dialogo-ok').textContent = 'Listo';
   if (alCerrar) $('#dialogo').addEventListener('close', alCerrar, { once: true });
@@ -1829,7 +1836,7 @@ async function altaRepresentante(div) {
     h('p', { class: 'hint' }, 'El sistema crea su usuario y una contraseña temporal. Al entrar por primera vez, el representante elige su propia contraseña.'),
     h('div', { class: 'form-fila' }, campo('nombre', 'Nombre', { autocomplete: 'off' }), campo('apellido', 'Apellido', { autocomplete: 'off' }),
       campo('posicion', 'Posición', { options: ['Visitador', 'PVC', 'Vendedor', 'Promotora'].map((x) => ({ value: x, label: x })), placeholder: 'Elige la posición' }),
-      campo('telefono', 'Teléfono', { inputmode: 'tel', autocomplete: 'off' }, '(opcional)'), campo('correo', 'Correo', { type: 'email', autocomplete: 'off' }, '(opcional, para recuperar su clave)')),
+      campo('telefono', 'Teléfono', { inputmode: 'tel', autocomplete: 'off' }, '(opcional)'), campo('correo', 'Correo', { type: 'email', autocomplete: 'off' }, '(opcional: le llega su usuario, los pasos y el enlace para entrar; también sirve para recuperar su clave)')),
     h('h3', { class: 'subtitulo-form' }, 'Dónde vive'), h('div', { class: 'form-fila' }, res.fp, res.fm),
     h('h3', { class: 'subtitulo-form' }, 'Provincias que visitará'), h('p', { class: 'hint' }, 'Con esto se conectan sus municipios, farmacias, hospitales, clínicas, UNAP y hoteles. Si solo visita algunos municipios, ábrela y márcalos. Dos representantes de la misma posición no pueden compartir zona; con otra posición sí. Elige primero la posición para ver lo que ya está cubierto.'),
     h('p', { class: 'error', dataset: { for: 'provincias' } }), provs,
@@ -1850,6 +1857,7 @@ async function altaRepresentante(div) {
     copiar.addEventListener('click', async () => { try { await navigator.clipboard.writeText(`Usuario: ${r.representante.usuario}\nContraseña: ${r.claveInicialGlobal ? 'la contraseña inicial de FERSUAZ' : r.claveTemporal}\nAl entrar por primera vez debe cambiarla.`); copiar.textContent = 'Copiado'; } catch { copiar.textContent = 'Cópialo a mano'; } });
     salida.replaceChildren(h('div', { class: 'credenciales', role: 'status' }, h('h3', {}, `${r.representante.nombre} quedó registrado`),
       h('dl', {}, h('div', {}, h('dt', {}, 'Usuario'), h('dd', {}, r.representante.usuario)), h('div', {}, h('dt', {}, r.claveInicialGlobal ? 'Contraseña' : 'Contraseña temporal'), h('dd', {}, r.claveInicialGlobal ? 'La contraseña inicial global' : r.claveTemporal))),
+      estadoCorreo(r.correoBienvenida),
       h('p', {}, 'Entrégale estos datos en persona o por un medio seguro. Esta contraseña no se volverá a mostrar; si la pierde, genera una nueva desde la lista de representantes. Al entrar, deberá cambiarla.'),
       h('div', { class: 'acciones' }, copiar, h('a', { class: 'btn', href: `#representantes?rep=${r.representante.id}&sec=lugares` }, 'Ver su zona'))));
     salida.scrollIntoView({ block: 'nearest' });
@@ -1858,6 +1866,26 @@ async function altaRepresentante(div) {
 }
 
 /** Primera entrada con contraseña temporal: debe elegir la suya antes de usar el panel. */
+/** Mi cuenta: cada persona ve su usuario y corrige su teléfono, su correo y su contraseña. */
+V.cuenta = async () => {
+  const { user: u } = await api('GET', '/api/auth/me');
+  const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar mis datos');
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Mis datos'),
+    h('dl', { class: 'credenciales-lista datos-lista' }, h('dt', {}, 'Nombre'), h('dd', {}, u.fullName), u.username ? h('dt', {}, 'Usuario') : null, u.username ? h('dd', {}, u.username) : null, h('dt', {}, 'Rol'), h('dd', {}, `${ROLES[u.role] ?? u.role}${u.position ? `, ${u.position}` : ''}`)),
+    h('p', { class: 'hint' }, 'Si tu nombre está mal escrito, pídele a la administración que lo corrija.'),
+    h('div', { class: 'form-fila' }, campo('telefono', 'Teléfono', { type: 'tel', inputmode: 'tel', value: u.phone ?? '' }), campo('correo', 'Correo', { type: 'email', value: u.email ?? '', autocomplete: 'email' }, '(para recibir avisos y recuperar tu contraseña)')),
+    h('div', { class: 'acciones' }, b));
+  f.addEventListener('submit', async (e) => { e.preventDefault(); await enviar(f, b, () => api('POST', '/api/auth/mis-datos', { telefono: f.telefono.value, correo: f.correo.value })); });
+  const bc = h('button', { class: 'btn', type: 'submit' }, 'Cambiar mi contraseña');
+  const fc = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Contraseña'),
+    h('div', { class: 'form-fila' }, campo('actual', 'Contraseña actual', { type: 'password', autocomplete: 'current-password' }), campo('nueva', 'Nueva contraseña', { type: 'password', autocomplete: 'new-password' }, '(10 o más, letras y números)'), campo('repetir', 'Repite la nueva', { type: 'password', autocomplete: 'new-password' })),
+    h('div', { class: 'acciones' }, bc));
+  fc.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (await enviar(fc, bc, async () => { if (fc.nueva.value !== fc.repetir.value) throw new ApiError(422, { error: 'Las contraseñas no coinciden.', fields: { repetir: 'No coincide con la nueva.' } }); return api('POST', '/api/auth/cambiar-clave', { actual: fc.actual.value, nueva: fc.nueva.value }); })) fc.reset();
+  });
+  return vista('Mi cuenta', 'Tus datos de acceso y de contacto.', f, fc);
+};
 function vistaCambioClave() {
   const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar mi contraseña');
   const f = h('form', { class: 'tarjeta cambio-clave', novalidate: true }, h('h2', {}, 'Elige tu contraseña'),
@@ -2307,7 +2335,7 @@ function cerrarPerfil() { $('#perfil-menu').hidden = true; $('#perfil').setAttri
 let secciones;
 async function router() {
   const ruta = location.hash.slice(1).split('?')[0];
-  const permitidas = secciones.flatMap(([, i]) => i.map(([id]) => id));
+  const permitidas = [...secciones.flatMap(([, i]) => i.map(([id]) => id)), 'cuenta']; // Mi cuenta: para todos, desde el menú del perfil
   const id = permitidas.includes(ruta) ? ruta : permitidas[0];
   if (id !== ruta) { history.replaceState(null, '', `#${id}`); }
   pintarMenu(secciones, id);

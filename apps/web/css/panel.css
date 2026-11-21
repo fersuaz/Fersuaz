@@ -654,3 +654,9 @@ td .sem-nombre, .td-fecha { white-space: nowrap; }
 .exportar { display: flex; gap: .5rem; margin-left: auto; flex-wrap: wrap; }
 .tabla-barra { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1rem; }
 .precio-cat { font-variant-numeric: tabular-nums; color: var(--marino); }
+.perfil-cuenta { display: flex; align-items: center; gap: .6rem; width: 100%; padding: .65rem .75rem; border-radius: 10px; color: var(--tinta); text-decoration: none; font-weight: 500; }
+.perfil-cuenta:hover, .perfil-cuenta:focus-visible { background: var(--panel); outline: none; }
+.perfil-cuenta svg { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.estado-correo { margin: .75rem 0 0; padding: .6rem .8rem; border-radius: 10px; background: var(--panel); color: var(--tinta); font-size: .92rem; }
+.estado-correo.ok { background: rgba(48, 133, 172, .12); color: var(--marino); font-weight: 500; }
+.datos-lista dd { font-family: var(--sans) !important; font-weight: 600; color: var(--marino); }

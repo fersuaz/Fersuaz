@@ -177,6 +177,39 @@ test('presupuesto sin mapa: los días del cronograma sin km se avisan, no se inv
   } finally { server.close(); }
 });
 
+test('bienvenida por correo: usuario, pasos y enlace; Mi cuenta para corregir teléfono y correo', async () => {
+  const enviados = [];
+  const correo = { activo: true, async enviar(m) { enviados.push(m); } };
+  const store = new MemoryStore();
+  const server = createServer(createApp({ store, data: new MemoryData(), files: new MemoryFiles(), correo, sitio: 'https://ejemplo.fersuaz', sessionSecret: 'x'.repeat(40) })).listen(0);
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const call = async (m, p, b, t) => { const r = await fetch(url + p, { method: m, headers: { 'content-type': 'application/json', ...(t && { authorization: `Bearer ${t}` }) }, body: b && JSON.stringify(b) }); return { status: r.status, body: await r.json() }; };
+  try {
+    await store.createUser({ fullName: 'Admin Ejemplo', email: 'adm@x.do', status: 'activo', passwordHash: await hashPassword('clave123456'), role: 'administrador' });
+    const adm = (await call('POST', '/api/auth/login', { email: 'adm@x.do', password: 'clave123456' })).body.token;
+    const base = { nombre: 'Rosa', apellido: 'Ejemplo', posicion: 'Promotora', provincias: ['Espaillat'], residencia: { provincia: 'Espaillat', municipio: 'Moca' }, vehiculo: { propiedad: 'ninguno' } };
+    const sin = await call('POST', '/api/representantes', base, adm);
+    assert.equal(sin.status, 201, JSON.stringify(sin.body)); assert.equal(sin.body.correoBienvenida, 'sin_correo'); assert.equal(enviados.length, 0);
+    const con = await call('POST', '/api/representantes', { ...base, nombre: 'Ana', correo: 'ana.ejemplo@ejemplo.do', provincias: ['Santiago'] }, adm);
+    assert.equal(con.body.correoBienvenida, 'enviado');
+    const m = enviados[0];
+    assert.equal(m.para, 'ana.ejemplo@ejemplo.do'); assert.match(m.asunto, /Bienvenido/);
+    assert.match(m.texto, /aejemplo/); assert.match(m.texto, new RegExp(con.body.claveTemporal)); assert.match(m.html, /https:\/\/ejemplo\.fersuaz\/entrar\.html/);
+    assert.match(m.texto, /Mi cuenta/);
+    // Con contraseña inicial global, el correo no la escribe
+    await call('POST', '/api/representantes/clave-inicial', { clave: 'Ejemplo1234567' }, adm);
+    await call('POST', `/api/representantes/${con.body.representante.id}/clave`, {}, adm);
+    assert.doesNotMatch(enviados.at(-1).texto, /Ejemplo1234567/); assert.match(enviados.at(-1).texto, /contraseña inicial que te dio la administración/);
+    // Mi cuenta: corrige su teléfono y su correo (tras cambiar su contraseña inicial)
+    const t = (await call('POST', '/api/auth/login', { email: 'aejemplo', password: 'Ejemplo1234567' })).body.token;
+    assert.equal((await call('POST', '/api/auth/mis-datos', { telefono: '8095550000' }, t)).status, 403, 'primero cambia la contraseña');
+    await call('POST', '/api/auth/cambiar-clave', { actual: 'Ejemplo1234567', nueva: 'MiClavePropia2026' }, t);
+    const md = await call('POST', '/api/auth/mis-datos', { telefono: '849 555 0001', correo: 'ana.nueva@ejemplo.do' }, t);
+    assert.equal(md.status, 200, JSON.stringify(md.body)); assert.equal(md.body.item.phone, '849-555-0001'); assert.equal(md.body.item.email, 'ana.nueva@ejemplo.do');
+    assert.equal((await call('POST', '/api/auth/mis-datos', { correo: 'adm@x.do' }, t)).status, 422, 'correo de otra cuenta');
+  } finally { server.close(); }
+});
+
 test('SES: firma SigV4 del servicio ses y cuerpo con asunto y HTML', async () => {
   const { SesCorreo } = await import('../src/correo.js');
   let req;
