@@ -7,6 +7,7 @@ import { calcularComisionVouchers, evaluarAlertaInventario } from './calculos.js
 import { esFechaISO, hoyRD, periodoDe, rangoDe } from './periodos.js';
 import { normalizeName } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
+import { claveMed, codigoMed, gruposRepetidos } from './medicamentos-dup.js';
 import { buscarRepetida, textoRepetida, esHuella, esDhash } from './fotos.js';
 import { provinciaOficial, municipioOficial, dentroDeZona } from './territorio.js';
 
@@ -74,12 +75,93 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const precio = input.precio == null || input.precio === '' ? null : Number(input.precio);
       if (precio != null && !(precio > 0 && precio < 1e7)) e.precio = 'Escribe un precio mayor que cero o déjalo vacío.';
       if (Object.keys(e).length) invalido(e);
-      const dup = (await data.list('medicamentos')).find((m) => m.nombre.toLowerCase() === nombre.toLowerCase() && (m.presentacion ?? '') === (presentacion ?? ''));
-      if (dup) throw new HttpError(409, 'Ese medicamento ya está en el catálogo.', { nombre: 'Ya existe con esa presentación.' });
-      const m = await data.insert('medicamentos', { nombre, linea, presentacion, precio: precio == null ? null : round2(precio), activo: true });
+      const codigo = codigoMed(input.codigo);
+      if (codigo && !/^[A-Z0-9-]{2,30}$/.test(codigo)) e.codigo = 'El código solo lleva letras, números y guiones.';
+      if (Object.keys(e).length) invalido(e);
+      const todos = await data.list('medicamentos');
+      const dup = todos.find((m) => m.activo !== false && claveMed(m.nombre, m.presentacion) === claveMed(nombre, presentacion));
+      if (dup) throw new HttpError(409, `Ese medicamento ya está en el catálogo: ${dup.nombre}${dup.presentacion ? `, ${dup.presentacion}` : ''}.`, { nombre: 'Repetido: ya existe.' });
+      if (codigo && todos.some((m) => m.activo !== false && codigoMed(m.codigo) === codigo)) throw new HttpError(409, 'Ese código ya lo usa otro medicamento.', { codigo: 'Código repetido.' });
+      const m = await data.insert('medicamentos', { codigo: codigo || null, nombre, linea, presentacion, precio: precio == null ? null : round2(precio), activo: true });
       if (precio != null) await data.insert('preciosMedicamento', { medicamentoId: m.id, precio: round2(precio), vigenteDesde: hoy(), fuente: 'manual', registradoPor: actor.id });
       await audit({ actorId: actor.id, action: 'medicamento_creado', entity: 'medicamento', entityId: m.id, after: m });
       return m;
+    },
+    /** Editar código, nombre, presentación o línea. El precio se cambia aparte para que quede su historial. */
+    async editarMedicamento(actor, id, input = {}) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia']), 'Solo la administración o la gerencia editan medicamentos.');
+      const m = await data.get('medicamentos', String(id));
+      if (!m) throw new HttpError(404, 'El medicamento no existe.');
+      const e = {}; const patch = {};
+      if (input.nombre !== undefined) patch.nombre = texto(e, 'nombre', input.nombre, { etiqueta: 'El nombre' });
+      if (input.presentacion !== undefined) patch.presentacion = texto(e, 'presentacion', input.presentacion, { etiqueta: 'La presentación', requerido: false }) || null;
+      if (input.linea !== undefined) patch.linea = texto(e, 'linea', input.linea, { etiqueta: 'La línea', requerido: false }) || null;
+      if (input.codigo !== undefined) {
+        const c = codigoMed(input.codigo);
+        if (c && !/^[A-Z0-9-]{2,30}$/.test(c)) e.codigo = 'El código solo lleva letras, números y guiones.';
+        patch.codigo = c || null;
+      }
+      if (Object.keys(e).length) invalido(e);
+      const otros = (await data.list('medicamentos')).filter((x) => x.id !== m.id && x.activo !== false);
+      if (patch.codigo && otros.some((x) => codigoMed(x.codigo) === patch.codigo)) throw new HttpError(409, 'Ese código ya lo usa otro medicamento.', { codigo: 'Código repetido.' });
+      const nombre = patch.nombre ?? m.nombre; const pres = patch.presentacion !== undefined ? patch.presentacion : m.presentacion;
+      if (otros.some((x) => claveMed(x.nombre, x.presentacion) === claveMed(nombre, pres))) throw new HttpError(409, 'Ya hay otro medicamento con ese nombre y presentación.', { nombre: 'Nombre repetido.' });
+      const out = await data.update('medicamentos', m.id, patch);
+      await audit({ actorId: actor.id, action: 'medicamento_editado', entity: 'medicamento', entityId: m.id, before: Object.fromEntries(Object.keys(patch).map((k) => [k, m[k] ?? null])), after: patch });
+      return out;
+    },
+    /**
+     * Eliminar del catálogo: deja de aparecer para cargar recetas, vouchers, pedidos y la tienda.
+     * Las recetas, vouchers y ventas que ya lo usan se conservan (no se borra el historial).
+     */
+    async eliminarMedicamento(actor, id, { motivo } = {}) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia']), 'Solo la administración o la gerencia eliminan medicamentos.');
+      const m = await data.get('medicamentos', String(id));
+      if (!m || m.activo === false) throw new HttpError(404, 'El medicamento no existe.');
+      const out = await data.update('medicamentos', m.id, { activo: false, publicado: false });
+      await audit({ actorId: actor.id, action: 'medicamento_eliminado', entity: 'medicamento', entityId: m.id, before: { activo: true }, after: { activo: false, motivo: normalizeName(motivo) || null } });
+      return out;
+    },
+    async repetidosMedicamentos(actor) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia']));
+      return { grupos: gruposRepetidos(await data.list('medicamentos')) };
+    },
+    /**
+     * Quitar repetidos: en cada grupo se conserva uno y los demás se eliminan del catálogo. Al conservado se le
+     * pasan el código, el precio y la línea que le falten. `auto`: solo los repetidos exactos, sin preguntar.
+     */
+    async limpiarRepetidos(actor, { auto = false, grupos: elegidos = [] } = {}) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia']), 'Solo la administración o la gerencia eliminan medicamentos.');
+      const todos = await data.list('medicamentos');
+      const porId = new Map(todos.map((m) => [m.id, m]));
+      let trabajo;
+      if (auto) trabajo = gruposRepetidos(todos).filter((g) => g.exacto).map((g) => ({ conservar: g.conservar, quitar: g.items.map((m) => m.id).filter((x) => x !== g.conservar) }));
+      else {
+        const vigentes = gruposRepetidos(todos);
+        trabajo = (Array.isArray(elegidos) ? elegidos : []).map((g) => {
+          const grupo = vigentes.find((v) => v.items.some((m) => m.id === g.conservar));
+          if (!grupo) invalido({ grupos: 'Ese grupo de repetidos ya no existe. Vuelve a cargar la lista.' });
+          const ids = new Set(grupo.items.map((m) => m.id));
+          const quitar = (g.quitar ?? []).filter((x) => ids.has(x) && x !== g.conservar);
+          return { conservar: g.conservar, quitar };
+        });
+      }
+      let eliminados = 0;
+      for (const g of trabajo) {
+        const k = porId.get(g.conservar); if (!k) continue;
+        const patch = {};
+        for (const id of g.quitar) {
+          const x = porId.get(id); if (!x || x.activo === false) continue;
+          if (!k.codigo && !patch.codigo && x.codigo) patch.codigo = x.codigo;
+          if (k.precio == null && patch.precio == null && x.precio != null) patch.precio = x.precio;
+          if (!k.linea && !patch.linea && x.linea) patch.linea = x.linea;
+          await data.update('medicamentos', x.id, { activo: false, publicado: false, ...(x.codigo && (patch.codigo === x.codigo) ? { codigo: null } : {}) });
+          await audit({ actorId: actor.id, action: 'medicamento_repetido_eliminado', entity: 'medicamento', entityId: x.id, after: { conservado: k.id, nombre: x.nombre, automatico: auto } });
+          eliminados++;
+        }
+        if (Object.keys(patch).length) await data.update('medicamentos', k.id, patch);
+      }
+      return { eliminados, grupos: trabajo.length };
     },
     async listarMedicamentos() { return (await data.list('medicamentos')).filter((m) => m.activo); },
 

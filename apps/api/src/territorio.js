@@ -3,6 +3,7 @@
 import { AuthError as HttpError } from './auth.js';
 import { STATUS, POSITIONS } from './roles.js';
 import { DIVISION, PROVINCIAS } from './datos/division-territorial.js';
+import { claveMed, codigoMed } from './medicamentos-dup.js';
 import { leerHoja } from './hojas.js';
 import { esFechaISO, hoyRD } from './periodos.js';
 import { normalizeName } from './validation.js';
@@ -324,36 +325,67 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     return data.update('preregistros', id, { estado: 'anulado' });
   }
 
+  /** Código de medicamento normalizado: mayúsculas, sin espacios ("zitro 002" → "ZITRO002"). */
   // ------------------------------------------------------------ importación por Excel
   const IMPORTADORES = {
     medicamentos: {
       roles: ['administrador', 'gerencia'],
-      columnas: ['nombre', 'presentacion', 'precio rd'],
+      // Plantilla oficial: #, Código, Medicamento / Producto, Precio Final ($). También acepta la anterior (Nombre, Presentación, Precio RD).
+      columnas: [],
+      columnasOk(cols) {
+        const nombre = cols.some((c) => ['medicamento producto', 'medicamento', 'producto', 'nombre'].includes(c));
+        const precio = cols.some((c) => ['precio final', 'precio', 'precio rd'].includes(c));
+        return nombre && precio ? null : 'Faltan columnas: Código, Medicamento / Producto y Precio Final. Usa la plantilla.';
+      },
       async preparar() {
         const ms = await data.list('medicamentos');
-        return { porClave: new Map(ms.map((m) => [`${sinAcentos(m.nombre)}|${sinAcentos(m.presentacion ?? '')}`, m])) };
+        // Los activos primero: si hay un repetido dado de baja, se actualiza el activo.
+        const orden = [...ms].sort((a, b) => Number(a.activo === false) - Number(b.activo === false));
+        const porCodigo = new Map(); const porNombre = new Map();
+        for (const m of [...orden].reverse()) { if (m.codigo) porCodigo.set(codigoMed(m.codigo), m); porNombre.set(claveMed(m.nombre, m.presentacion), m); }
+        return { porCodigo, porNombre };
       },
       fila(f, ctx, vistos) {
         const e = [];
-        const nombre = normalizeName(f.nombre); if (!nombre) e.push('Falta el nombre.');
+        const nombre = normalizeName(f['medicamento producto'] ?? f.medicamento ?? f.producto ?? f.nombre); if (!nombre) e.push('Falta el nombre del medicamento.');
         const presentacion = normalizeName(f.presentacion) || null;
-        const precio = numero(f['precio rd'] ?? f.precio);
+        const codigo = String(f.codigo ?? '').trim() ? codigoMed(f.codigo) : null;
+        if (codigo && !/^[A-Z0-9-]{2,30}$/.test(codigo)) e.push('El código solo lleva letras, números y guiones.');
+        const precio = numero(f['precio final'] ?? f['precio rd'] ?? f.precio);
         if (precio == null) e.push('Falta el precio.'); else if (!(precio > 0) || precio > 1e7) e.push('El precio debe ser un número mayor que cero.');
         const vigente = fechaDe(f['vigente desde']);
         if (vigente === undefined) e.push('La fecha "Vigente desde" debe ser AAAA-MM-DD.');
-        const k = `${sinAcentos(nombre)}|${sinAcentos(presentacion ?? '')}`;
-        if (vistos.has(k)) e.push(`Repetido en la fila ${vistos.get(k)}.`); else vistos.set(k, f._fila);
-        const actual = ctx.porClave.get(k);
-        const accion = !actual ? 'crear' : r2(actual.precio ?? 0) === r2(precio) ? 'sin cambio' : 'actualizar precio';
-        return { e, d: { nombre, linea: normalizeName(f.linea) || null, presentacion, precio: r2(precio), vigenteDesde: vigente || hoyRD(now()) }, accion, actual };
+        const kNom = claveMed(nombre, presentacion);
+        // Repetidos en el archivo: si la fila es idéntica a otra, se omite sola; si no coincide, es un error.
+        let repetida = false;
+        for (const k of [codigo && `c:${codigo}`, `n:${kNom}`].filter(Boolean)) {
+          const prev = vistos.get(k);
+          if (prev) { if (prev.firma === `${codigo}|${kNom}|${r2(precio ?? 0)}`) repetida = prev.fila; else e.push(`${k.startsWith('c:') ? 'Código' : 'Medicamento'} repetido en la fila ${prev.fila} con otros datos.`); }
+        }
+        if (!repetida) for (const k of [codigo && `c:${codigo}`, `n:${kNom}`].filter(Boolean)) if (!vistos.has(k)) vistos.set(k, { fila: f._fila, firma: `${codigo}|${kNom}|${r2(precio ?? 0)}` });
+        if (repetida && !e.length) return { e, d: { codigo, nombre, precio: r2(precio ?? 0) }, accion: `repetido (igual a la fila ${repetida}, se omite)`, actual: null, cambios: [] };
+        // Primero por código; si no lo tiene, por nombre (y se le pone el código).
+        const actual = (codigo && ctx.porCodigo.get(codigo)) || ctx.porNombre.get(kNom) || null;
+        if (actual && codigo && actual.codigo && codigoMed(actual.codigo) !== codigo) e.push(`"${nombre}" ya existe con el código ${actual.codigo}.`);
+        const cambios = [];
+        if (actual) {
+          if (codigo && codigoMed(actual.codigo ?? '') !== codigo) cambios.push('código');
+          // Nombre: cambia si es otro texto (no solo mayúsculas). Si el nombre nuevo ya trae la presentación, esta se une al nombre.
+          if (claveMed(actual.nombre, null) !== claveMed(nombre, null) || (actual.presentacion && !presentacion && claveMed(nombre, null) === claveMed(actual.nombre, actual.presentacion))) cambios.push('nombre');
+          if (actual.activo === false) cambios.push('volver a activar');
+          if (r2(actual.precio ?? 0) !== r2(precio ?? 0)) cambios.push('precio');
+        }
+        const accion = !actual ? 'crear' : cambios.length ? `actualizar ${cambios.join(', ')}` : 'sin cambio';
+        return { e, d: { codigo, nombre, linea: normalizeName(f.linea) || null, presentacion, precio: r2(precio ?? 0), vigenteDesde: vigente || hoyRD(now()), antes: actual ? { codigo: actual.codigo ?? null, nombre: actual.nombre, precio: actual.precio ?? null } : null }, accion, actual, cambios };
       },
-      async guardar(actor, { d, accion, actual }) {
+      async guardar(actor, { d, accion, actual, cambios }) {
+        if (accion.startsWith('repetido')) return;
         if (accion === 'crear') {
-          const m = await data.insert('medicamentos', { nombre: d.nombre, linea: d.linea, presentacion: d.presentacion, precio: d.precio, activo: true });
+          const m = await data.insert('medicamentos', { codigo: d.codigo, nombre: d.nombre, linea: d.linea, presentacion: d.presentacion, precio: d.precio, activo: true });
           await data.insert('preciosMedicamento', { medicamentoId: m.id, precio: d.precio, vigenteDesde: d.vigenteDesde, fuente: 'excel', registradoPor: actor.id });
-        } else if (accion === 'actualizar precio') {
-          await data.update('medicamentos', actual.id, { precio: d.precio, ...(d.linea && !actual.linea ? { linea: d.linea } : {}) });
-          await data.insert('preciosMedicamento', { medicamentoId: actual.id, precio: d.precio, vigenteDesde: d.vigenteDesde, fuente: 'excel', registradoPor: actor.id });
+        } else if (cambios?.length) {
+          await data.update('medicamentos', actual.id, { ...(cambios.includes('código') ? { codigo: d.codigo } : {}), ...(cambios.includes('nombre') ? { nombre: d.nombre, ...(!d.presentacion && actual.presentacion && claveMed(d.nombre, null) === claveMed(actual.nombre, actual.presentacion) ? { presentacion: null } : {}) } : {}), ...(cambios.includes('volver a activar') ? { activo: true } : {}), ...(cambios.includes('precio') ? { precio: d.precio } : {}), ...(d.linea && !actual.linea ? { linea: d.linea } : {}) });
+          if (cambios.includes('precio')) await data.insert('preciosMedicamento', { medicamentoId: actual.id, precio: d.precio, vigenteDesde: d.vigenteDesde, fuente: 'excel', registradoPor: actor.id });
         }
       },
     },
@@ -433,6 +465,8 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     try { hoja = leerHoja(buf, nombre); } catch (err) { invalido({ archivo: err.message }); }
     const faltan = imp.columnas.filter((c) => !hoja.columnas.includes(c));
     if (faltan.length) invalido({ archivo: `Faltan columnas: ${faltan.join(', ')}. Usa la plantilla.` });
+    const malCols = imp.columnasOk?.(hoja.columnas);
+    if (malCols) invalido({ archivo: malCols });
     const ctx = await imp.preparar();
     const vistos = new Map();
     const filas = hoja.filas.filter((f) => !esEjemplo(f)).map((f) => ({ fila: f._fila, ...imp.fila(f, ctx, vistos) }));

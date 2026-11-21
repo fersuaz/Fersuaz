@@ -296,6 +296,10 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   // Catálogos
   ruta('GET', '/api/catalogo/medicamentos', async () => ({ items: await c.catalogo.listarMedicamentos() }));
   ruta('POST', '/api/catalogo/medicamentos', async ({ me, body }) => [201, { item: await c.catalogo.crearMedicamento(me, body) }]);
+  ruta('GET', '/api/catalogo/medicamentos/repetidos', async ({ me }) => c.catalogo.repetidosMedicamentos(me));
+  ruta('POST', '/api/catalogo/medicamentos/repetidos', async ({ me, body }) => c.catalogo.limpiarRepetidos(me, body ?? {}));
+  ruta('POST', /^\/api\/catalogo\/medicamentos\/([\w-]+)\/eliminar$/, async ({ me, p, body }) => ({ item: await c.catalogo.eliminarMedicamento(me, p[1], body ?? {}) }));
+  ruta('POST', /^\/api\/catalogo\/medicamentos\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await c.catalogo.editarMedicamento(me, p[1], body ?? {}) }));
   ruta('GET', '/api/catalogo/farmacias', async () => ({ items: await c.catalogo.listarFarmacias() }));
   ruta('POST', '/api/catalogo/farmacias', async ({ me, body }) => [201, { item: await c.catalogo.crearFarmacia(me, body) }]);
   ruta('GET', '/api/catalogo/medicos', async () => ({ items: await medicos.listar(), especialidades: medicos.especialidades(), iaActiva: medicos.iaActiva() }));

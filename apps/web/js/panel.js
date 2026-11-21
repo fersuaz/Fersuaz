@@ -68,8 +68,38 @@ async function api(method, path, body) {
 }
 
 // ---------------------------------------------------------------- formularios
+/** Zona para arrastrar y soltar archivos (o hacer clic). Envuelve un input de archivo; el resto del código lo usa igual. */
+function zonaArchivo(input) {
+  input.classList.add('sr-only');
+  const varios = input.multiple;
+  const nombre = h('span', { class: 'za-nombre', 'aria-live': 'polite' }, varios ? 'Ningún archivo elegido' : 'Ningún archivo elegido');
+  const zona = h('label', { class: 'za', for: input.id },
+    h('span', { class: 'za-icono', 'aria-hidden': 'true' }, '⇪'),
+    h('span', { class: 'za-texto' }, h('strong', {}, varios ? 'Arrastra aquí los archivos' : 'Arrastra aquí el archivo'), h('span', {}, ' o haz clic para elegirlo')),
+    nombre, input);
+  const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  const pintar = () => {
+    const fs = [...(input.files ?? [])];
+    nombre.textContent = !fs.length ? 'Ningún archivo elegido' : fs.length === 1 ? `${fs[0].name} (${kb(fs[0].size)})` : `${fs.length} archivos elegidos`;
+    zona.classList.toggle('con-archivo', fs.length > 0);
+  };
+  input.addEventListener('change', pintar);
+  ['dragenter', 'dragover'].forEach((t) => zona.addEventListener(t, (e) => { e.preventDefault(); zona.classList.add('activa'); }));
+  ['dragleave', 'dragend'].forEach((t) => zona.addEventListener(t, () => zona.classList.remove('activa')));
+  zona.addEventListener('drop', (e) => {
+    e.preventDefault(); zona.classList.remove('activa');
+    const fs = [...e.dataTransfer.files]; if (!fs.length) return;
+    const dt = new DataTransfer(); (varios ? fs : fs.slice(0, 1)).forEach((f) => dt.items.add(f));
+    input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  return zona;
+}
 function campo(name, label, attrs = {}, hint) {
   const id = `f-${name.replace(/\W/g, '-')}-${Math.random().toString(36).slice(2, 7)}`;
+  if (attrs.type === 'file') {
+    const input = h('input', { id, name, ...attrs, 'aria-describedby': `${id}-e` });
+    return h('div', { class: 'field' }, h('span', { class: 'za-etq' }, label, hint ? h('span', { class: 'hint' }, ` ${hint}`) : null), zonaArchivo(input), h('p', { class: 'error', id: `${id}-e`, dataset: { for: name } }));
+  }
   const input = attrs.options
     ? h('select', { id, name, required: attrs.required }, h('option', { value: '' }, attrs.placeholder ?? 'Elige una opción'), ...attrs.options.map((o) => h('option', { value: o.value, selected: o.value === attrs.value }, o.label)))
     : h('input', { id, name, type: 'text', ...attrs, 'aria-describedby': `${id}-e` });
@@ -618,7 +648,7 @@ V.tienda = async () => {
   const pub = h('input', { type: 'checkbox', id: 'publicado', checked: m.publicado });
   const btn = h('button', { class: 'btn', type: 'submit' }, 'Guardar ficha');
   const f = h('form', { class: 'tarjeta', novalidate: true },
-    h('h2', {}, 'Fotos'), fotos, h('div', { class: 'field' }, h('label', { for: 'foto-nueva' }, 'Agregar fotos (JPG, PNG o WEBP, máximo 5 MB cada una)'), subir), sitio,
+    h('h2', {}, 'Fotos'), fotos, h('div', { class: 'field' }, h('span', { class: 'za-etq' }, 'Agregar fotos (JPG, PNG o WEBP, máximo 5 MB cada una)'), zonaArchivo(subir)), sitio,
     h('h2', { style: 'margin-top:1.5rem' }, 'Ficha'), h('p', { class: 'hint' }, 'Datos cortos que se muestran como lista: principio activo, presentación, registro sanitario.'), ficha,
     h('div', { class: 'acciones' }, h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => ficha.append(filaFicha()) }, 'Agregar dato')),
     h('div', { class: 'field' }, h('label', { for: 'descripcion' }, 'Descripción'), desc),
@@ -2035,9 +2065,9 @@ V.catalogo = async () => {
     if (ES_GER()) {
       const b = h('button', { class: 'btn', type: 'submit' }, 'Agregar medicamento');
       const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo medicamento'),
-        h('div', { class: 'form-fila' }, campo('nombre', 'Nombre'), campo('linea', 'Línea', {}, '(opcional)'), campo('presentacion', 'Presentación', {}, '(opcional)'), campo('precio', 'Precio RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }, '(opcional)')),
+        h('div', { class: 'form-fila' }, campo('codigo', 'Código', { placeholder: 'Ej. TIODEX01', autocomplete: 'off' }, '(opcional)'), campo('nombre', 'Medicamento / Producto'), campo('linea', 'Línea', {}, '(opcional)'), campo('presentacion', 'Presentación', {}, '(opcional)'), campo('precio', 'Precio final RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }, '(opcional)')),
         h('div', { class: 'acciones' }, b));
-      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/medicamentos', { nombre: f.nombre.value, linea: f.linea.value, presentacion: f.presentacion.value, precio: f.precio.value || undefined }))) { cache = {}; irA('catalogo', { ver: 'medicamentos' }); } });
+      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/medicamentos', { codigo: f.codigo.value, nombre: f.nombre.value, linea: f.linea.value, presentacion: f.presentacion.value, precio: f.precio.value || undefined }))) { cache = {}; irA('catalogo', { ver: 'medicamentos' }); } });
       bloques.push(S('nuevo', 'Nuevo medicamento', f));
     }
     const ponerPrecio = async (m) => {
@@ -2045,15 +2075,58 @@ V.catalogo = async () => {
       if (!v) return;
       try { await api('POST', `/api/catalogo/medicamentos/${m.id}/precios`, v); router(); } catch (e) { alert(e.fields ? Object.values(e.fields).join(' ') : e.message); }
     };
+    // Editar código, nombre, presentación, línea y precio. Si el precio cambia, el anterior queda en el historial.
+    const editarMed = async (m) => {
+      const v = await confirmar(`Editar ${m.nombre}`, 'Cambia lo que necesites. Si cambias el precio, el anterior queda en el historial.', { okTexto: 'Guardar cambios', campos: [
+        { name: 'codigo', label: 'Código', value: m.codigo ?? '' }, { name: 'nombre', label: 'Medicamento / Producto', value: m.nombre },
+        { name: 'presentacion', label: 'Presentación (opcional)', value: m.presentacion ?? '' }, { name: 'linea', label: 'Línea (opcional)', value: m.linea ?? '' },
+        { name: 'precio', label: 'Precio final RD$', value: m.precio ?? '', type: 'number', inputmode: 'decimal' }] });
+      if (!v) return;
+      try {
+        await api('POST', `/api/catalogo/medicamentos/${m.id}`, { codigo: v.codigo, nombre: v.nombre, presentacion: v.presentacion, linea: v.linea });
+        if (v.precio !== '' && Number(v.precio) !== Number(m.precio)) { accionPendiente = 'cambiar precio'; await api('POST', `/api/catalogo/medicamentos/${m.id}/precios`, { precio: v.precio, vigenteDesde: hoy() }); }
+        cache = {}; router();
+      } catch (e) { alert(e.fields ? Object.values(e.fields).join(' ') : e.message); }
+    };
+    const eliminarMed = async (m) => {
+      const r = await confirmar(`Eliminar ${m.nombre}`, 'Deja de aparecer para cargar recetas, vouchers, pedidos y en la tienda. Las recetas, vouchers y ventas que ya lo usan se conservan. Escribe el motivo (opcional).', { okTexto: 'Eliminar medicamento', pedirMotivo: true });
+      if (r == null) return;
+      try { await api('POST', `/api/catalogo/medicamentos/${m.id}/eliminar`, { motivo: r }); cache = {}; router(); } catch (e) { alert(e.message); }
+    };
     const historial = async (m) => {
       const { items } = await api('GET', `/api/catalogo/medicamentos/${m.id}/precios`);
       await confirmar(`Precios de ${m.nombre}`, items.length ? items.map((p) => `${fecha(p.vigenteDesde)}: ${RD(p.precio)} (${p.fuente})`).join('  ·  ') : 'Sin historial de precios.', { okTexto: 'Cerrar' });
     };
-    bloques.push(S('lista', `Medicamentos (${fmtN.format(ms.length)})`, tabla([{ t: 'Nombre', v: (m) => m.nombre }, { t: 'Línea', v: (m) => m.linea ?? '' }, { t: 'Presentación', v: (m) => m.presentacion ?? '' },
+    bloques.push(S('lista', `Medicamentos (${fmtN.format(ms.length)})`, tabla([{ t: 'Código', v: (m) => (m.codigo ? h('code', { class: 'codigo-med' }, m.codigo) : '') }, { t: 'Medicamento / Producto', v: (m) => [m.nombre, m.presentacion ? h('small', { style: 'display:block;color:var(--texto-2)' }, m.presentacion) : null] }, { t: 'Línea', v: (m) => m.linea ?? '' },
         { t: 'Precio', num: true, v: (m) => m.precio != null ? h('strong', { class: 'precio-cat' }, RD(m.precio)) : h('span', { class: 'chip pendiente' }, 'Sin precio') },
-        { t: '', v: (m) => [ES_GER() ? h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => ponerPrecio(m) }, m.precio != null ? 'Cambiar precio' : 'Poner precio') : null,
-          h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => historial(m) }, 'Historial')] }], ms, ['Catálogo vacío', 'Agrega los medicamentos de FERSUAZ o impórtalos desde Excel.'], { exportar: { nombre: 'medicamentos-fersuaz', titulo: 'Medicamentos' } })));
-    if (ES_GER()) bloques.push(S('importar', 'Importar Excel', importador('medicamentos', 'Importar medicamentos y precios', 'Si el medicamento ya existe con esa presentación, se actualiza el precio y el anterior queda en el historial.', router)));
+        { t: '', v: (m) => [ES_GER() ? h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => editarMed(m) }, 'Editar') : null, ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => ponerPrecio(m) }, m.precio != null ? 'Cambiar precio' : 'Poner precio') : null,
+          h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => historial(m) }, 'Historial'),
+          ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-peligro', type: 'button', onclick: () => eliminarMed(m) }, 'Eliminar') : null] }], ms, ['Catálogo vacío', 'Agrega los medicamentos de FERSUAZ o impórtalos desde Excel.'], { exportar: { nombre: 'medicamentos-fersuaz', titulo: 'Medicamentos' } })));
+    if (ES_GER()) {
+      const { grupos } = await api('GET', '/api/catalogo/medicamentos/repetidos');
+      const exactos = grupos.filter((g) => g.exacto);
+      const nombreM = (m) => `${m.nombre}${m.presentacion ? `, ${m.presentacion}` : ''}`;
+      const tarjetaG = (g, i) => {
+        const nombre = `grupo-${i}`;
+        const op = g.items.map((m) => h('label', { class: 'rep-opcion' }, h('input', { type: 'radio', name: nombre, value: m.id, checked: m.id === g.conservar }),
+          h('span', {}, m.codigo ? h('code', { class: 'codigo-med' }, m.codigo) : null, ' ', h('strong', {}, nombreM(m)), h('small', {}, m.precio != null ? RD(m.precio) : 'Sin precio'))));
+        const b = h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: async () => {
+          const conservar = op.map((l) => l.querySelector('input')).find((x) => x.checked).value;
+          const quitar = g.items.map((m) => m.id).filter((x) => x !== conservar);
+          if (!(await confirmar('Quitar repetidos', `Se conserva ${nombreM(g.items.find((m) => m.id === conservar))} y se eliminan ${quitar.length} repetido(s). Si al conservado le falta código, precio o línea, se le pasan.`, { okTexto: 'Quitar repetidos' }))) return;
+          try { await api('POST', '/api/catalogo/medicamentos/repetidos', { grupos: [{ conservar, quitar }] }); cache = {}; router(); } catch (e) { alert(e.message); }
+        } }, 'Conservar el marcado y eliminar los demás');
+        return h('div', { class: 'tarjeta rep-grupo' }, h('p', {}, h('span', { class: `chip ${g.exacto ? 'alerta' : 'pendiente'}` }, g.exacto ? 'Repetido' : 'Posible repetido'), ` ${g.motivo}`), op, h('div', { class: 'acciones' }, b));
+      };
+      const auto = exactos.length ? h('button', { class: 'btn', type: 'button', onclick: async () => {
+        if (!(await confirmar('Eliminar repetidos automáticamente', `Se quitan ${exactos.reduce((n, g) => n + g.items.length - 1, 0)} medicamento(s) repetidos exactos (mismo código, o mismo nombre y presentación). En cada grupo queda el más completo.`, { okTexto: 'Eliminar repetidos' }))) return;
+        try { const r = await api('POST', '/api/catalogo/medicamentos/repetidos', { auto: true }); cache = {}; aviso(`Listo: ${r.eliminados} repetido(s) eliminado(s).`, 'ok'); router(); } catch (e) { alert(e.message); }
+      } }, `Eliminar automáticamente ${exactos.length} grupo(s) de repetidos exactos`) : null;
+      bloques.push(S('repetidos', `Repetidos (${fmtN.format(grupos.length)})`,
+        h('p', { class: 'hint' }, 'El sistema compara código, nombre y presentación sin tildes, espacios ni signos ("Tio dex, Jarabe de 120ml" y "Tio-Dex Jarabe Frasco 120 mL"). Al crear o importar, los repetidos se rechazan o se unen solos; aquí ves los que ya estaban.'),
+        grupos.length ? [auto ? h('div', { class: 'acciones' }, auto) : null, ...grupos.map(tarjetaG)] : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay medicamentos repetidos'), 'El catálogo está limpio.')));
+    }
+    if (ES_GER()) bloques.push(S('importar', 'Importar Excel', importador('medicamentos', 'Importar medicamentos y precios', 'Columnas: Código, Medicamento / Producto y Precio Final. Si el código ya existe, se actualizan su nombre y su precio (el precio anterior queda en el historial); si no tiene código, se busca por nombre y se le pone. Puedes volver a subir la lista completa cada vez que cambien precios.', () => { cache = {}; router(); })));
   } else if (ver === 'farmacias') {
     const [fs, div] = await Promise.all([api('GET', '/api/catalogo/farmacias'), division()]);
     const fprov = param('provincia') || '';
@@ -2077,7 +2150,7 @@ V.catalogo = async () => {
   } else {
     bloques.push(...await seccionesMedicos());
   }
-  return vistaS('catalogo', ['lista', 'nuevo', 'nueva', 'documento', 'importar', 'google', 'auto'], 'Catálogo', 'Lo que agregan las promotoras y los vendedores queda pendiente hasta que la gerencia lo valida.', ...bloques);
+  return vistaS('catalogo', ['lista', 'nuevo', 'nueva', 'documento', 'repetidos', 'importar', 'google', 'auto'], 'Catálogo', 'Lo que agregan las promotoras y los vendedores queda pendiente hasta que la gerencia lo valida.', ...bloques);
 };
 
 // ---------------------------------------------------------------- médicos: lista, a mano, documento y Google
