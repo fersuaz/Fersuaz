@@ -7,7 +7,8 @@ import { createAuthService, AuthError } from './auth.js';
 import { createComercial } from './comercial.js';
 import { createViaticos, COMBUSTIBLE_LABEL } from './viaticos.js';
 import { SinMapas, crearMapas } from './mapas.js';
-import { createTerritorio } from './territorio.js';
+import { createTerritorio, provinciaOficial, municipioOficial } from './territorio.js';
+import { normalizeName } from './validation.js';
 import { createNotificaciones } from './notificaciones.js';
 import { SinCorreo, crearCorreo, bienvenida } from './correo.js';
 import { canApprove } from './roles.js';
@@ -26,6 +27,7 @@ import { createTienda } from './tienda.js';
 import { createMedicos, pareceMedico } from './medicos.js';
 import { createMetas } from './metas.js';
 import { createMovimiento } from './movimiento.js';
+import { createSugerencias } from './sugerencias.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -50,7 +52,22 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const avisar = (fn) => fn().catch((e) => console.error('Notificación:', e.message));
   const t = createTerritorio({ data, users: store, audit: (e) => store.addAudit(e), now });
   const farmaciaActiva = async (id) => { const f = await data.get('farmacias', id); return f && !['inactiva', 'inactivo'].includes(f.estado) ? f : null; };
-  const auth = createAuthService(store, { preregistro: { buscar: t.buscarPreregistro, confirmar: t.confirmarPreregistro }, farmaciaPara: farmaciaActiva });
+  /** Farmacia escrita por una dependiente que no la encontró: se crea pendiente de validar (o se reutiliza si ya existe). */
+  const farmaciaNueva = async ({ nombre, provincia, municipio }) => {
+    const n = normalizeName(nombre); const p = provinciaOficial(provincia); const m = p ? municipioOficial(p, municipio) : null;
+    const errores = {};
+    if (n.length < 2) errores.pharmacy = 'Escribe el nombre de la farmacia donde trabajas.';
+    if (!p) errores.province = 'Elige la provincia de tu farmacia.';
+    else if (!m) errores.municipio = 'Elige el municipio de tu farmacia.';
+    if (Object.keys(errores).length) return { errores };
+    const sin = (x) => String(x).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const ya = (await data.list('farmacias', { municipio: m })).find((f) => sin(f.nombre) === sin(n) && f.estado !== 'inactiva');
+    if (ya) return { farmacia: ya };
+    const f = await data.insert('farmacias', { nombre: n, provincia: p, municipio: m, fuente: 'manual', estado: 'pendiente' });
+    await store.addAudit({ action: 'farmacia_creada', entity: 'farmacia', entityId: f.id, after: { nombre: n, municipio: m, fuente: 'registro_dependiente' } });
+    return { farmacia: f };
+  };
+  const auth = createAuthService(store, { preregistro: { buscar: t.buscarPreregistro, confirmar: t.confirmarPreregistro }, farmaciaPara: farmaciaActiva, farmaciaNueva });
   const c = createComercial({ data, users: store, files, audit: (e) => store.addAudit(e), now });
   const hoteles = createHoteles({ data, audit: (e) => store.addAudit(e), now: now ?? (() => new Date()) });
   const v = createViaticos({ data, users: store, files, mapas, hoteles, notificar: n.notificar, notificarRoles: n.notificarRoles, audit: (e) => store.addAudit(e), now });
@@ -92,6 +109,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const medicos = createMedicos({ data, audit: (e) => store.addAudit(e), lector: lectorIA });
   const movimiento = createMovimiento({ data, users: store });
   const metas = createMetas({ data, users: store, audit: (e) => store.addAudit(e), hoy: () => hoyRD(now ? now() : new Date()) });
+  const sugerencias = createSugerencias({ data, users: store, movimiento, metas, hoy: () => hoyRD(now ? now() : new Date()) });
   const tienda = createTienda({ data, users: store, files, audit: (e) => store.addAudit(e), notificar: (id, m) => n.notificar(id, m), notificarRoles: (r, m) => n.notificarRoles(r, m), ventas, hoy: () => hoyRD(now ? now() : new Date()) });
   const banco = createBanco({ data, users: store, audit: (e) => store.addAudit(e) });
   const altas = createAltaRepresentantes({ store, t, v, data });
@@ -283,10 +301,13 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/catalogo/medicos', async () => ({ items: await medicos.listar(), especialidades: medicos.especialidades(), iaActiva: medicos.iaActiva() }));
   ruta('POST', '/api/catalogo/medicos', async ({ me, body }) => { const r = await medicos.registrar(me, body ?? {}); return [r.accion === 'creado' ? 201 : 200, r]; });
   ruta('POST', /^\/api\/catalogo\/medicos\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await medicos.editar(me, p[1], body ?? {}) }));
+  ruta('GET', '/api/tareas', async ({ me, q }) => sugerencias.tareas(me, { mes: q.get('mes') || undefined }));
   ruta('GET', '/api/reportes/territorio', async ({ me, q }) => movimiento.reporte(me, { mes: q.get('mes'), provincia: q.get('provincia') || undefined }));
   ruta('GET', '/api/metas', async ({ me }) => ({ item: await metas.verConfig(me) }));
   ruta('POST', '/api/metas/posicion', async ({ me, body }) => ({ item: await metas.guardarPosicion(me, body ?? {}) }));
   ruta('POST', /^\/api\/metas\/representante\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await metas.guardarRepresentante(me, p[1], body ?? {}) }));
+  ruta('GET', '/api/metas/equipos', async ({ me, q }) => metas.equipos(me, { mes: q.get('mes') || undefined }));
+  ruta('POST', /^\/api\/metas\/equipo\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await metas.guardarMetaEquipo(me, p[1], body ?? {}) }));
   ruta('GET', '/api/metas/avance', async ({ me, q }) => metas.avance(me, { mes: q.get('mes') || undefined, representanteId: q.get('representanteId') || undefined }));
   ruta('POST', '/api/medicos/documento/leer', async ({ me, body }) => medicos.leerDocumento(me, body?.archivo), { limite: 9 * 1024 * 1024 });
   ruta('POST', '/api/medicos/documento/confirmar', async ({ me, body }) => medicos.confirmarDocumento(me, body ?? {}), { limite: 4 * 1024 * 1024 });

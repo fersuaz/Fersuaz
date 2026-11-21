@@ -111,7 +111,8 @@
               </div>
               <div class="field">
                 <label for="dep-municipio">Municipio</label>
-                <select id="dep-municipio" name="depMunicipio" disabled><option value="">Elige primero la provincia</option></select>
+                <select id="dep-municipio" name="depMunicipio" disabled aria-describedby="municipio-error"><option value="">Elige primero la provincia</option></select>
+                <p class="error" id="municipio-error"></p>
               </div>
             </div>
             <div class="field">
@@ -125,7 +126,7 @@
               <label for="pharmacy">Nombre de tu farmacia</label>
               <input id="pharmacy" name="pharmacy" type="text" aria-describedby="pharmacy-error">
               <p class="error" id="pharmacy-error"></p>
-              <p class="hint">La gerencia revisará tu solicitud y la agregará al catálogo.</p>
+              <p class="hint">La agregamos al catálogo en la provincia y el municipio que elegiste, y quedas ligada a ella. La gerencia la valida y aprueba tu cuenta.</p>
             </div>
           </fieldset>
           <div class="field">

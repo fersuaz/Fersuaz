@@ -6,7 +6,7 @@ import { activarTelefono, activarCorreo, correoValido } from './campos.js';
 const form = document.getElementById('registro');
 const statusEl = document.getElementById('status');
 const submit = document.getElementById('submit');
-const FIELDS = ['role', 'fullName', 'email', 'phone', 'position', 'farmaciaId', 'pharmacy', 'province', 'password', 'acceptsPrivacy'];
+const FIELDS = ['role', 'fullName', 'email', 'phone', 'position', 'farmaciaId', 'pharmacy', 'province', 'municipio', 'password', 'acceptsPrivacy'];
 
 // Preselección desde ?rol=
 const preset = new URLSearchParams(location.search).get('rol');
@@ -83,6 +83,7 @@ function localValidate(d) {
   if (d.phone && !/^(?:\+?1)?(809|829|849)\d{7}$/.test(d.phone.replace(/[\s\-().]/g, ''))) e.phone = 'Usa un teléfono dominicano de 10 dígitos que empiece por 809, 829 o 849.';
   if (d.role === 'representante' && !d.position) e.position = 'Elige tu posición.';
   if (d.role === 'dependiente' && !d.province) e.province = 'Elige la provincia de tu farmacia.';
+  if (d.role === 'dependiente' && !d.municipio) e.municipio = 'Elige el municipio de tu farmacia.';
   if (d.role === 'dependiente' && !d.farmaciaId && !noEsta.checked) e.farmaciaId = 'Elige tu farmacia de la lista, o marca "No encuentro mi farmacia".';
   if (d.role === 'dependiente' && noEsta.checked && d.pharmacy.trim().length < 2) e.pharmacy = 'Escribe el nombre de la farmacia donde trabajas.';
   if (d.password.length < 10) e.password = 'La contraseña necesita al menos 10 caracteres.';
@@ -99,9 +100,9 @@ form.addEventListener('submit', async (ev) => {
   const data = {
     role: fd.get('role') ?? '', fullName: fd.get('fullName') ?? '', email: fd.get('email') ?? '',
     phone: fd.get('phone') ?? '', position: fd.get('position') ?? '', pharmacy: noEsta.checked ? fd.get('pharmacy') ?? '' : '',
-    province: sp.value, farmaciaId: noEsta.checked ? '' : (elegida ?? ''), password: fd.get('password') ?? '', acceptsPrivacy: form.acceptsPrivacy.checked,
+    province: sp.value, municipio: sm.value, farmaciaId: noEsta.checked ? '' : (elegida ?? ''), password: fd.get('password') ?? '', acceptsPrivacy: form.acceptsPrivacy.checked,
   };
-  if (data.role !== 'dependiente') { delete data.farmaciaId; data.province = ''; }
+  if (data.role !== 'dependiente') { delete data.farmaciaId; delete data.municipio; data.province = ''; }
   const errors = localValidate(data);
   showErrors(errors);
   if (Object.keys(errors).length) { setStatus('error', 'Revisa los campos marcados.'); return; }

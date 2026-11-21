@@ -4,6 +4,7 @@
 // - Promotora: recetas, medicamentos por receta, volumen recetado (RD$, precio del catálogo) y pacientes.
 // Una visita cuenta solo cuando el representante la marca como hecha en su jornada.
 import { AuthError as HttpError } from './auth.js';
+import { solapes, dentroDeZona, textoSolapes } from './territorio.js';
 
 const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 export const METRICAS = Object.freeze({
@@ -92,21 +93,13 @@ export function createMetas({ data, users, audit, hoy }) {
     return porRep[rep.id] ?? null;
   }
 
-  /** Avance del mes: el representante ve el suyo; la gestión y la supervisión, el de todos. */
-  async function avance(actor, { mes = hoy().slice(0, 7), representanteId } = {}) {
-    permitir(activo(actor));
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(mes))) invalido({ mes: 'Mes no válido.' });
-    let reps;
-    if (actor.role === 'representante') reps = [actor];
-    else {
-      permitir([...GESTION, 'supervisor', 'finanzas'].includes(actor.role));
-      reps = (await users.listUsers()).filter((u) => u.role === 'representante' && u.status === 'activo' && METRICAS_POSICION[u.position] && (!representanteId || u.id === representanteId));
-    }
+  const diasDe = (mes) => { const [y, m] = mes.split('-').map(Number); const total = new Date(Date.UTC(y, m, 0)).getUTCDate(); const h = hoy(); const trans = h.slice(0, 7) === mes ? Number(h.slice(8)) : h.slice(0, 7) > mes ? total : 0; return { total, transcurridos: trans }; };
+  async function calcular(reps, mes) {
     const { valor: config } = await leer();
     const precios = new Map((await data.list('medicamentos')).map((m) => [m.id, Number(m.precio) || 0]));
     const jornadas = (await data.list('jornadas')).filter((j) => j.fecha.startsWith(mes));
     const recetas = (await data.list('recetas')).filter((r) => String(r.fecha).startsWith(mes));
-    const dias = (() => { const [y, m] = mes.split('-').map(Number); const total = new Date(Date.UTC(y, m, 0)).getUTCDate(); const h = hoy(); const trans = h.slice(0, 7) === mes ? Number(h.slice(8)) : h.slice(0, 7) > mes ? total : 0; return { total, transcurridos: trans }; })();
+    const dias = diasDe(mes);
     const items = reps.map((rep) => {
       const val = valoresDelMes({ jornadas: jornadas.filter((j) => j.representanteId === rep.id), recetas: recetas.filter((r) => r.promotoraId === rep.id), precios });
       const metas = metaEfectiva(config, rep);
@@ -117,8 +110,85 @@ export function createMetas({ data, users, audit, hoy }) {
       const conMeta = metricas.filter((m) => m.porcentaje != null);
       return { representante: { id: rep.id, nombre: rep.fullName, posicion: rep.position }, metricas, promedio: conMeta.length ? Math.round(conMeta.reduce((s, m) => s + Math.min(m.porcentaje, 100), 0) / conMeta.length) : null };
     }).sort((a, b) => (b.promedio ?? -1) - (a.promedio ?? -1) || a.representante.nombre.localeCompare(b.representante.nombre, 'es'));
+    return { dias, items };
+  }
+
+  /**
+   * Equipos por zona: el vendedor y los visitadores, promotoras y PVC cuya zona comparte territorio con la suya.
+   * Cada uno tiene su meta; juntos persiguen un objetivo: las ventas del equipo en su zona
+   * (vouchers de las farmacias de la zona + ventas del laboratorio), frente a la meta de ventas del equipo.
+   */
+  async function equipos(actor, { mes = hoy().slice(0, 7) } = {}) {
+    permitir(activo(actor));
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(mes))) invalido({ mes: 'Mes no válido.' });
+    if (actor.role !== 'representante') permitir([...GESTION, 'supervisor', 'finanzas'].includes(actor.role));
+    const usuarios = await users.listUsers();
+    const reps = usuarios.filter((u) => u.role === 'representante' && u.status === 'activo' && METRICAS_POSICION[u.position]);
+    const zonas = new Map((await data.list('zonas')).map((z) => [z.representanteId, z]));
+    const { dias, items } = await calcular(reps, mes);
+    const avancePor = new Map(items.map((x) => [x.representante.id, x]));
+    const { valor: config } = await leer();
+    const farmacias = new Map((await data.list('farmacias')).map((f) => [f.id, f]));
+    const usuariosPor = new Map(usuarios.map((u) => [u.id, u]));
+    const precios = new Map((await data.list('medicamentos')).map((m) => [m.id, Number(m.precio) || 0]));
+    const vouchers = (await data.list('vouchers')).filter((v) => String(v.fecha).startsWith(mes) && !['rechazado', 'anulado'].includes(v.estado));
+    const ventas = (await data.list('ventasFarmacia')).filter((v) => String(v.fecha).startsWith(mes));
+    const recetas = (await data.list('recetas')).filter((r) => String(r.fecha).startsWith(mes));
+    const enEquipo = new Set();
+    const lista = reps.filter((u) => u.position === 'Vendedor' && zonas.get(u.id)?.provincias?.length).map((ven) => {
+      const zv = zonas.get(ven.id);
+      const miembros = reps.filter((u) => u.id !== ven.id && u.position !== 'Vendedor' && zonas.get(u.id) && solapes(zv, zonas.get(u.id)).length);
+      [ven, ...miembros].forEach((u) => enEquipo.add(u.id));
+      const vVouchers = r2(vouchers.reduce((s, v) => { const f = farmacias.get(usuariosPor.get(v.dependienteId)?.farmaciaId); return f && dentroDeZona(zv, f.provincia, f.municipio) ? s + Number(v.total || 0) : s; }, 0));
+      const vLab = r2(ventas.filter((v) => dentroDeZona(zv, v.provincia, v.municipio)).reduce((s, v) => s + (Number(v.monto) || (Number(v.unidades) || 0) * (Number(v.precioUnitario) || 0)), 0));
+      const recetado = r2(recetas.filter((r) => dentroDeZona(zv, r.provincia, r.municipio)).reduce((s, r) => s + (r.items ?? []).reduce((t, l) => t + (Number(l.unidades) || 0) * (precios.get(l.medicamentoId) ?? 0), 0), 0));
+      const meta = config.porEquipo?.[ven.id] ?? config.equipoGlobal ?? null;
+      const total = r2(vVouchers + vLab);
+      const integrantes = [ven, ...miembros].map((u) => ({ id: u.id, nombre: u.fullName, posicion: u.position, promedio: avancePor.get(u.id)?.promedio ?? null, metricas: avancePor.get(u.id)?.metricas ?? [] }));
+      const conProm = integrantes.filter((x) => x.promedio != null);
+      return {
+        vendedor: { id: ven.id, nombre: ven.fullName }, zona: textoSolapes(solapes(zv, zv)), integrantes,
+        ventas: { vouchers: vVouchers, laboratorio: vLab, total }, recetado, meta, metaFuente: config.porEquipo?.[ven.id] != null ? 'equipo' : meta != null ? 'global' : null,
+        porcentaje: meta ? Math.round((total / meta) * 100) : null,
+        promedioMetas: conProm.length ? Math.round(conProm.reduce((s, x) => s + x.promedio, 0) / conProm.length) : null,
+        faltan: ['Visitador', 'Promotora'].filter((pos) => !miembros.some((m) => m.position === pos)),
+      };
+    }).sort((a, b) => (b.porcentaje ?? -1) - (a.porcentaje ?? -1) || b.ventas.total - a.ventas.total);
+    const visibles = actor.role === 'representante' ? lista.filter((e) => e.integrantes.some((x) => x.id === actor.id)) : lista;
+    const sinEquipo = actor.role === 'representante' ? [] : reps.filter((u) => !enEquipo.has(u.id)).map((u) => ({ id: u.id, nombre: u.fullName, posicion: u.position, conZona: Boolean(zonas.get(u.id)?.provincias?.length) }));
+    return { mes, dias, equipos: visibles, sinEquipo, equipoGlobal: config.equipoGlobal ?? null };
+  }
+  async function guardarMetaEquipo(actor, vendedorId, { monto } = {}) {
+    permitir(activo(actor) && GESTION.includes(actor.role), 'Solo la administración o la gerencia fijan metas.');
+    const n = monto === '' || monto == null ? null : Number(String(monto).replace(/,/g, ''));
+    if (n != null && (!Number.isFinite(n) || n <= 0 || n > 1e9)) invalido({ monto: 'Escribe la meta de ventas en RD$.' });
+    const { valor } = await leer();
+    let nuevo;
+    if (vendedorId === 'global') nuevo = { ...valor, equipoGlobal: n == null ? null : r2(n) };
+    else {
+      const v = await users.findUserById(String(vendedorId));
+      if (!v || v.role !== 'representante' || v.position !== 'Vendedor') throw new HttpError(404, 'El vendedor no existe.');
+      const porEquipo = { ...(valor.porEquipo ?? {}) };
+      if (n == null) delete porEquipo[v.id]; else porEquipo[v.id] = r2(n);
+      nuevo = { ...valor, porEquipo };
+    }
+    await escribir(actor, nuevo, vendedorId === 'global' ? valor.equipoGlobal ?? null : valor.porEquipo?.[vendedorId] ?? null, { equipo: vendedorId, monto: n });
+    return { monto: n };
+  }
+
+  /** Avance del mes: el representante ve el suyo; la gestión y la supervisión, el de todos. */
+  async function avance(actor, { mes = hoy().slice(0, 7), representanteId } = {}) {
+    permitir(activo(actor));
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(mes))) invalido({ mes: 'Mes no válido.' });
+    let reps;
+    if (actor.role === 'representante') reps = [actor];
+    else {
+      permitir([...GESTION, 'supervisor', 'finanzas'].includes(actor.role));
+      reps = (await users.listUsers()).filter((u) => u.role === 'representante' && u.status === 'activo' && METRICAS_POSICION[u.position] && (!representanteId || u.id === representanteId));
+    }
+    const { dias, items } = await calcular(reps, mes);
     return { mes, dias, items };
   }
 
-  return { verConfig, guardarPosicion, guardarRepresentante, avance };
+  return { verConfig, guardarPosicion, guardarRepresentante, avance, equipos, guardarMetaEquipo };
 }

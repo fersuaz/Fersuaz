@@ -9,15 +9,21 @@ export class AuthError extends Error {
 const publicUser = ({ passwordHash, ...u }) => u;
 
 /** `preregistro`: { buscar(email, role), confirmar(user, p) } — opcional, para representantes cargados por Excel. */
-export function createAuthService(store, { preregistro, farmaciaPara } = {}) {
+export function createAuthService(store, { preregistro, farmaciaPara, farmaciaNueva } = {}) {
   return {
     async register(input) {
       // Dependiente que elige su farmacia del catálogo: queda ligada y activa de inmediato.
-      let farmacia = null;
+      let farmacia = null; let nueva = null;
       if (String(input?.role ?? '').toLowerCase() === 'dependiente' && input.farmaciaId && farmaciaPara) {
         farmacia = await farmaciaPara(String(input.farmaciaId));
         if (!farmacia) throw new AuthError(422, 'Revisa los campos marcados.', { farmaciaId: 'Esa farmacia no está en el catálogo. Búscala de nuevo o escribe su nombre.' });
         input = { ...input, pharmacy: farmacia.nombre, province: farmacia.provincia };
+      } else if (String(input?.role ?? '').toLowerCase() === 'dependiente' && farmaciaNueva) {
+        // Su farmacia no está en el catálogo: se agrega como pendiente (con provincia y municipio) y queda ligada.
+        // La dependiente siempre queda ligada a una farmacia, una provincia y un municipio.
+        const r = await farmaciaNueva({ nombre: input.pharmacy, provincia: input.province, municipio: input.municipio });
+        if (r.errores) throw new AuthError(422, 'Revisa los campos marcados.', r.errores);
+        nueva = r.farmacia;
       }
       const { ok, errors, data } = validateRegistration(input);
       if (!ok) throw new AuthError(422, 'Revisa los campos marcados.', errors);
@@ -27,10 +33,10 @@ export function createAuthService(store, { preregistro, farmaciaPara } = {}) {
       const { password, ...rest } = data;
       const pre = await preregistro?.buscar(data.email, data.role);
       const user = await store.createUser({
-        ...rest, ...(pre ? { position: pre.posicion } : {}), ...(farmacia ? { farmaciaId: farmacia.id } : {}),
+        ...rest, ...(pre ? { position: pre.posicion } : {}), ...(farmacia ? { farmaciaId: farmacia.id } : nueva ? { farmaciaId: nueva.id } : {}),
         passwordHash: await hashPassword(password), status: pre || farmacia ? STATUS.ACTIVO : STATUS.PENDIENTE,
       });
-      await store.addAudit({ action: pre ? 'registro_preaprobado' : farmacia ? 'registro_dependiente_farmacia' : 'registro_solicitado', entity: 'user', entityId: user.id, after: { role: user.role, ...(pre ? { position: user.position } : {}), ...(farmacia ? { farmaciaId: farmacia.id, farmacia: farmacia.nombre } : {}) } });
+      await store.addAudit({ action: pre ? 'registro_preaprobado' : farmacia ? 'registro_dependiente_farmacia' : 'registro_solicitado', entity: 'user', entityId: user.id, after: { role: user.role, ...(pre ? { position: user.position } : {}), ...(farmacia ? { farmaciaId: farmacia.id, farmacia: farmacia.nombre } : {}), ...(nueva ? { farmaciaId: nueva.id, farmaciaNueva: nueva.nombre } : {}) } });
       if (pre) await preregistro.confirmar(user, pre);
       return publicUser(user);
     },
