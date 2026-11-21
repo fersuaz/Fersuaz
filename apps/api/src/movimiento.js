@@ -109,7 +109,7 @@ export function createMovimiento({ data, users }) {
       porMun.set(k, u);
     }
     const medicamentosTop = [...porMed.values()].map((m) => ({ ...m, monto: r2(m.monto), municipios: m.municipios.size })).sort((a, b) => b.monto - a.monto || b.unidades - a.unidades);
-    const municipiosTop = [...porMun.values()].map((u) => ({ ...u, monto: r2(u.monto), recetado: r2(u.recetado) })).sort((a, b) => b.monto - a.monto || b.recetado - a.recetado).slice(0, 50);
+    const municipiosTop = [...porMun.values()].map((u) => ({ ...u, monto: r2(u.monto), recetado: r2(u.recetado) })).sort((a, b) => b.monto - a.monto || b.recetado - a.recetado);
     const total = (k) => r2(out.filas.reduce((s, f) => s + f[k], 0));
     return { mes, provincia: provincia || null, ...out, ranking, farmaciasTop, medicamentosTop, municipiosTop, totales: { recetadas: total('recetadas'), volumenRecetado: total('volumenRecetado'), vendidasVoucher: total('vendidasVoucher'), montoVoucher: total('montoVoucher'), vendidasLaboratorio: total('vendidasLaboratorio'), montoLaboratorio: total('montoLaboratorio'), recetas: recetas.length, vouchers: vouchers.filter((v) => !['rechazado', 'anulado'].includes(v.estado)).length } };
   }

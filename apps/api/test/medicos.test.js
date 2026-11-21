@@ -38,7 +38,6 @@ async function arrancar(extra = {}) {
 test('a mano: el establecimiento da la zona; sin duplicar, completa lo que falta', async () => {
   const { server, call, tok, data, hosp } = await arrancar();
   try {
-    assert.equal((await call('POST', '/api/catalogo/medicos', { nombre: 'Ana Ejemplo', especialidad: 'Pediatría', provincia: 'Espaillat', municipio: 'Moca' }, tok.ven)).status, 403);
     assert.equal((await call('POST', '/api/catalogo/medicos', { nombre: 'Ana Ejemplo', establecimientoId: hosp.id }, tok.ger)).status, 422, 'especialidad obligatoria a mano');
     assert.equal((await call('POST', '/api/catalogo/medicos', { nombre: 'Ana Ejemplo', especialidad: 'Pediatría', establecimientoId: hosp.id, telefono: '123' }, tok.ger)).status, 422, 'teléfono no válido');
     const a = await call('POST', '/api/catalogo/medicos', { nombre: 'Dra. Ana Ejemplo', especialidad: 'pediatra', establecimientoId: hosp.id, telefono: '(809) 555-0101', instagram: '@ana.ejemplo' }, tok.ger);

@@ -43,7 +43,7 @@ test('vouchers y recetas por foto: sin número, sin fotos repetidas; promotora c
     const v1 = await call('POST', '/api/vouchers', { fecha: '2026-11-19', foto: foto(1), items: [item] }, tok.dep);
     assert.equal(v1.status, 201, JSON.stringify(v1.body)); assert.equal(v1.body.item.referencia, null); assert.ok(v1.body.item.foto.clave);
     const rep = await call('POST', '/api/vouchers', { fecha: '2026-11-19', foto: foto(1), items: [item] }, tok.dep);
-    assert.equal(rep.status, 409); assert.match(rep.body.error, /ya se cargó/);
+    assert.equal(rep.status, 409); assert.match(rep.body.error, /^Ya cargaste esta foto el \d+ de \w+ de 2026 \(voucher con fecha 19 de noviembre de 2026\)/);
     assert.equal((await call('POST', '/api/vouchers', { fecha: '2026-11-19', items: [item] }, tok.dep)).status, 422, 'sin foto ni número no');
     // Promotora: a nombre de la dependiente de una farmacia de su zona
     const deps = (await call('GET', '/api/vouchers/dependientes', null, tok.pro)).body.items;
@@ -52,12 +52,12 @@ test('vouchers y recetas por foto: sin número, sin fotos repetidas; promotora c
     await data.insert('zonas', { representanteId: ids.vis, provincias: ['Espaillat'], municipios: {} });
     // La misma foto que subió la dependiente no la puede subir otra persona
     const otra = await call('POST', '/api/vouchers', { dependienteId: ids.dep, fecha: '2026-11-19', foto: foto(1), items: [item] }, tok.vis);
-    assert.equal(otra.status, 409, 'repetida aunque la cargue el visitador');
+    assert.equal(otra.status, 409, 'repetida aunque la cargue el visitador'); assert.match(otra.body.error, /^Otra persona ya cargó esta foto el /);
     // Reenviada (otro archivo, misma imagen): mismo dHash o casi
     const casi = await call('POST', '/api/vouchers', { dependienteId: ids.dep, fecha: '2026-11-19', foto: foto(4), fotoDhash: 'a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5', items: [item] }, tok.vis);
     assert.equal(casi.status, 201, JSON.stringify(casi.body));
     const reenvio = await call('POST', '/api/vouchers', { fecha: '2026-11-19', foto: foto(5), fotoDhash: 'a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a4', items: [item] }, tok.dep);
-    assert.equal(reenvio.status, 409); assert.match(reenvio.body.error, /igual a otra ya cargada/);
+    assert.equal(reenvio.status, 409); assert.match(reenvio.body.error, /una foto igual a esta/);
     // Verificar antes de enviar
     const h1 = v1.body.item.fotoHuella;
     const ver = await call('POST', '/api/fotos/verificar', { tipo: 'voucher', fotos: [{ huella: h1 }, { huella: 'b'.repeat(64), dhash: '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000' }, { dhash: 'a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a7' }] }, tok.pro);
@@ -76,7 +76,7 @@ test('vouchers y recetas por foto: sin número, sin fotos repetidas; promotora c
     const r1 = await call('POST', '/api/recetas', receta, tok.pro);
     assert.equal(r1.status, 201, JSON.stringify(r1.body));
     const r2 = await call('POST', '/api/recetas', receta, tok.pro);
-    assert.equal(r2.status, 409); assert.match(r2.body.error, /ya se cargó como receta/);
+    assert.equal(r2.status, 409); assert.match(r2.body.error, /^Ya cargaste esta foto el .*\(receta con fecha/);
 
     // Reporte por territorio
     assert.equal((await call('GET', '/api/reportes/territorio?mes=2026-11', null, tok.pro)).status, 403);

@@ -24,4 +24,19 @@ export function buscarRepetida(registros, { huella, dhash }) {
   return null;
 }
 const fechaLarga = (f) => { const d = new Date(`${String(f).slice(0, 10)}T12:00:00Z`); return Number.isNaN(d.getTime()) ? String(f) : d.toLocaleDateString('es-DO', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); };
-export const textoRepetida = (rep, que) => `${rep.motivo === 'igual' ? 'Esta foto ya se cargó' : 'Esta foto es igual a otra ya cargada'} como ${que} del ${fechaLarga(rep.registro.fecha)}.`;
+/** Día en que se subió al sistema, en hora de Santo Domingo. */
+const diaCargado = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString('es-DO', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'America/Santo_Domingo' }); };
+/** Quién subió el registro: la persona que lo cargó, o la dueña del voucher. */
+export const cargadoPorDe = (r) => r.registradoPor ?? r.promotoraId ?? r.dependienteId ?? null;
+/**
+ * Mensaje de rechazo. Dice cuándo se cargó la foto (sin importar el mes o el período) y si fue la misma
+ * persona. No dice el nombre de otra persona: solo que ya la cargó alguien más.
+ */
+export function textoRepetida(rep, que, actorId) {
+  const r = rep.registro;
+  const cuando = diaCargado(r.createdAt);
+  const deQue = `${que} con fecha ${fechaLarga(r.fecha)}`;
+  const igual = rep.motivo === 'igual' ? 'esta foto' : 'una foto igual a esta';
+  const quien = actorId && cargadoPorDe(r) === actorId ? 'Ya cargaste' : 'Otra persona ya cargó';
+  return `${quien} ${igual}${cuando ? ` el ${cuando}` : ''} (${deQue}). No se puede cargar otra vez.`;
+}
