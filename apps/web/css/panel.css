@@ -573,3 +573,8 @@ a.btn, a.btn-sec { text-decoration: none; }
 @media (min-width: 901px) { .acciones-celda { flex-wrap: nowrap; } }
 .dias-semana legend { font: 500 .95rem var(--sans); color: var(--tinta); }
 .dias-semana .hint { margin: .5rem 0 0; }
+
+/* Aviso de versión nueva */
+.nueva-version { position: fixed; z-index: 90; left: 50%; bottom: 1.25rem; transform: translateX(-50%); display: flex; align-items: center; gap: 1rem; padding: .7rem .8rem .7rem 1.2rem; border-radius: 999px; background: var(--marino); color: #fff; box-shadow: 0 12px 32px rgba(0,52,99,.28); font-weight: 500; max-width: calc(100vw - 2rem); }
+.nueva-version .btn { background: #fff; color: var(--marino); }
+@media (max-width: 520px) { .nueva-version { border-radius: 16px; flex-wrap: wrap; justify-content: center; text-align: center; } }

@@ -2009,3 +2009,27 @@ $('#salir').addEventListener('click', salir);
 
 activarDesplegables();
 activarNumeros();
+
+// Aviso de versión nueva: el panel no se recarga al cambiar de sección, así que una pestaña abierta
+// antes de publicar seguiría con la versión anterior. Se compara la versión publicada y se ofrece actualizar.
+(function vigilarVersion() {
+  let actual = null;
+  const revisar = async () => {
+    try {
+      const r = await fetch('version.txt', { cache: 'no-store' });
+      if (!r.ok) return;
+      const v = (await r.text()).trim();
+      if (!v) return;
+      if (actual === null) { actual = v; return; }
+      if (v !== actual && !document.getElementById('nueva-version')) {
+        const aviso = h('div', { id: 'nueva-version', class: 'nueva-version', role: 'status' },
+          h('span', {}, 'Hay una versión nueva del panel.'),
+          h('button', { class: 'btn btn-peq', type: 'button', onclick: () => location.reload() }, 'Actualizar ahora'));
+        document.body.append(aviso);
+      }
+    } catch { /* sin conexión: se revisa después */ }
+  };
+  revisar();
+  setInterval(revisar, 5 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) revisar(); });
+}());
