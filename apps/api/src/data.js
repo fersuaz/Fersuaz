@@ -8,7 +8,7 @@ export const COLECCIONES = {
   medicamentos: { tabla: 'medicamentos', campos: ['nombre', 'linea', 'presentacion', 'precio', 'activo', 'descripcion', 'ficha', 'imagenes', 'publicado'], json: ['ficha', 'imagenes'] },
   pedidos: { tabla: 'pedidos', campos: ['numero', 'farmaciaId', 'creadoPor', 'items', 'total', 'unidades', 'pago', 'comprobante', 'nota', 'estado', 'historial', 'vendedorId', 'provincia', 'municipio'], json: ['items', 'comprobante', 'historial'] },
   farmacias: { tabla: 'farmacias', campos: ['nombre', 'provincia', 'municipio', 'sector', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'fuente', 'estado', 'creadoPor'], json: [] },
-  medicos: { tabla: 'medicos', campos: ['nombre', 'especialidad', 'centro', 'provincia', 'municipio', 'estado', 'creadoPor'], json: [] },
+  medicos: { tabla: 'medicos', campos: ['nombre', 'especialidad', 'centro', 'provincia', 'municipio', 'estado', 'creadoPor', 'telefono', 'direccion', 'redes', 'establecimientoId', 'lat', 'lng', 'placeId', 'fuente'], json: ['redes'] },
   vouchers: { tabla: 'vouchers', campos: ['dependienteId', 'farmacia', 'referencia', 'fecha', 'periodo', 'items', 'total', 'estado', 'decididoPor', 'motivo', 'registradoPor'], json: ['items'] },
   cierres: { tabla: 'cierres_comision', campos: ['dependienteId', 'periodo', 'desde', 'hasta', 'ventas', 'porcentaje', 'comision', 'voucherIds', 'cerradoPor'], json: ['voucherIds'] },
   operativos: { tabla: 'operativos', campos: ['promotoraId', 'fecha', 'provincia', 'municipio', 'centro'], json: [] },

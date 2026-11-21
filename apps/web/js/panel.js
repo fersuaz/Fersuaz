@@ -1644,12 +1644,131 @@ V.catalogo = async () => {
     if (GESTION_T()) bloques.push(S('importar', 'Importar Excel', importador('farmacias', 'Importar farmacias', 'Provincia y municipio deben ser oficiales. Las que ya existen en el mismo municipio no se duplican.', router)),
       S('google', 'Buscar en Google', await buscadorGoogle([['farmacia', 'Farmacias']], null)), ES_GER() ? S('auto', 'Registro automático', await registroAutomatico([['farmacia', 'Farmacias']])) : null);
   } else {
-    const mds = await api('GET', '/api/catalogo/medicos');
-    bloques.push(tabla([{ t: 'Nombre', v: (x) => x.nombre }, { t: 'Especialidad', v: (x) => x.especialidad }, { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
-      { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('medicos', x.id) }, 'Validar') : '' }], mds.items, ['Aún no hay médicos', 'Las promotoras los agregan al cargar recetas.'], { exportar: { nombre: 'medicos-fersuaz', titulo: 'Médicos' } }));
+    bloques.push(...await seccionesMedicos());
   }
-  return vistaS('catalogo', ['lista', 'nuevo', 'nueva', 'importar', 'google', 'auto'], 'Catálogo', 'Lo que agregan las promotoras y los vendedores queda pendiente hasta que la gerencia lo valida.', ...bloques);
+  return vistaS('catalogo', ['lista', 'nuevo', 'nueva', 'documento', 'importar', 'google', 'auto'], 'Catálogo', 'Lo que agregan las promotoras y los vendedores queda pendiente hasta que la gerencia lo valida.', ...bloques);
 };
+
+// ---------------------------------------------------------------- médicos: lista, a mano, documento y Google
+const ENLACE_RED = { instagram: 'Instagram', facebook: 'Facebook', web: 'Web' };
+const redesCelda = (r = {}) => h('span', { class: 'redes' }, Object.entries(ENLACE_RED).filter(([k]) => r[k]).map(([k, t]) => h('a', { href: r[k], target: '_blank', rel: 'noopener noreferrer' }, t)));
+const telMed = (t) => (t ? `${t.slice(0, 3)}-${t.slice(3, 6)}-${t.slice(6)}` : '');
+const puedeRegistrarMedico = () => ES_GER() || yo.role === 'supervisor' || (yo.role === 'representante' && ['Promotora', 'Visitador'].includes(yo.position));
+/** Elegir especialidad de la lista, u "Otra" con texto libre. */
+function campoEspecialidad(lista, valor = '') {
+  const otra = valor && !lista.includes(valor) && valor !== 'Por confirmar';
+  const sel = campo('especialidad', 'Especialidad', { options: [...lista.map((x) => ({ value: x, label: x })), { value: '__otra', label: 'Otra (la escribo)' }], value: otra ? '__otra' : valor, placeholder: 'Elige la especialidad' });
+  const txt = campo('especialidadOtra', 'Cuál especialidad', { value: otra ? valor : '' });
+  txt.hidden = !otra;
+  sel.querySelector('select').addEventListener('change', (e) => { txt.hidden = e.target.value !== '__otra'; });
+  return { nodos: [sel, txt], valor: () => (sel.querySelector('select').value === '__otra' ? txt.querySelector('input').value : sel.querySelector('select').value) };
+}
+/** Establecimiento donde labora (de la lista de Establecimientos) u otro lugar con provincia y municipio. */
+function campoCentro(ests, div, valor = '') {
+  const sel = campo('establecimientoId', 'Establecimiento donde labora', { options: [...ests.map((x) => ({ value: x.id, label: `${x.nombre} (${x.municipio}, ${x.provincia})` })), { value: '__otro', label: 'No está en la lista' }], value: valor, placeholder: 'Elige el hospital, clínica o consultorio' });
+  const z = selectorZona(div.provincias, div.municipios);
+  const zona = h('div', { class: 'form-fila', hidden: true }, z.fp, z.fm, h('p', { class: 'hint', style: 'flex-basis:100%' }, 'Si su centro no está, regístralo en Establecimientos para que aparezca en las rutas. Mientras, indica dónde trabaja.'));
+  sel.querySelector('select').addEventListener('change', (e) => { zona.hidden = e.target.value !== '__otro'; });
+  return { nodos: [sel, zona], valor: () => { const v = sel.querySelector('select').value; return v === '__otro' || !v ? { provincia: z.sp.value, municipio: z.sm.value } : { establecimientoId: v }; } };
+}
+async function seccionesMedicos() {
+  const [mds, div, ests] = await Promise.all([api('GET', '/api/catalogo/medicos'), division(), api('GET', '/api/territorio/establecimientos').then((x) => x.items).catch(() => [])]);
+  const lista = ests.slice().sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  const out = [];
+  // Lista
+  const fprov = param('provincia') || ''; const fesp = param('especialidad') || ''; const fq = param('q') || '';
+  const fp = campo('fprov', 'Provincia', { options: div.provincias.map((p) => ({ value: p, label: p })), value: fprov, placeholder: 'Todas las provincias' });
+  const fe = campo('fesp', 'Especialidad', { options: [...new Set([...mds.especialidades, ...mds.items.map((m) => m.especialidad)])].sort((a, b) => a.localeCompare(b, 'es')).map((x) => ({ value: x, label: x })), value: fesp, placeholder: 'Todas' });
+  const fb = campo('fq', 'Buscar', { type: 'search', value: fq, placeholder: 'Nombre, centro o teléfono' });
+  const aplicar = () => irA('catalogo', Object.fromEntries(Object.entries({ ver: 'medicos', provincia: fp.querySelector('select').value, especialidad: fe.querySelector('select').value, q: fb.querySelector('input').value.trim() }).filter(([, v]) => v)));
+  fp.querySelector('select').addEventListener('change', aplicar); fe.querySelector('select').addEventListener('change', aplicar);
+  fb.querySelector('input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); aplicar(); } });
+  const k = (t) => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const vis = mds.items.filter((m) => m.estado !== 'inactivo' && (!fprov || m.provincia === fprov) && (!fesp || m.especialidad === fesp) && (!fq || k(`${m.nombre} ${m.centro ?? ''} ${m.telefono ?? ''}`).includes(k(fq.replace(/-/g, '')))));
+  const editar = async (m) => {
+    const d = $('#dialogo'); $('#dialogo-titulo').textContent = m.nombre;
+    const esp = campoEspecialidad(mds.especialidades, m.especialidad); const cen = campoCentro(lista, div, m.establecimientoId ?? '');
+    const tel = campo('telefono', 'Teléfono', { inputmode: 'tel', value: telMed(m.telefono) });
+    const ig = campo('instagram', 'Instagram', { value: m.redes?.instagram ?? '', placeholder: '@usuario' }); const fbk = campo('facebook', 'Facebook', { value: m.redes?.facebook ?? '' }); const web = campo('web', 'Página web', { value: m.redes?.web ?? '' });
+    $('#dialogo-cuerpo').replaceChildren(...esp.nodos, ...cen.nodos, tel, ig, fbk, web);
+    $('#dialogo-ok').textContent = 'Guardar'; d.showModal();
+    const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
+    if (!ok) return;
+    accionPendiente = 'guardar médico';
+    const c = cen.valor();
+    try { await api('POST', `/api/catalogo/medicos/${m.id}`, { especialidad: esp.valor(), ...(c.establecimientoId ? { establecimientoId: c.establecimientoId } : {}), telefono: tel.querySelector('input').value, instagram: ig.querySelector('input').value, facebook: fbk.querySelector('input').value, web: web.querySelector('input').value }); } catch (e) { alert(e.fields ? Object.values(e.fields).join(' ') : e.message); }
+    router();
+  };
+  const validarMed = async (m) => { accionPendiente = 'validar médico'; try { await api('POST', `/api/catalogo/medicos/${m.id}/validar`); } catch (e) { alert(e.message); } router(); };
+  out.push(S('lista', `Médicos (${fmtN.format(vis.length)})`, h('div', { class: 'form-fila' }, fp, fe, fb),
+    tabla([{ t: 'Médico', v: (m) => [m.nombre, m.telefono ? h('small', { style: 'display:block;color:var(--texto-2)' }, telMed(m.telefono)) : null] },
+      { t: 'Especialidad', v: (m) => (m.especialidad === 'Por confirmar' ? h('span', { class: 'chip pendiente' }, 'Por confirmar') : m.especialidad) },
+      { t: 'Establecimiento', v: (m) => m.centro ?? '' }, { t: 'Zona', v: (m) => `${m.municipio}, ${m.provincia}` },
+      { t: 'Redes', v: (m) => redesCelda(m.redes) }, { t: 'Estado', v: (m) => chip(m.estado) },
+      { t: '', v: (m) => (ES_GER() ? h('div', { class: 'acciones-fila' }, m.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validarMed(m) }, 'Validar') : null, h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => editar(m) }, 'Editar')) : '') }],
+    vis, ['Aún no hay médicos con estos filtros', 'Agrégalos a mano, carga un documento o usa el registro automático desde Google Maps.'], { exportar: { nombre: 'medicos-fersuaz', titulo: 'Médicos' } })));
+  if (!puedeRegistrarMedico()) return out;
+  // A mano
+  const esp = campoEspecialidad(mds.especialidades); const cen = campoCentro(lista, div);
+  const b = h('button', { class: 'btn', type: 'submit' }, 'Agregar médico');
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo médico'),
+    h('p', { class: 'hint' }, 'Al elegir el establecimiento donde labora, la provincia y el municipio se llenan solos. Si el médico ya está registrado, solo se completan los datos que le faltan.'),
+    h('div', { class: 'form-fila' }, campo('nombre', 'Nombre completo', { placeholder: 'Sin "Dr." ni "Dra."' }), ...esp.nodos), ...cen.nodos,
+    h('div', { class: 'form-fila' }, campo('telefono', 'Teléfono', { inputmode: 'tel' }, '(opcional)'), campo('instagram', 'Instagram', { placeholder: '@usuario' }, '(opcional)'), campo('facebook', 'Facebook', { placeholder: 'facebook.com/usuario' }, '(opcional)'), campo('web', 'Página web', {}, '(opcional)')),
+    h('div', { class: 'acciones' }, b));
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const r = await enviar(f, b, () => api('POST', '/api/catalogo/medicos', { nombre: f.nombre.value, especialidad: esp.valor(), ...cen.valor(), telefono: f.telefono.value, instagram: f.instagram.value, facebook: f.facebook.value, web: f.web.value }));
+    if (r) { if (r.accion === 'existente') aviso('Ese médico ya estaba registrado con estos datos.', 'ok'); irA('catalogo', { ver: 'medicos' }); }
+  });
+  out.push(S('nuevo', 'Nuevo médico', f));
+  out.push(S('documento', 'Cargar documento', formDocumentoMedicos(lista, mds)));
+  if (ES_GER()) out.push(S('auto', 'Registro automático', await registroAutomatico([['medico', 'Médicos']])));
+  return out;
+}
+/** Cargar un documento de médicos: plantilla de Excel, o PDF/foto/otra hoja leída con IA. Vista previa editable. */
+function formDocumentoMedicos(ests, mds) {
+  const archivo = campo('archivo', 'Archivo', { type: 'file', accept: '.xlsx,.csv,application/pdf,image/jpeg,image/png,image/webp' });
+  const b = h('button', { class: 'btn-sec', type: 'submit' }, 'Leer documento');
+  const salida = h('div', { 'aria-live': 'polite' });
+  const f = h('form', { class: 'tarjeta importador', novalidate: true }, h('h2', {}, 'Cargar un documento de médicos'),
+    h('p', { class: 'hint' }, 'Sube la plantilla de Excel llena', mds.iaActiva ? ', o un PDF, una foto o cualquier lista: la inteligencia artificial la lee' : ' (la lectura de PDF y fotos con inteligencia artificial se activa cuando el servidor tenga saldo de Anthropic)', '. Revisas antes de guardar. ', h('a', { href: 'assets/plantillas/medicos.xlsx', download: true }, 'Descargar plantilla')),
+    archivo, h('div', { class: 'acciones' }, b), salida);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault(); salida.replaceChildren();
+    const file = f.archivo.files[0];
+    const r = await enviar(f, b, async () => {
+      if (!file) throw new ApiError(422, { error: 'Elige un archivo.', fields: { archivo: 'Elige el archivo.' } });
+      if (file.size > 6 * 1024 * 1024) throw new ApiError(413, { error: 'El archivo no puede pasar de 6 MB.', fields: { archivo: 'Archivo demasiado grande.' } });
+      return api('POST', '/api/medicos/documento/leer', { archivo: { nombre: file.name, tipo: file.type, base64: await archivoB64(file) } });
+    });
+    if (!r) return;
+    const filas = r.filas.map((x) => ({ ...x, incluir: true }));
+    const opcionesEst = (x) => [...x.opciones, ...ests.filter((y) => !x.opciones.some((o) => o.id === y.id))];
+    const guardar = h('button', { class: 'btn', type: 'button' });
+    const contar = () => { const n = filas.filter((x) => x.incluir).length; guardar.textContent = `Guardar ${fmtN.format(n)} médico(s)`; guardar.disabled = !n; };
+    const cuerpo = tabla([
+      { t: '', v: (x) => h('input', { type: 'checkbox', checked: true, 'aria-label': `Incluir ${x.nombre}`, onchange: (ev) => { x.incluir = ev.target.checked; contar(); } }) },
+      { t: 'Médico', v: (x) => [x.nombre, x.telefono ? h('small', { style: 'display:block;color:var(--texto-2)' }, telMed(x.telefono)) : null, x.existe ? h('small', { style: 'display:block;color:var(--celeste-texto)' }, 'Ya registrado: se completan datos') : null, ...x.avisos.map((t) => h('small', { style: 'display:block;color:var(--texto-2)' }, t))] },
+      { t: 'Especialidad', v: (x) => { const s = h('select', { 'aria-label': `Especialidad de ${x.nombre}`, onchange: (ev) => { x.especialidad = ev.target.value; } }, h('option', { value: '' }, 'Por confirmar'), ...[...new Set([...(x.especialidad ? [x.especialidad] : []), ...mds.especialidades])].map((y) => h('option', { value: y, selected: y === x.especialidad }, y))); return s; } },
+      { t: 'Establecimiento', v: (x) => h('select', { 'aria-label': `Establecimiento de ${x.nombre}`, onchange: (ev) => { const est = ests.find((y) => y.id === ev.target.value); x.establecimientoId = est?.id ?? null; if (est) { x.provincia = est.provincia; x.municipio = est.municipio; } } },
+        h('option', { value: '' }, x.municipio ? `Sin establecimiento (${x.municipio})` : 'Sin establecimiento'), ...opcionesEst(x).slice(0, 400).map((y) => h('option', { value: y.id, selected: y.id === x.establecimientoId }, `${y.nombre} (${y.municipio})`))) },
+      { t: 'Redes', v: (x) => redesCelda(x.redes) }], filas, ['', ''], { porPagina: 50 });
+    guardar.addEventListener('click', async () => {
+      const sel = filas.filter((x) => x.incluir);
+      if (!(await confirmar('Guardar médicos', `Se guardarán ${sel.length} médico(s). Los que ya existen solo se completan, no se duplican.`, { okTexto: 'Guardar' }))) return;
+      guardar.disabled = true; guardar.textContent = 'Guardando…';
+      try {
+        const ok = await api('POST', '/api/medicos/documento/confirmar', { filas: sel, fuente: r.fuente });
+        salida.replaceChildren(...[h('div', { class: 'aviso ok' }, `Listo: ${fmtN.format(ok.resumen.creado)} nuevo(s), ${fmtN.format(ok.resumen.completado)} completado(s), ${fmtN.format(ok.resumen.existente)} sin cambios${ok.resumen.error ? `, ${fmtN.format(ok.resumen.error)} con error` : ''}.`),
+          ok.errores.length ? h('ul', { class: 'hint' }, ok.errores.map((x) => h('li', {}, `${x.nombre}: ${x.error}`))) : null, h('a', { class: 'btn-sec', href: '#catalogo?ver=medicos' }, 'Ver la lista')].filter(Boolean));
+      } catch (err) { guardar.disabled = false; contar(); salida.prepend(h('div', { class: 'aviso error' }, err.message)); }
+    });
+    contar();
+    salida.replaceChildren(...[h('p', { class: 'hint' }, `${fmtN.format(filas.length)} médico(s) leídos${r.fuente === 'ia' ? ' con inteligencia artificial: revisa bien cada fila' : ' de la plantilla'}.`), r.notas ? h('div', { class: 'aviso' }, `Nota de la lectura: ${r.notas}`) : null, cuerpo, h('div', { class: 'acciones' }, guardar)].filter(Boolean));
+  });
+  return f;
+}
 
 V.establecimientos = async () => {
   const [div, mias] = await Promise.all([division(), api('GET', '/api/territorio/mis-provincias')]);

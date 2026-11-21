@@ -691,3 +691,8 @@ td .sem-nombre, .td-fecha { white-space: nowrap; }
 .ref-provincias { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .5rem 1.25rem; margin-top: 1rem; }
 .ref-provincias label { display: grid; grid-template-columns: 1fr 8.5rem; align-items: center; gap: .6rem; font-size: .95rem; }
 .ref-provincias input { font: inherit; padding: .45rem .6rem; border: 1px solid #C7D6E3; border-radius: 8px; text-align: right; }
+
+/* Médicos */
+.redes { display: inline-flex; flex-wrap: wrap; gap: .35rem .75rem; }
+.redes a { color: #246C8E; font-weight: 500; }
+.importador td select { min-width: 13rem; max-width: 22rem; font: inherit; font-size: .92rem; padding: .45rem .6rem; border: 1px solid #C7D6E3; border-radius: 10px; background: #fff; }

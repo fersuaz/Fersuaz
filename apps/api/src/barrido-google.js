@@ -9,7 +9,7 @@ export const PAGINAS_POR_MUNICIPIO = 3; // Google entrega como máximo 60 result
 /** 'salud' recorre en una sola pasada hospitales, clínicas, UNAP y centros de primer nivel. */
 export const GRUPOS = { salud: ['hospital', 'clinica', 'unap', 'cpn'] };
 export const subtipos = (tipo) => GRUPOS[tipo] ?? [tipo];
-export const coleccionDe = (tipo) => (tipo === 'farmacia' ? 'farmacias' : tipo === 'hotel' ? 'hoteles' : 'establecimientos');
+export const coleccionDe = (tipo) => (tipo === 'farmacia' ? 'farmacias' : tipo === 'hotel' ? 'hoteles' : tipo === 'medico' ? 'medicos' : 'establecimientos');
 const CLAVE = 'google_barrido';
 const sin = (s) => ` ${String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
 
@@ -47,7 +47,7 @@ export function municipiosDe({ provincia, municipio }) {
   return DIVISION[provincia].map((m) => [provincia, m]);
 }
 
-export function createBarrido({ data, lugares, guardar, notificar = async () => {}, audit = async () => {}, now = () => new Date(), pausa = 250 }) {
+export function createBarrido({ data, lugares, guardar, aceptar = () => true, notificar = async () => {}, audit = async () => {}, now = () => new Date(), pausa = 250 }) {
   let enCurso = null; // promesa del recorrido activo en este servidor
 
   async function leer() { const [c] = await data.list('configuracion', { clave: CLAVE }); return c ?? null; }
@@ -114,6 +114,7 @@ export function createBarrido({ data, lugares, guardar, notificar = async () => 
           informe.consultas++; paginas++; token = r.siguiente;
           for (const lugar of r.items) {
             if (ids.has(lugar.placeId)) { informe.existentes++; continue; }
+            if (!aceptar(tipo, lugar)) { informe.descartados++; continue; } // ej. clínicas que salen al buscar médicos
             const mun = ubicarResultado(lugar.direccion, provincia, municipio);
             if (!mun) { informe.descartados++; continue; }
             if (nombres.has(`${mun}|${sin(lugar.nombre)}`)) { informe.existentes++; ids.add(lugar.placeId); continue; }
@@ -142,7 +143,7 @@ export function createBarrido({ data, lugares, guardar, notificar = async () => 
     await audit({ actorId: actor.id, action: 'barrido_google_terminado', entity: 'configuracion', entityId: CLAVE, after: { estado: informe.estado, agregados: informe.agregados, consultas: informe.consultas } });
     const zona = informe.alcance.municipio ?? (informe.alcance.provincia === 'todas' ? 'todo el país' : informe.alcance.provincia);
     await notificar(actor.id, {
-      tipo: 'territorio', enlace: { farmacia: '#catalogo?ver=farmacias', hotel: '#hoteles' }[informe.tipo] ?? '#establecimientos',
+      tipo: 'territorio', enlace: { farmacia: '#catalogo?ver=farmacias', hotel: '#hoteles', medico: '#catalogo?ver=medicos' }[informe.tipo] ?? '#establecimientos',
       titulo: informe.estado === 'terminado' ? 'Registro automático terminado' : 'El registro automático se detuvo',
       texto: `${zona}: ${informe.agregados} nuevos, ${informe.existentes} ya registrados${informe.errores ? `, ${informe.errores} con error` : ''}.`,
     }).catch(() => {});
