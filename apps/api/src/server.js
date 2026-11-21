@@ -24,6 +24,7 @@ import { createAltaRepresentantes } from './representantes.js';
 import { createBanco, BANCOS, TIPOS_CUENTA } from './banco.js';
 import { createTienda } from './tienda.js';
 import { createMedicos, pareceMedico } from './medicos.js';
+import { createMetas } from './metas.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -88,6 +89,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const agregados = createVehiculosAgregados({ data, audit: (e) => store.addAudit(e) });
   const ventas = createVentas({ data, audit: (e) => store.addAudit(e), lector: lectorIA, territorio: t, hoy: () => hoyRD(now ? now() : new Date()) });
   const medicos = createMedicos({ data, audit: (e) => store.addAudit(e), lector: lectorIA });
+  const metas = createMetas({ data, users: store, audit: (e) => store.addAudit(e), hoy: () => hoyRD(now ? now() : new Date()) });
   const tienda = createTienda({ data, users: store, files, audit: (e) => store.addAudit(e), notificar: (id, m) => n.notificar(id, m), notificarRoles: (r, m) => n.notificarRoles(r, m), ventas, hoy: () => hoyRD(now ? now() : new Date()) });
   const banco = createBanco({ data, users: store, audit: (e) => store.addAudit(e) });
   const altas = createAltaRepresentantes({ store, t, v, data });
@@ -279,6 +281,10 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/catalogo/medicos', async () => ({ items: await medicos.listar(), especialidades: medicos.especialidades(), iaActiva: medicos.iaActiva() }));
   ruta('POST', '/api/catalogo/medicos', async ({ me, body }) => { const r = await medicos.registrar(me, body ?? {}); return [r.accion === 'creado' ? 201 : 200, r]; });
   ruta('POST', /^\/api\/catalogo\/medicos\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await medicos.editar(me, p[1], body ?? {}) }));
+  ruta('GET', '/api/metas', async ({ me }) => ({ item: await metas.verConfig(me) }));
+  ruta('POST', '/api/metas/posicion', async ({ me, body }) => ({ item: await metas.guardarPosicion(me, body ?? {}) }));
+  ruta('POST', /^\/api\/metas\/representante\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await metas.guardarRepresentante(me, p[1], body ?? {}) }));
+  ruta('GET', '/api/metas/avance', async ({ me, q }) => metas.avance(me, { mes: q.get('mes') || undefined, representanteId: q.get('representanteId') || undefined }));
   ruta('POST', '/api/medicos/documento/leer', async ({ me, body }) => medicos.leerDocumento(me, body?.archivo), { limite: 9 * 1024 * 1024 });
   ruta('POST', '/api/medicos/documento/confirmar', async ({ me, body }) => medicos.confirmarDocumento(me, body ?? {}), { limite: 4 * 1024 * 1024 });
   ruta('POST', /^\/api\/catalogo\/(farmacias|medicos)\/([\w-]+)\/validar$/, async ({ me, p }) => ({ item: await c.catalogo.validar(me, p[1], p[2]) }));
@@ -406,7 +412,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', '/api/viaticos/precios', async ({ me, body }) => [201, { item: await v.registrarPrecio(me, body) }]);
   ruta('GET', '/api/viaticos/jornadas', async ({ me, q }) => ({ items: await v.listarJornadas(me, { representanteId: q.get('representanteId') || undefined, mes: q.get('mes') || undefined }) }));
   ruta('POST', '/api/viaticos/jornadas', async ({ me, body }) => [201, { item: await v.crearJornada(me, body) }]);
-  ruta('POST', /^\/api\/viaticos\/jornadas\/([\w-]+)\/(realizada|cancelar|hospedaje)$/, async ({ me, p, body }) => ({ item: await v.actualizarJornada(me, p[1], p[2], body) }));
+  ruta('POST', /^\/api\/viaticos\/jornadas\/([\w-]+)\/(realizada|cancelar|hospedaje|visita)$/, async ({ me, p, body }) => ({ item: await v.actualizarJornada(me, p[1], p[2], body) }));
   ruta('GET', '/api/viaticos/presupuesto', async ({ me, q }) => v.verPresupuesto(me, q.get('representanteId') || me.id, q.get('mes')));
   ruta('POST', '/api/viaticos/presupuestos/asignar', async ({ me, body }) => {
     const item = await v.asignarPresupuesto(me, body?.representanteId, body?.mes);

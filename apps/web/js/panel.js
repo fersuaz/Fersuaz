@@ -452,6 +452,65 @@ V.tienda = async () => {
   return vista(m.nombre, `${m.presentacion ?? ''} · ficha en la tienda`.replace(/^ · /, 'Ficha en la tienda'), h('div', { class: 'acciones' }, h('a', { class: 'btn-sec', href: '#tienda' }, 'Volver'), m.publicado ? h('a', { class: 'btn-sec', href: `producto.html?id=${m.id}`, target: '_blank', rel: 'noopener' }, 'Ver en la tienda') : null), f);
 };
 
+// ---------------------------------------------------------------- metas
+const fmtMeta = (m, v) => (v == null ? '' : m.unidad === 'RD$' ? RD(v) : m.decimal ? fmtN.format(v) : fmtN.format(Math.round(v)));
+/** Barra de avance: el número va siempre en texto, la barra solo acompaña. */
+function barraMeta(m, dias) {
+  if (m.meta == null) return h('div', { class: 'meta-celda' }, h('strong', {}, fmtMeta(m, m.valor)), h('small', {}, 'Sin meta'));
+  const pct = m.porcentaje ?? 0; const esperado = dias.total ? Math.round((dias.transcurridos / dias.total) * 100) : 0;
+  const atrasado = m.clave !== 'medicamentosPorReceta' && dias.transcurridos > 0 && dias.transcurridos < dias.total && pct < esperado * 0.8;
+  return h('div', { class: 'meta-celda' }, h('span', {}, h('strong', {}, fmtMeta(m, m.valor)), ` de ${fmtMeta(m, m.meta)}`),
+    h('div', { class: 'meta-barra', role: 'img', 'aria-label': `${pct}% de la meta` }, h('span', { style: `width:${Math.min(pct, 100)}%` }), m.clave !== 'medicamentosPorReceta' && esperado > 0 && esperado < 100 ? h('i', { style: `left:${esperado}%`, title: `Ritmo esperado a hoy: ${esperado}%` }) : null),
+    h('small', { class: atrasado ? 'atrasado' : '' }, `${pct}%${atrasado ? ' · por debajo del ritmo' : ''}${m.fuente === 'representante' ? ' · meta propia' : ''}`));
+}
+V.metas = async () => {
+  const mes = mesDe();
+  const esRep = yo.role === 'representante';
+  const av = await api('GET', `/api/metas/avance?mes=${mes}`);
+  const nota = av.dias.transcurridos && av.dias.transcurridos < av.dias.total ? `Van ${av.dias.transcurridos} de ${av.dias.total} días del mes; la línea en cada barra marca el ritmo esperado a hoy.` : '';
+  if (esRep) {
+    const yoAv = av.items[0];
+    const cuerpo = !yoAv || !yoAv.metricas.length ? h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Tu posición aún no tiene metas'), 'La gerencia las fija; aquí verás tu avance.')
+      : h('div', { class: 'metas-tarjetas' }, yoAv.metricas.map((m) => h('article', { class: 'tarjeta meta-tarjeta' }, h('h2', {}, m.nombre), barraMeta(m, av.dias))));
+    return vista('Mis metas', `${nota} ${yoAv?.metricas.some((m) => m.clave.startsWith('visitas')) ? 'Una visita cuenta cuando la marcas en Mis jornadas → Marcar visitas.' : ''}`.trim() || null, filtroMes(mes, 'metas'), cuerpo);
+  }
+  const cfg = ES_GER() || yo.role === 'supervisor' ? (await api('GET', '/api/metas')).item : null;
+  const bloques = [h('div', { class: 'form-fila' }, filtroMes(mes, 'metas'))];
+  const grupos = ['Vendedor', 'PVC', 'Visitador', 'Promotora'].map((pos) => [pos, av.items.filter((x) => x.representante.posicion === pos)]).filter(([, xs]) => xs.length);
+  bloques.push(S('avance', 'Avance del mes', ...(grupos.length ? grupos.map(([pos, xs]) => h('div', { class: 'tarjeta', style: 'margin-bottom:1rem' }, h('h2', {}, pos === 'Promotora' ? 'Promotoras' : `${pos}es`.replace('PVCes', 'PVC')),
+    tabla([{ t: 'Representante', v: (x) => [x.representante.nombre, x.promedio != null ? h('small', { style: 'display:block;color:var(--texto-2)' }, `Promedio ${x.promedio}%`) : null] },
+      ...xs[0].metricas.map((m, i) => ({ t: m.nombre, v: (x) => barraMeta(x.metricas[i], av.dias) }))], xs, ['', ''], { exportar: { nombre: `metas-${pos.toLowerCase()}-${mes}`, titulo: `Metas ${pos} ${mes}` } }))) : [h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay representantes activos con metas'), 'Vendedores, PVC, visitadores y promotoras aparecen aquí.')]), nota ? h('p', { class: 'hint' }, nota) : null));
+  if (ES_GER()) {
+    const formPos = (pos) => {
+      const ks = cfg.porPosicionMetricas[pos];
+      const b = h('button', { class: 'btn-sec', type: 'submit' }, `Guardar metas de ${pos}`);
+      const f = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-bottom:1rem' }, h('h2', {}, pos),
+        h('div', { class: 'form-fila' }, ks.map((k) => campo(k, `${cfg.metricas[k].nombre}${cfg.metricas[k].unidad === 'RD$' ? ' (RD$)' : ''} por mes`, { type: 'number', min: 0, step: cfg.metricas[k].decimal ? 0.1 : 1, inputmode: cfg.metricas[k].decimal ? 'decimal' : 'numeric', value: cfg.porPosicion?.[pos]?.[k] ?? '' }))),
+        h('div', { class: 'acciones' }, b));
+      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/metas/posicion', { posicion: pos, valores: Object.fromEntries(ks.map((k) => [k, f[k].value])) }))) router(); });
+      return f;
+    };
+    bloques.push(S('posicion', 'Metas por posición', h('p', { class: 'hint' }, 'Aplican a todos los de esa posición, cada mes. Vendedor y PVC: visitas a farmacias. Visitador: farmacias y centros. Promotora: recetas, medicamentos por receta, volumen (unidades × precio del catálogo) y pacientes.'), ['Vendedor', 'PVC', 'Visitador', 'Promotora'].map(formPos)));
+    const reps = av.items.map((x) => x.representante);
+    const rep = param('rep') || '';
+    const sel = campo('rep', 'Representante', { options: reps.map((r) => ({ value: r.id, label: `${r.nombre} (${r.posicion})` })), value: rep, placeholder: 'Elige el representante' });
+    sel.querySelector('select').addEventListener('change', (e) => irA('metas', { mes, sec: 'propias', ...(e.target.value ? { rep: e.target.value } : {}) }));
+    const r = reps.find((x) => x.id === rep);
+    let fr = null;
+    if (r) {
+      const ks = cfg.porPosicionMetricas[r.posicion]; const propias = cfg.porRep?.[r.id] ?? {};
+      const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar metas propias');
+      fr = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, r.nombre),
+        h('p', { class: 'hint' }, 'Deja en blanco lo que debe seguir la meta de su posición (aparece como sugerencia).'),
+        h('div', { class: 'form-fila' }, ks.map((k) => campo(k, cfg.metricas[k].nombre, { type: 'number', min: 0, step: cfg.metricas[k].decimal ? 0.1 : 1, value: propias[k] ?? '', placeholder: cfg.porPosicion?.[r.posicion]?.[k] != null ? `Posición: ${fmtN.format(cfg.porPosicion[r.posicion][k])}` : 'Sin meta' }))),
+        h('div', { class: 'acciones' }, b, Object.keys(propias).length ? h('button', { class: 'btn-sec', type: 'button', onclick: async () => { if (await confirmar('Quitar metas propias', `${r.nombre} volverá a la meta de ${r.posicion}.`, { okTexto: 'Quitar metas propias' })) { await api('POST', `/api/metas/representante/${r.id}`, { quitar: true }).catch((e) => alert(e.message)); router(); } } }, 'Usar las de su posición') : null));
+      fr.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(fr, b, () => api('POST', `/api/metas/representante/${r.id}`, { valores: Object.fromEntries(ks.map((k) => [k, fr[k].value])) }))) router(); });
+    }
+    bloques.push(S('propias', 'Metas por representante', h('p', { class: 'hint' }, 'Para quien necesite una meta distinta a la de su posición.'), h('div', { style: 'max-width:28rem' }, sel), fr));
+  }
+  return vistaS('metas', ['avance', 'posicion', 'propias'], 'Metas', 'Metas mensuales de visitas, recetas y volumen. Las visitas cuentan cuando el representante las marca como hechas en su jornada.', ...bloques);
+};
+
 V.comision = async () => vista('Mi comisión', null, resumenComision(await api('GET', '/api/comisiones/resumen')));
 
 /** Tarjeta con la cuenta de banco (número completo o enmascarado según quién la ve). */
@@ -861,6 +920,18 @@ V.jornadas = async () => {
     }
     router();
   };
+  // Marcar qué lugares visitó: cada visita hecha cuenta para sus metas.
+  const marcarVisitas = async (j) => {
+    const d = $('#dialogo'); $('#dialogo-titulo').textContent = `Visitas del ${fecha(j.fecha)}`;
+    const cajas = j.paradas.map((p, i) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'visita', value: i, checked: p.hecha === true }), h('span', {}, p.lugar, h('small', { style: 'display:block;color:var(--texto-2)' }, `${p.refTipo === 'farmacia' ? 'Farmacia' : 'Centro de salud'} · ${p.municipio ?? ''}`))));
+    $('#dialogo-cuerpo').replaceChildren(h('p', { class: 'hint' }, 'Marca los lugares que visitaste. Solo las visitas marcadas cuentan para tus metas del mes.'), h('div', { class: 'dialogo-checks' }, cajas));
+    $('#dialogo-ok').textContent = 'Guardar visitas'; d.showModal();
+    const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
+    if (!ok) return;
+    accionPendiente = 'guardar visitas';
+    try { await api('POST', `/api/viaticos/jornadas/${j.id}/visita`, { hechas: [...d.querySelectorAll('input[name=visita]:checked')].map((x) => Number(x.value)) }); } catch (e) { alert(e.message); }
+    router();
+  };
   const bloques = [];
   if (cronId) {
     const c = crons.find((x) => x.id === cronId);
@@ -957,9 +1028,11 @@ V.jornadas = async () => {
       { t: 'Fecha', v: (j) => fecha(j.fecha) }, { t: 'Recorrido', v: (j) => j.paradas.map((p) => p.lugar).join(' → ') },
       { t: 'Km', num: true, v: (j) => [fmtN.format(j.kmEstimados), h('small', { style: 'display:block;color:var(--texto-2)' }, j.kmFuente === 'google' ? 'mapa' : 'manual'), j.kmReales != null ? h('small', { style: 'display:block' }, `real ${fmtN.format(j.kmReales)}`) : null] },
       { t: 'Hotel', v: (j) => j.hospedaje ? [`${j.hospedaje.noches} noche(s)`, ' ', chipP(j.hospedaje.estado)] : 'No' },
-      { t: 'Estado', v: (j) => chipP(j.estado) },
-      { t: '', v: (j) => j.estado === 'planificada' ? h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' },
-        j.fecha <= hoy() ? h('button', { class: 'btn btn-peq', onclick: () => accion(j, 'realizada') }, 'Realizada') : null, h('button', { class: 'btn-sec btn-peq', onclick: () => accion(j, 'cancelar') }, 'Cancelar')) : '' },
+      { t: 'Estado', v: (j) => [chipP(j.estado), j.estado !== 'cancelada' && j.fecha <= hoy() ? h('small', { style: 'display:block;color:var(--texto-2);margin-top:.25rem' }, `${j.paradas.filter((p) => p.hecha).length} de ${j.paradas.length} visitados`) : null] },
+      { t: '', v: (j) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' },
+        j.estado !== 'cancelada' && j.fecha <= hoy() ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => marcarVisitas(j) }, 'Marcar visitas') : null,
+        j.estado === 'planificada' && j.fecha <= hoy() ? h('button', { class: 'btn btn-peq', onclick: () => accion(j, 'realizada') }, 'Realizada') : null,
+        j.estado === 'planificada' ? h('button', { class: 'btn-sec btn-peq', onclick: () => accion(j, 'cancelar') }, 'Cancelar') : null) },
     ], items, ['No hay jornadas en este mes', 'Crea tus jornadas desde tu cronograma.'])));
   return vistaS('jornadas', ['cronograma', 'jornadas'], 'Mis jornadas', 'Tu cronograma lo programa el administrador; desde cada día creas tu jornada y el sistema calcula la ruta y los viáticos.', ...bloques);
 };
@@ -2582,6 +2655,7 @@ const ICONOS = {
   comision: '<path d="M5 19 19 5"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="16.5" cy="16.5" r="2.5"/>',
   operativo: '<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>',
   receta: '<rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M12 8.5v6M9 11.5h6"/>',
+  metas: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1.2"/>',
   pedidos: '<path d="M4.5 5h2l2 10.5h9.5l2-7.5H7.4"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>',
   tienda: '<path d="M4.5 9.5 6 4.5h12l1.5 5"/><path d="M4.5 9.5a2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0"/><path d="M5.5 12v7.5h13V12M10 19.5v-4h4v4"/>',
   banco: '<path d="M4 9.5 12 5l8 4.5"/><path d="M5 9.5h14M6.5 10v6.5M10 10v6.5M14 10v6.5M17.5 10v6.5M4.5 19.5h15"/>',
@@ -2598,10 +2672,10 @@ function menuPara(u) {
   if (u.role === 'representante') {
     const s = [];
     if (u.position === 'Promotora') {
-      s.push([null, [['inicio', 'Inicio'], ['operativo', 'Operativo de hoy'], ['receta', 'Cargar receta'], ['jornadas', 'Mis jornadas']]]);
+      s.push([null, [['inicio', 'Inicio'], ['operativo', 'Operativo de hoy'], ['receta', 'Cargar receta'], ['jornadas', 'Mis jornadas'], ['metas', 'Mis metas']]]);
       s.push(['Mi trabajo', [['misRecetas', 'Mis recetas'], ['alertas', 'Alertas'], ['presupuesto', 'Mi presupuesto'], ['establecimientos', 'Establecimientos']]]);
     } else {
-      s.push([null, [['inicio', 'Inicio'], ['jornadas', 'Mis jornadas'], ['presupuesto', 'Mi presupuesto']]]);
+      s.push([null, [['inicio', 'Inicio'], ['jornadas', 'Mis jornadas'], ['presupuesto', 'Mi presupuesto'], ['metas', 'Mis metas']]]);
       s.push(['Mi zona', [['establecimientos', 'Establecimientos'], ...(u.position === 'Vendedor' ? [['catalogo', 'Farmacias'], ['inventario', 'Inventario']] : []), ...(['Vendedor', 'PVC'].includes(u.position) ? [['pedidos', 'Pedidos de farmacias']] : [])]]);
       if (['Vendedor', 'PVC'].includes(u.position)) s.push(['Vouchers', [['voucher', 'Cargar voucher'], ['misVouchers', 'Vouchers cargados']]]);
     }
@@ -2610,7 +2684,7 @@ function menuPara(u) {
   if (!G) return [[null, [['inicio', 'Inicio']]]];
   return [
     [null, [['inicio', 'Inicio'], ['cronogramas', 'Cronogramas'], ['viaticos', 'Presupuestos'], ['revisar', 'Vouchers por revisar'], ['viatico', null]]],
-    ['Territorio', [...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : []), ['establecimientos', 'Establecimientos'], ['hoteles', 'Hoteles'], ['catalogo', 'Catálogo']]],
+    ['Territorio', [...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : []), ['establecimientos', 'Establecimientos'], ['hoteles', 'Hoteles'], ['catalogo', 'Catálogo'], ['metas', 'Metas']]],
     ['Ventas y recetas', [['comisiones', 'Comisiones'], ['reportes', 'Reporte de recetas'], ['misRecetas', 'Recetas'], ['alertas', 'Alertas'], ['inventario', 'Inventario']]],
     ['Viáticos', [['perfiles', 'Perfiles de viático'], ['precios', 'Precios de combustible']]],
     ['Tienda', [['pedidos', 'Pedidos'], ...(['administrador', 'gerencia'].includes(u.role) ? [['tienda', 'Productos en tienda']] : [])]],

@@ -501,6 +501,19 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       await audit({ actorId: actor.id, action: 'jornada_realizada', entity: 'jornada', entityId: id, before: { estado: j.estado }, after: { kmReales: r2(km) } });
       return out;
     }
+    if (accion === 'visita') {
+      // Las visitas las marca el propio representante, el día de la jornada o después: es lo que cuenta para sus metas.
+      permitir(actor.id === j.representanteId, 'Solo el representante marca sus visitas.');
+      if (j.estado === 'cancelada') throw new HttpError(409, 'La jornada está cancelada.');
+      if (j.fecha > hoy()) throw new HttpError(409, 'Las visitas se marcan el día de la jornada o después.');
+      const marcar = Array.isArray(input.hechas) ? input.hechas.map(Number) : null;
+      if (!marcar || marcar.some((i) => !Number.isInteger(i) || i < 0 || i >= j.paradas.length)) invalido({ hechas: 'Marca los lugares visitados.' });
+      const ahora = new Date().toISOString();
+      const paradas = j.paradas.map((p, i) => (marcar.includes(i) ? { ...p, hecha: true, hechaEn: p.hecha ? p.hechaEn ?? ahora : ahora } : { ...p, hecha: false, hechaEn: null }));
+      const out = await data.update('jornadas', id, { paradas });
+      await audit({ actorId: actor.id, action: 'visitas_marcadas', entity: 'jornada', entityId: id, before: { hechas: j.paradas.filter((p) => p.hecha).length }, after: { hechas: marcar.length, de: j.paradas.length } });
+      return out;
+    }
     if (accion === 'cancelar') {
       if (j.estado !== 'planificada') throw new HttpError(409, 'Solo se cancelan jornadas planificadas.');
       if (await presupuestoBloqueado(j.representanteId, j.fecha.slice(0, 7))) throw new HttpError(409, 'El presupuesto de ese mes ya fue solicitado.');
