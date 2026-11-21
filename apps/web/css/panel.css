@@ -761,3 +761,31 @@ td .sem-nombre, .td-fecha { white-space: nowrap; }
 .pac-sugerencias li:hover, .pac-sugerencias li[aria-selected="true"] { background: #E9F0F6; }
 .cm-extras .pac-nota { grid-column: 1 / -1; }
 input.paciente-conocido { background: #E9F0F6; }
+
+/* Equipos por zona y tareas sugeridas */
+.equipos { display: grid; gap: 1rem; }
+.equipos-lista { display: grid; grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr)); gap: 1rem; }
+.equipo { display: grid; gap: .9rem; align-content: start; }
+.equipo-cabeza { display: flex; gap: .75rem; justify-content: space-between; align-items: start; }
+.equipo-cabeza h3 { font-size: 1.15rem; margin: 0; }
+.equipo-cabeza small { color: #52677A; }
+.equipo-cifras { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin: 0; }
+.equipo-cifras dt { font-size: .78rem; color: #52677A; }
+.equipo-cifras dd { margin: .15rem 0 0; font-weight: 600; color: #0F2A44; font-variant-numeric: tabular-nums; }
+.equipo-miembros { list-style: none; margin: 0; padding: 0; border-top: 1px solid #E9F0F6; }
+.equipo-miembros li { display: flex; justify-content: space-between; gap: .75rem; padding: .55rem 0; border-bottom: 1px solid #E9F0F6; }
+.equipo-miembros small { display: block; color: #52677A; font-size: .82rem; }
+.equipo-prom { font-size: .88rem; color: #246C8E; font-weight: 600; white-space: nowrap; }
+.equipo-meta { display: flex; flex-wrap: wrap; gap: .6rem; align-items: end; }
+.equipo-meta label { display: grid; gap: .25rem; font-size: .85rem; color: #52677A; flex: 1 1 14rem; }
+.equipo-meta input { font: inherit; padding: .5rem .7rem; border: 1px solid #C7D6E3; border-radius: 10px; }
+.tareas { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; gap: .85rem; }
+.tarea { padding: 1rem 1.15rem; border: 1px solid #C7D6E3; border-left: 4px solid #C7D6E3; border-radius: 14px; background: #fff; display: grid; gap: .4rem; justify-items: start; }
+.tarea.prioridad-alta { border-left-color: #C0462C; }
+.tarea.prioridad-media { border-left-color: #3085AC; }
+.tarea-cabeza { display: flex; gap: .75rem; align-items: center; }
+.tarea-cabeza small { color: #52677A; font-variant-numeric: tabular-nums; }
+.tarea h3 { font-size: 1.08rem; margin: .1rem 0 0; }
+.tarea p { margin: 0; color: #0F2A44; }
+.tarea-quien { font-size: .92rem; color: #52677A !important; }
+@media (max-width: 640px) { .equipo-cifras { grid-template-columns: 1fr; } }

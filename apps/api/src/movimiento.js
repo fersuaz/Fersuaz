@@ -84,8 +84,34 @@ export function createMovimiento({ data, users }) {
     }
     const ranking = [...rk.values()].map((x) => { const m = medicos.get(x.medicoId); return { medicoId: x.medicoId, medico: m?.nombre ?? 'Médico', especialidad: m?.especialidad ?? null, centro: m?.centro ?? null, recetas: x.recetas, unidades: x.unidades, volumen: r2(x.volumen), ultima: x.ultima, zona: [...x.municipios].join('; ') }; })
       .sort((a, b) => b.volumen - a.volumen || b.recetas - a.recetas).slice(0, 50);
+    // Farmacias que más venden según los vouchers de sus dependientes
+    const fx = new Map();
+    for (const v of vouchers) {
+      if (['rechazado', 'anulado'].includes(v.estado)) continue;
+      const d = usuarios.get(v.dependienteId); const f = d?.farmaciaId ? farmacias.get(d.farmaciaId) : null;
+      if (!f || !enProv(f)) continue;
+      const x = fx.get(f.id) ?? { farmaciaId: f.id, farmacia: f.nombre, municipio: f.municipio, provincia: f.provincia, dependientes: new Set(), vouchers: 0, unidades: 0, monto: 0, meds: new Map() };
+      x.dependientes.add(v.dependienteId); x.vouchers++;
+      for (const l of v.items ?? []) { x.unidades += Number(l.cantidad) || 0; x.monto += Number(l.monto) || 0; x.meds.set(l.medicamentoId, (x.meds.get(l.medicamentoId) ?? 0) + (Number(l.cantidad) || 0)); }
+      fx.set(f.id, x);
+    }
+    const farmaciasTop = [...fx.values()].map((x) => { const top = [...x.meds.entries()].sort((a, b) => b[1] - a[1])[0]; return { farmaciaId: x.farmaciaId, farmacia: x.farmacia, municipio: x.municipio, provincia: x.provincia, dependientes: x.dependientes.size, vouchers: x.vouchers, unidades: x.unidades, monto: r2(x.monto), masVendido: top ? nombres.get(top[0]) ?? null : null }; })
+      .sort((a, b) => b.monto - a.monto).slice(0, 50);
+    // Medicamentos y municipios que más se venden (vouchers + laboratorio)
+    const porMed = new Map(); const porMun = new Map();
+    for (const f of out.filas) {
+      const m = porMed.get(f.medicamentoId) ?? { medicamentoId: f.medicamentoId, medicamento: f.medicamento, unidades: 0, monto: 0, recetadas: 0, municipios: new Set() };
+      m.unidades += f.vendidasVoucher + f.vendidasLaboratorio; m.monto += f.montoVoucher + f.montoLaboratorio; m.recetadas += f.recetadas; if (f.vendidasVoucher + f.vendidasLaboratorio) m.municipios.add(f.municipio);
+      porMed.set(f.medicamentoId, m);
+      const k = `${f.provincia}|${f.municipio}`;
+      const u = porMun.get(k) ?? { provincia: f.provincia, municipio: f.municipio, unidades: 0, monto: 0, recetado: 0 };
+      u.unidades += f.vendidasVoucher + f.vendidasLaboratorio; u.monto += f.montoVoucher + f.montoLaboratorio; u.recetado += f.volumenRecetado;
+      porMun.set(k, u);
+    }
+    const medicamentosTop = [...porMed.values()].map((m) => ({ ...m, monto: r2(m.monto), municipios: m.municipios.size })).sort((a, b) => b.monto - a.monto || b.unidades - a.unidades);
+    const municipiosTop = [...porMun.values()].map((u) => ({ ...u, monto: r2(u.monto), recetado: r2(u.recetado) })).sort((a, b) => b.monto - a.monto || b.recetado - a.recetado).slice(0, 50);
     const total = (k) => r2(out.filas.reduce((s, f) => s + f[k], 0));
-    return { mes, provincia: provincia || null, ...out, ranking, totales: { recetadas: total('recetadas'), volumenRecetado: total('volumenRecetado'), vendidasVoucher: total('vendidasVoucher'), montoVoucher: total('montoVoucher'), vendidasLaboratorio: total('vendidasLaboratorio'), montoLaboratorio: total('montoLaboratorio'), recetas: recetas.length, vouchers: vouchers.filter((v) => !['rechazado', 'anulado'].includes(v.estado)).length } };
+    return { mes, provincia: provincia || null, ...out, ranking, farmaciasTop, medicamentosTop, municipiosTop, totales: { recetadas: total('recetadas'), volumenRecetado: total('volumenRecetado'), vendidasVoucher: total('vendidasVoucher'), montoVoucher: total('montoVoucher'), vendidasLaboratorio: total('vendidasLaboratorio'), montoLaboratorio: total('montoLaboratorio'), recetas: recetas.length, vouchers: vouchers.filter((v) => !['rechazado', 'anulado'].includes(v.estado)).length } };
   }
   return { reporte };
 }

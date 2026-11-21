@@ -634,6 +634,19 @@ V.tienda = async () => {
   return vista(m.nombre, `${m.presentacion ?? ''} · ficha en la tienda`.replace(/^ · /, 'Ficha en la tienda'), h('div', { class: 'acciones' }, h('a', { class: 'btn-sec', href: '#tienda' }, 'Volver'), m.publicado ? h('a', { class: 'btn-sec', href: `producto.html?id=${m.id}`, target: '_blank', rel: 'noopener' }, 'Ver en la tienda') : null), f);
 };
 
+// ---------------------------------------------------------------- tareas sugeridas
+V.tareas = async () => {
+  const mes = mesDe();
+  const r = await api('GET', `/api/tareas?mes=${mes}`);
+  const ETQ = { alta: 'Alta', media: 'Media', baja: 'Baja' };
+  const lista = r.tareas.length ? h('ol', { class: 'tareas' }, r.tareas.map((t) => h('li', { class: `tarea prioridad-${t.prioridad}` },
+    h('div', { class: 'tarea-cabeza' }, h('span', { class: `chip ${t.prioridad === 'alta' ? 'alerta' : t.prioridad === 'media' ? 'pendiente' : 'ok'}` }, `Prioridad ${ETQ[t.prioridad].toLowerCase()}`), t.impacto > 0 ? h('small', {}, `En juego: ${RD(t.impacto)}`) : null),
+    h('h3', {}, t.titulo), h('p', {}, t.porque), h('p', { class: 'tarea-quien' }, h('strong', {}, 'Quién: '), t.quien),
+    t.enlace ? h('a', { class: 'btn-sec btn-peq', href: t.enlace }, 'Ver los datos') : null)))
+    : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay tareas sugeridas este mes'), 'Cuando haya recetas sin venta, farmacias que dejaron de comprar o metas atrasadas, aparecerán aquí.');
+  return vista('Tareas sugeridas', `Lo que conviene hacer para vender más, según lo que muestran las recetas, los vouchers, las ventas y las metas de ${mes}. Ordenadas por prioridad y por lo que hay en juego.`, filtroMes(mes, 'tareas'), lista);
+};
+
 // ---------------------------------------------------------------- movimiento por territorio
 V.territorio = async () => {
   const mes = mesDe(); const prov = param('provincia') || '';
@@ -664,12 +677,26 @@ V.territorio = async () => {
     { t: 'Laboratorio', num: true, v: (x) => [fmtN.format(x.vendidasLaboratorio), sub(RD(x.montoLaboratorio))] },
     { t: 'Estado', v: (x) => (x.alerta ? h('span', { class: 'chip alerta' }, 'Recetado sin venta') : h('span', { class: 'chip ok' }, 'Cubierto')) },
   ], r.filas, ['Sin movimiento', 'Elige otro mes o provincia.'], { exportar: { nombre: `movimiento-${prov || 'pais'}-${mes}`, titulo: `Movimiento ${prov || 'todo el país'} ${mes}` } })));
+  bloques.push(S('farmacias', 'Farmacias que más venden', h('p', { class: 'hint' }, 'Según los vouchers que suben sus dependientes (aprobados y por revisar).'), tabla([
+    { t: '#', num: true, v: (x) => r.farmaciasTop.indexOf(x) + 1 }, { t: 'Farmacia', v: (x) => [x.farmacia, sub(`${x.municipio}, ${x.provincia}`)] },
+    { t: 'Vendido', num: true, v: (x) => RD(x.monto) }, { t: 'Unidades', num: true, v: (x) => fmtN.format(x.unidades) }, { t: 'Vouchers', num: true, v: (x) => fmtN.format(x.vouchers) },
+    { t: 'Dependientes', num: true, v: (x) => fmtN.format(x.dependientes) }, { t: 'Más vendido', v: (x) => x.masVendido ?? '' },
+  ], r.farmaciasTop, ['Sin vouchers este mes', 'Aparecen cuando las dependientes suben sus vouchers.'], { exportar: { nombre: `farmacias-top-${mes}`, titulo: `Farmacias que más venden ${mes}` } })));
+  bloques.push(S('medicamentos', 'Medicamentos más vendidos', tabla([
+    { t: '#', num: true, v: (x) => r.medicamentosTop.indexOf(x) + 1 }, { t: 'Medicamento', v: (x) => x.medicamento },
+    { t: 'Vendido', num: true, v: (x) => RD(x.monto) }, { t: 'Unidades vendidas', num: true, v: (x) => fmtN.format(x.unidades) },
+    { t: 'Unidades recetadas', num: true, v: (x) => fmtN.format(x.recetadas) }, { t: 'Municipios', num: true, v: (x) => fmtN.format(x.municipios) },
+  ], r.medicamentosTop, ['Sin ventas este mes', ''], { exportar: { nombre: `medicamentos-top-${mes}`, titulo: `Medicamentos más vendidos ${mes}` } })));
+  bloques.push(S('municipios', 'Municipios que más venden', tabla([
+    { t: '#', num: true, v: (x) => r.municipiosTop.indexOf(x) + 1 }, { t: 'Municipio', v: (x) => [x.municipio, sub(x.provincia)] },
+    { t: 'Vendido', num: true, v: (x) => RD(x.monto) }, { t: 'Unidades', num: true, v: (x) => fmtN.format(x.unidades) }, { t: 'Recetado', num: true, v: (x) => RD(x.recetado) },
+  ], r.municipiosTop, ['Sin ventas este mes', ''], { exportar: { nombre: `municipios-top-${mes}`, titulo: `Municipios que más venden ${mes}` } })));
   bloques.push(S('medicos', 'Médicos que más recetan', tabla([
     { t: '#', num: true, v: (x) => r.ranking.indexOf(x) + 1 }, { t: 'Médico', v: (x) => [x.medico, x.especialidad ? sub(x.especialidad) : null] },
     { t: 'Centro', v: (x) => [x.centro ?? '', sub(x.zona)] }, { t: 'Recetas', num: true, v: (x) => fmtN.format(x.recetas) }, { t: 'Unidades', num: true, v: (x) => fmtN.format(x.unidades) },
     { t: 'Volumen', num: true, v: (x) => RD(x.volumen) }, { t: 'Última receta', v: (x) => (x.ultima ? fecha(x.ultima) : '') },
   ], r.ranking, ['Sin recetas este mes', ''], { exportar: { nombre: `ranking-medicos-${mes}`, titulo: `Médicos que más recetan ${mes}` } })));
-  return vistaS('territorio', ['provincias', 'detalle', 'medicos'], 'Movimiento por territorio', 'Qué medicamentos y cuánto volumen se movió en cada provincia y municipio: lo recetado (precio del catálogo), lo vendido en las farmacias según los vouchers y lo vendido por el laboratorio.', ...bloques);
+  return vistaS('territorio', ['provincias', 'detalle', 'farmacias', 'medicamentos', 'municipios', 'medicos'], 'Movimiento por territorio', 'Qué medicamentos y cuánto volumen se movió en cada provincia y municipio: lo recetado (precio del catálogo), lo vendido en las farmacias según los vouchers y lo vendido por el laboratorio.', ...bloques);
 };
 
 // ---------------------------------------------------------------- metas
@@ -683,6 +710,39 @@ function barraMeta(m, dias) {
     h('div', { class: 'meta-barra', role: 'img', 'aria-label': `${pct}% de la meta` }, h('span', { style: `width:${Math.min(pct, 100)}%` }), m.clave !== 'medicamentosPorReceta' && esperado > 0 && esperado < 100 ? h('i', { style: `left:${esperado}%`, title: `Ritmo esperado a hoy: ${esperado}%` }) : null),
     h('small', { class: atrasado ? 'atrasado' : '' }, `${pct}%${atrasado ? ' · por debajo del ritmo' : ''}${m.fuente === 'representante' ? ' · meta propia' : ''}`));
 }
+/** Equipos por zona: vendedor + visitador + promotora (y PVC) de la misma zona; un objetivo común, vender más. */
+async function seccionEquipos(mes) {
+  const r = await api('GET', `/api/metas/equipos?mes=${mes}`);
+  const ritmo = r.dias.total && r.dias.transcurridos < r.dias.total ? Math.round((r.dias.transcurridos / r.dias.total) * 100) : null;
+  const tarjeta = (e) => {
+    const barra = e.meta ? barraMeta({ clave: 'ventas', nombre: 'Ventas', unidad: 'RD$', decimal: true, meta: e.meta, valor: e.ventas.total, porcentaje: e.porcentaje, fuente: null }, r.dias) : h('p', { class: 'hint' }, `Ventas: ${RD(e.ventas.total)}. Sin meta de ventas para este equipo.`);
+    let metaForm = null;
+    if (ES_GER()) {
+      const inp = h('input', { type: 'number', min: 1, step: 0.01, inputmode: 'decimal', value: e.metaFuente === 'equipo' ? e.meta : '', placeholder: r.equipoGlobal ? `General: ${fmtN.format(r.equipoGlobal)}` : 'RD$', 'aria-label': `Meta de ventas del equipo de ${e.vendedor.nombre}` });
+      const b = h('button', { class: 'btn-sec btn-peq', type: 'submit' }, 'Guardar meta');
+      metaForm = h('form', { class: 'equipo-meta', novalidate: true }, h('label', {}, h('span', {}, 'Meta de ventas del equipo (RD$ al mes)'), inp), b);
+      metaForm.addEventListener('submit', async (ev) => { ev.preventDefault(); if (await enviar(metaForm, b, () => api('POST', `/api/metas/equipo/${e.vendedor.id}`, { monto: inp.value }))) router(); });
+    }
+    return h('article', { class: 'tarjeta equipo' },
+      h('div', { class: 'equipo-cabeza' }, h('div', {}, h('h3', {}, `Equipo de ${e.vendedor.nombre}`), h('small', {}, e.zona)), e.porcentaje != null ? h('span', { class: `chip ${e.porcentaje >= (ritmo ?? 100) ? 'ok' : 'alerta'}` }, `${e.porcentaje}% de la meta`) : null),
+      barra,
+      h('dl', { class: 'equipo-cifras' }, h('div', {}, h('dt', {}, 'Vouchers de farmacias'), h('dd', {}, RD(e.ventas.vouchers))), h('div', {}, h('dt', {}, 'Ventas del laboratorio'), h('dd', {}, RD(e.ventas.laboratorio))), h('div', {}, h('dt', {}, 'Recetado en la zona'), h('dd', {}, RD(e.recetado)))),
+      h('ul', { class: 'equipo-miembros' }, e.integrantes.map((i) => h('li', {}, h('span', {}, h('strong', {}, i.nombre), h('small', {}, i.posicion)), h('span', { class: 'equipo-prom' }, i.promedio != null ? `${i.promedio}% de sus metas` : 'Sin metas')))),
+      e.faltan.length ? h('div', { class: 'aviso' }, `Falta ${e.faltan.join(' y ').toLowerCase()} en esta zona.`) : null, metaForm);
+  };
+  const glob = ES_GER() ? (() => {
+    const inp = h('input', { type: 'number', min: 1, step: 0.01, inputmode: 'decimal', value: r.equipoGlobal ?? '', 'aria-label': 'Meta de ventas general por equipo' });
+    const b = h('button', { class: 'btn-sec', type: 'submit' }, 'Guardar meta general');
+    const f = h('form', { class: 'tarjeta equipo-meta', novalidate: true }, h('label', {}, h('span', {}, 'Meta de ventas general por equipo (RD$ al mes); cada equipo puede tener la suya'), inp), b);
+    f.addEventListener('submit', async (ev) => { ev.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/metas/equipo/global', { monto: inp.value }))) router(); });
+    return f;
+  })() : null;
+  return h('div', { class: 'equipos' },
+    h('p', { class: 'hint' }, 'Cada zona es un equipo: el vendedor y los visitadores, promotoras y PVC que trabajan su territorio. Cada uno tiene su meta y todas suman a un mismo objetivo: las ventas del equipo en su zona (vouchers de sus farmacias y ventas del laboratorio).'),
+    glob, r.equipos.length ? h('div', { class: 'equipos-lista' }, r.equipos.map(tarjeta)) : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Aún no hay equipos'), 'Un equipo se forma cuando un vendedor tiene zona asignada.'),
+    r.sinEquipo.length ? h('div', { class: 'aviso' }, `Sin equipo: ${r.sinEquipo.map((u) => `${u.nombre} (${u.posicion}${u.conZona ? '' : ', sin zona'})`).join(', ')}.`) : null);
+}
+
 V.metas = async () => {
   const mes = mesDe();
   const esRep = yo.role === 'representante';
@@ -692,10 +752,12 @@ V.metas = async () => {
     const yoAv = av.items[0];
     const cuerpo = !yoAv || !yoAv.metricas.length ? h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Tu posición aún no tiene metas'), 'La gerencia las fija; aquí verás tu avance.')
       : h('div', { class: 'metas-tarjetas' }, yoAv.metricas.map((m) => h('article', { class: 'tarjeta meta-tarjeta' }, h('h2', {}, m.nombre), barraMeta(m, av.dias))));
-    return vista('Mis metas', `${nota} ${yoAv?.metricas.some((m) => m.clave.startsWith('visitas')) ? 'Una visita cuenta cuando la marcas en Mis jornadas → Marcar visitas.' : ''}`.trim() || null, filtroMes(mes, 'metas'), cuerpo);
+    const equipo = await seccionEquipos(mes);
+    return vista('Mis metas', `${nota} ${yoAv?.metricas.some((m) => m.clave.startsWith('visitas')) ? 'Una visita cuenta cuando la marcas en Mis jornadas → Marcar visitas.' : ''}`.trim() || null, filtroMes(mes, 'metas'), cuerpo, h('h2', { style: 'margin-top:2rem' }, 'Mi equipo'), equipo);
   }
   const cfg = ES_GER() || yo.role === 'supervisor' ? (await api('GET', '/api/metas')).item : null;
   const bloques = [h('div', { class: 'form-fila' }, filtroMes(mes, 'metas'))];
+  bloques.push(S('equipos', 'Equipos por zona', await seccionEquipos(mes)));
   const grupos = ['Vendedor', 'PVC', 'Visitador', 'Promotora'].map((pos) => [pos, av.items.filter((x) => x.representante.posicion === pos)]).filter(([, xs]) => xs.length);
   bloques.push(S('avance', 'Avance del mes', ...(grupos.length ? grupos.map(([pos, xs]) => h('div', { class: 'tarjeta', style: 'margin-bottom:1rem' }, h('h2', {}, pos === 'Promotora' ? 'Promotoras' : `${pos}es`.replace('PVCes', 'PVC')),
     tabla([{ t: 'Representante', v: (x) => [x.representante.nombre, x.promedio != null ? h('small', { style: 'display:block;color:var(--texto-2)' }, `Promedio ${x.promedio}%`) : null] },
@@ -728,7 +790,7 @@ V.metas = async () => {
     }
     bloques.push(S('propias', 'Metas por representante', h('p', { class: 'hint' }, 'Para quien necesite una meta distinta a la de su posición.'), h('div', { style: 'max-width:28rem' }, sel), fr));
   }
-  return vistaS('metas', ['avance', 'posicion', 'propias'], 'Metas', 'Metas mensuales de visitas, recetas y volumen. Las visitas cuentan cuando el representante las marca como hechas en su jornada.', ...bloques);
+  return vistaS('metas', ['equipos', 'avance', 'posicion', 'propias'], 'Metas', 'Metas mensuales de visitas, recetas y volumen. Las visitas cuentan cuando el representante las marca como hechas en su jornada.', ...bloques);
 };
 
 V.comision = async () => vista('Mi comisión', null, resumenComision(await api('GET', '/api/comisiones/resumen')));
@@ -2948,6 +3010,7 @@ const ICONOS = {
   operativo: '<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>',
   receta: '<rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M12 8.5v6M9 11.5h6"/>',
   territorio: '<path d="M9 4.5 4 6.5v13l5-2 6 2 5-2v-13l-5 2-6-2Z"/><path d="M9 4.5v13M15 6.5v13"/>',
+  tareas: '<path d="M9 6.5h10M9 12h10M9 17.5h10"/><path d="m4 6.5 1.2 1.2L7.5 5.4M4 12l1.2 1.2L7.5 10.9M4 17.5l1.2 1.2 2.3-2.3"/>',
   metas: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1.2"/>',
   pedidos: '<path d="M4.5 5h2l2 10.5h9.5l2-7.5H7.4"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>',
   tienda: '<path d="M4.5 9.5 6 4.5h12l1.5 5"/><path d="M4.5 9.5a2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0"/><path d="M5.5 12v7.5h13V12M10 19.5v-4h4v4"/>',
@@ -2977,7 +3040,7 @@ function menuPara(u) {
   }
   if (!G) return [[null, [['inicio', 'Inicio']]]];
   return [
-    [null, [['inicio', 'Inicio'], ['cronogramas', 'Cronogramas'], ['viaticos', 'Presupuestos'], ['revisar', 'Vouchers por revisar'], ['viatico', null]]],
+    [null, [['inicio', 'Inicio'], ...(u.role !== 'finanzas' ? [['tareas', 'Tareas sugeridas']] : []), ['cronogramas', 'Cronogramas'], ['viaticos', 'Presupuestos'], ['revisar', 'Vouchers por revisar'], ['viatico', null]]],
     ['Territorio', [...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : []), ['establecimientos', 'Establecimientos'], ['hoteles', 'Hoteles'], ['catalogo', 'Catálogo'], ['metas', 'Metas']]],
     ['Ventas y recetas', [['territorio', 'Movimiento por territorio'], ['comisiones', 'Comisiones'], ['reportes', 'Reporte de recetas'], ['misRecetas', 'Recetas'], ['alertas', 'Alertas'], ['inventario', 'Inventario']]],
     ['Viáticos', [['perfiles', 'Perfiles de viático'], ['precios', 'Precios de combustible']]],

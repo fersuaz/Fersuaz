@@ -469,9 +469,10 @@ test('dependiente: se registra eligiendo su farmacia del catálogo y queda activ
     assert.equal(login.status, 200);
     const ini = (await call('GET', '/api/inicio', null, login.body.token)).body;
     assert.deepEqual([ini.farmacia.nombre, ini.farmacia.municipio, ini.farmacia.sector], ['Farmacia Ejemplo Registro', 'Moca', 'Centro']);
-    // Sin farmacia del catálogo sigue el camino de siempre: pendiente de aprobación
-    const sin = await call('POST', '/api/auth/register', { ...base, email: 'dep.otra@ejemplo.do', pharmacy: 'Farmacia que no está', province: 'Espaillat' });
-    assert.equal(sin.body.user.status, 'pendiente_aprobacion');
+    // Sin farmacia del catálogo: el municipio es obligatorio; la farmacia se agrega pendiente y queda ligada
+    assert.equal((await call('POST', '/api/auth/register', { ...base, email: 'dep.otra@ejemplo.do', pharmacy: 'Farmacia que no está', province: 'Espaillat' })).status, 422);
+    const sin = await call('POST', '/api/auth/register', { ...base, email: 'dep.otra@ejemplo.do', pharmacy: 'Farmacia que no está', province: 'Espaillat', municipio: 'Moca' });
+    assert.equal(sin.body.user.status, 'pendiente_aprobacion'); assert.ok(sin.body.user.farmaciaId, 'queda ligada a la farmacia nueva');
     assert.ok((await call('GET', '/api/notificaciones', null, t.gerente)).body.items.some((x) => x.titulo === 'Nueva dependiente'));
   } finally { server.close(); }
 });
