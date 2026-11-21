@@ -3,7 +3,7 @@
 // los movimientos aprobados no se borran; los km son estimados manuales hasta conectar un proveedor de mapas.
 import { AuthError as HttpError } from './auth.js';
 import { STATUS, POSITIONS } from './roles.js';
-import { calcularCombustible, calcularAlimentacion, calcularHospedaje, calcularPresupuesto, detectarDuplicados, aplicarTope, calcularTransportePublico } from './calculos.js';
+import { calcularCombustible, calcularAlimentacion, calcularHospedaje, calcularPresupuesto, detectarDuplicados, aplicarTope, calcularTransportePublico, semanasDelMes } from './calculos.js';
 import { esFechaISO, hoyRD } from './periodos.js';
 import { normalizeName } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
@@ -442,64 +442,126 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
     return { monto: valor.monto };
   }
 
+  // ------------------------------------------------------------ días del mes: jornadas y cronograma aprobado
+  const claveOrigen = (r) => [r?.provincia, r?.municipio, r?.direccion ?? ''].join('|');
+  /** Km por carretera de un día aprobado del cronograma: residencia → lugares → residencia. Se calcula una vez. */
+  async function kmDeCronograma(c, perfil) {
+    const origen = claveOrigen(perfil.residencia);
+    if (c.kmEstimado != null && c.kmOrigen === origen) return { km: Number(c.kmEstimado), minutos: c.minutosEstimados ?? null };
+    if (!mapas?.activo) return { error: 'el cálculo por mapa no está activo' };
+    try {
+      const r = await mapas.ruta(perfil.residencia, c.lugares, { regresar: true, optimizar: true });
+      await data.update('cronogramas', c.id, { kmEstimado: r.km, minutosEstimados: r.minutos ?? null, kmOrigen: origen });
+      return { km: r.km, minutos: r.minutos ?? null };
+    } catch (err) { return { error: err.message }; }
+  }
+  /**
+   * Días del mes que cuentan para los viáticos: cada jornada creada y cada día aprobado del cronograma
+   * que aún no tiene jornada (con sus km estimados por mapa). Así el presupuesto sale desde que se aprueba el cronograma.
+   */
+  async function diasDelMes(repId, mes, perfil) {
+    const todas = (await data.list('jornadas', { representanteId: repId })).filter((j) => j.fecha.startsWith(mes));
+    const js = todas.filter((j) => j.estado !== 'cancelada');
+    // Un día con jornada (aunque se haya cancelado) ya no se estima desde el cronograma.
+    const conJornada = new Set(todas.map((j) => j.cronogramaId).filter(Boolean)); const fechasJ = new Set(todas.map((j) => j.fecha));
+    const crons = (await data.list('cronogramas', { representanteId: repId }))
+      .filter((c) => c.estado === 'aprobado' && c.fecha.startsWith(mes) && !conJornada.has(c.id) && !fechasJ.has(c.fecha));
+    const dias = js.map((j) => ({ fecha: j.fecha, origen: 'jornada', km: j.kmEstimados, kmFuente: j.kmFuente, conAlimentacion: j.conAlimentacion !== false, hospedaje: j.hospedaje ?? null,
+      peajes: j.peajes || 0, estacionamiento: j.estacionamiento || 0, otros: j.otros || 0, paradas: j.paradas ?? [], lugares: (j.paradas ?? []).length }));
+    const errores = new Set();
+    const necesitaKm = perfil.vehiculo?.propiedad !== 'ninguno';
+    for (let i = 0; i < crons.length; i += 4) { // de 4 en 4 para no saturar el proveedor de mapas
+      const lote = crons.slice(i, i + 4);
+      const kms = necesitaKm ? await Promise.all(lote.map((c) => kmDeCronograma(c, perfil))) : lote.map(() => ({ km: 0 }));
+      lote.forEach((c, k) => {
+        if (kms[k].error) errores.add(kms[k].error);
+        dias.push({ fecha: c.fecha, origen: 'cronograma', km: kms[k].km ?? null, kmFuente: kms[k].km != null ? 'google' : null, conAlimentacion: true, hospedaje: null,
+          peajes: 0, estacionamiento: 0, otros: 0, paradas: c.lugares ?? [], lugares: (c.lugares ?? []).length });
+      });
+    }
+    return { dias: dias.sort((a, b) => a.fecha.localeCompare(b.fecha)), errores: [...errores] };
+  }
+  /** Agrupa los días por semana y suma cada partida (el combustible, por precio vigente dentro de la semana). */
+  async function porSemana(mes, dias, { costoCombustible, comidaDia }) {
+    const semanas = semanasDelMes(mes, dias.map((d) => d.fecha));
+    const out = [];
+    for (const s of semanas) {
+      const ds = dias.filter((d) => s.fechas.includes(d.fecha));
+      const c = await costoCombustible(ds);
+      const hosp = ds.filter((d) => d.hospedaje?.estado === 'aprobado').reduce((x, d) => x + calcularHospedaje({ noches: d.hospedaje.noches, tarifaNoche: d.hospedaje.tarifaNoche, cargos: d.hospedaje.cargos }), 0);
+      out.push({
+        n: s.n, desde: s.desde, hasta: s.hasta, dias: new Set(ds.map((d) => d.fecha)).size, lugares: ds.reduce((x, d) => x + d.lugares, 0),
+        km: r2(ds.reduce((x, d) => x + (d.km || 0), 0)), galones: c.galones, combustible: c.costo, transporte: c.transporte ?? 0,
+        alimentacion: r2(comidaDia(ds)), hospedaje: r2(hosp), otros: r2(ds.reduce((x, d) => x + d.peajes + d.estacionamiento + d.otros, 0)),
+      });
+    }
+    return out.map((w) => ({ ...w, total: r2(w.combustible + w.transporte + w.alimentacion + w.hospedaje + w.otros) }));
+  }
+
   async function calcular(repId, mes) {
     const faltan = [];
     const perfil = await perfilDe(repId);
     if (!perfil) return { faltan: ['El perfil de viático (vehículo, residencia y tarifa de comida) no está configurado.'] };
-    const js = (await data.list('jornadas', { representanteId: repId })).filter((j) => j.fecha.startsWith(mes) && j.estado !== 'cancelada');
-    if (!js.length) return { faltan: ['No hay jornadas planificadas en ese mes.'] };
+    const { dias, errores } = await diasDelMes(repId, mes, perfil);
+    if (!dias.length) return { faltan: ['No hay días aprobados en el cronograma ni jornadas en ese mes.'] };
     const v = perfil.vehiculo;
-    let combustible = 0; let galones = 0; const preciosUsados = {};
-    const km = r2(js.reduce((s, j) => s + j.kmEstimados, 0));
-    if (v.propiedad === 'ninguno') return calcularPublico(repId, perfil, js, km, faltan);
+    if (v.propiedad === 'ninguno') return calcularPublico(repId, perfil, mes, dias, faltan);
+    const sinKm = dias.filter((d) => d.km == null);
+    if (sinKm.length) faltan.push(`${sinKm.length} día(s) del cronograma no tienen km por carretera (${errores.join('; ') || 'sin datos del mapa'}). Se calculan cuando el representante crea la jornada de ese día.`);
+    const km = r2(dias.reduce((s, d) => s + (d.km || 0), 0));
     const usaReembolso = v.propiedad === 'propio' && perfil.reembolsoPorKm != null;
-    if (usaReembolso) {
-      combustible = r2(km * perfil.reembolsoPorKm); // política expresa: reembolso por km sustituye al combustible, no se suman
-    } else if (v.combustible === 'electrico') {
-      faltan.push('El vehículo es eléctrico: el cálculo de costo energético (kWh) aún no está configurado.');
-    } else {
-      const tipo = v.combustible === 'hibrido' ? v.combustibleHibrido : v.combustible;
-      // Se agrupan los km por precio vigente y se redondea una sola vez por grupo (no jornada por jornada).
-      const kmPorPrecio = new Map();
-      for (const j of js) {
-        const p = await precioVigente(tipo, j.fecha);
-        if (!p) { faltan.push(`No hay precio de ${COMBUSTIBLE_LABEL[tipo].toLowerCase()} vigente para el ${j.fecha}.`); continue; }
-        kmPorPrecio.set(p.vigenteDesde, { precio: p.precioGalon, km: (kmPorPrecio.get(p.vigenteDesde)?.km ?? 0) + j.kmEstimados });
+    const tipo = v.combustible === 'hibrido' ? v.combustibleHibrido : v.combustible;
+    const preciosUsados = {}; const sinPrecio = new Set();
+    if (!usaReembolso && v.combustible === 'electrico') faltan.push('El vehículo es eléctrico: el cálculo de costo energético (kWh) aún no está configurado.');
+    // Combustible de un grupo de días: los km se agrupan por precio vigente y se redondea una sola vez por grupo.
+    async function costoCombustible(ds) {
+      if (usaReembolso) return { galones: 0, costo: r2(ds.reduce((s, d) => s + (d.km || 0), 0) * perfil.reembolsoPorKm) }; // el reembolso por km sustituye al combustible
+      if (v.combustible === 'electrico') return { galones: 0, costo: 0 };
+      const grupos = new Map();
+      for (const d of ds) {
+        if (!d.km) continue;
+        const p = await precioVigente(tipo, d.fecha);
+        if (!p) { sinPrecio.add(d.fecha); continue; }
+        grupos.set(p.vigenteDesde, { precio: p.precioGalon, km: (grupos.get(p.vigenteDesde)?.km ?? 0) + d.km });
         preciosUsados[p.vigenteDesde] = p.precioGalon;
       }
-      for (const { precio, km: k } of kmPorPrecio.values()) {
-        const c = calcularCombustible({ kilometros: r2(k), rendimientoKmGalon: v.rendimiento, precioGalon: precio });
-        combustible += c.costo; galones += c.galones;
-      }
+      let galones = 0; let costo = 0;
+      for (const { precio, km: k } of grupos.values()) { const c = calcularCombustible({ kilometros: r2(k), rendimientoKmGalon: v.rendimiento, precioGalon: precio }); galones += c.galones; costo += c.costo; }
+      return { galones: r2(galones), costo: r2(costo) };
     }
+    const fechasComida = (ds) => new Set(ds.filter((d) => d.conAlimentacion).map((d) => d.fecha)).size;
+    const semanas = await porSemana(mes, dias, { costoCombustible, comidaDia: (ds) => calcularAlimentacion({ tarifaDiaria: perfil.tarifaAlimentacion, diasElegibles: fechasComida(ds) }) });
+    if (sinPrecio.size) faltan.push(`No hay precio de ${COMBUSTIBLE_LABEL[tipo]?.toLowerCase() ?? 'combustible'} vigente para ${sinPrecio.size} día(s). Regístralo en Precios de combustible.`);
     // Tope mensual: el del representante si lo tiene; si no, el global. Lo calculado por km se paga hasta el tope.
     const topeRep = perfil.topeCombustible ?? null;
     const tope = topeRep ?? (await verTopeGlobal());
-    const combustibleCalculado = r2(combustible);
+    const combustibleCalculado = r2(semanas.reduce((s, w) => s + w.combustible, 0));
+    const galones = r2(semanas.reduce((s, w) => s + w.galones, 0));
     const topado = aplicarTope({ calculado: combustibleCalculado, tope });
-    combustible = topado.aplicado;
-    const dias = new Set(js.filter((j) => j.conAlimentacion).map((j) => j.fecha)).size;
-    const alimentacion = calcularAlimentacion({ tarifaDiaria: perfil.tarifaAlimentacion, diasElegibles: dias });
-    const hoteles = js.filter((j) => j.hospedaje);
-    const sinAprobar = hoteles.filter((j) => j.hospedaje.estado !== 'aprobado');
+    const diasComida = fechasComida(dias);
+    const alimentacion = calcularAlimentacion({ tarifaDiaria: perfil.tarifaAlimentacion, diasElegibles: diasComida });
+    const hoteles = dias.filter((d) => d.hospedaje);
+    const sinAprobar = hoteles.filter((d) => d.hospedaje.estado !== 'aprobado');
     if (sinAprobar.length) faltan.push(`Hay ${sinAprobar.length} hospedaje(s) sin autorizar por la gerencia.`);
-    const hospedaje = hoteles.filter((j) => j.hospedaje.estado === 'aprobado')
-      .reduce((s, j) => s + calcularHospedaje({ noches: j.hospedaje.noches, tarifaNoche: j.hospedaje.tarifaNoche, cargos: j.hospedaje.cargos }), 0);
-    const sum = (k) => r2(js.reduce((s, j) => s + (j[k] || 0), 0));
-    const detalle = calcularPresupuesto({ combustible: r2(combustible), alimentacion, hospedaje: r2(hospedaje), peajes: sum('peajes'), estacionamiento: sum('estacionamiento'), otros: sum('otros') });
+    const hospedaje = r2(semanas.reduce((s, w) => s + w.hospedaje, 0));
+    const sum = (k) => r2(dias.reduce((s, d) => s + (d[k] || 0), 0));
+    const detalle = calcularPresupuesto({ combustible: topado.aplicado, alimentacion, hospedaje, peajes: sum('peajes'), estacionamiento: sum('estacionamiento'), otros: sum('otros') });
+    const nJ = dias.filter((d) => d.origen === 'jornada').length;
     return {
       faltan, detalle: detalle.detalle, total: detalle.total,
       supuestos: {
-        jornadas: js.length, km, kmTipo: js.every((j) => j.kmFuente === 'google') ? 'por carretera (Google)' : js.some((j) => j.kmFuente === 'google') ? 'mixto: mapa y manual' : 'estimado manual', galones: r2(galones), rendimiento: v.rendimiento ?? null,
-        combustible: v.combustible, preciosUsados, diasAlimentacion: dias, tarifaAlimentacion: perfil.tarifaAlimentacion,
+        jornadas: nJ, diasCronograma: dias.length - nJ, dias: new Set(dias.map((d) => d.fecha)).size, lugares: dias.reduce((s, d) => s + d.lugares, 0),
+        km, kmTipo: dias.every((d) => d.kmFuente === 'google') ? 'por carretera (Google)' : dias.some((d) => d.kmFuente === 'google') ? 'mixto: mapa y manual' : 'estimado manual',
+        galones, rendimiento: v.rendimiento ?? null, combustible: v.combustible, preciosUsados, diasAlimentacion: diasComida, tarifaAlimentacion: perfil.tarifaAlimentacion,
         reembolsoPorKm: usaReembolso ? perfil.reembolsoPorKm : null, hospedajes: hoteles.length,
         combustibleCalculado, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
+        semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares })),
       },
       avisos: topado.topado ? [`El combustible calculado (RD$${combustibleCalculado.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [],
     };
   }
   /** Sin vehículo: transporte y comida por día, dentro o fuera de su zona de trabajo, según el cronograma. */
-  async function calcularPublico(repId, perfil, js, km, faltan) {
+  async function calcularPublico(repId, perfil, mes, dias, faltan) {
     const rep = await users.findUserById(repId);
     const base = await tarifasDePosicion(rep?.position);
     const tarifas = {}; const fuente = {};
@@ -512,25 +574,32 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
     const zona = (await data.list('zonas', { representanteId: repId }))[0] ?? null;
     const conZona = !!zona?.provincias?.length;
     const avisosZona = conZona ? [] : ['No tiene zona asignada: se tomó su municipio de residencia como "dentro". Asígnale su zona en Representantes.'];
-    const r = calcularTransportePublico({ jornadas: js, esDentro: conZona ? (p) => dentroDeZona(zona, p.provincia, p.municipio) : undefined, residencia: perfil.residencia, tarifas });
+    const esDentro = conZona ? (p) => dentroDeZona(zona, p.provincia, p.municipio) : undefined;
+    const r = calcularTransportePublico({ jornadas: dias, esDentro, residencia: perfil.residencia, tarifas });
     const topeRep = perfil.topeCombustible ?? null;
     const tope = topeRep ?? (await verTopeGlobal());
     const topado = aplicarTope({ calculado: r.transporte, tope });
-    const hoteles = js.filter((j) => j.hospedaje);
-    const sinAprobar = hoteles.filter((j) => j.hospedaje.estado !== 'aprobado');
+    const semanas = await porSemana(mes, dias, {
+      costoCombustible: async (ds) => ({ galones: 0, costo: 0, transporte: calcularTransportePublico({ jornadas: ds, esDentro, residencia: perfil.residencia, tarifas }).transporte }),
+      comidaDia: (ds) => calcularTransportePublico({ jornadas: ds, esDentro, residencia: perfil.residencia, tarifas }).alimentacion,
+    });
+    const hoteles = dias.filter((d) => d.hospedaje);
+    const sinAprobar = hoteles.filter((d) => d.hospedaje.estado !== 'aprobado');
     if (sinAprobar.length) faltan.push(`Hay ${sinAprobar.length} hospedaje(s) sin autorizar por la gerencia.`);
-    const hospedaje = hoteles.filter((j) => j.hospedaje.estado === 'aprobado')
-      .reduce((s, j) => s + calcularHospedaje({ noches: j.hospedaje.noches, tarifaNoche: j.hospedaje.tarifaNoche, cargos: j.hospedaje.cargos }), 0);
-    const sum = (k) => r2(js.reduce((s, j) => s + (j[k] || 0), 0));
-    const detalle = calcularPresupuesto({ combustible: 0, transporte: topado.aplicado, alimentacion: r.alimentacion, hospedaje: r2(hospedaje), peajes: sum('peajes'), estacionamiento: sum('estacionamiento'), otros: sum('otros') });
+    const hospedaje = r2(semanas.reduce((s, w) => s + w.hospedaje, 0));
+    const sum = (k) => r2(dias.reduce((s, d) => s + (d[k] || 0), 0));
+    const detalle = calcularPresupuesto({ combustible: 0, transporte: topado.aplicado, alimentacion: r.alimentacion, hospedaje, peajes: sum('peajes'), estacionamiento: sum('estacionamiento'), otros: sum('otros') });
+    const nJ = dias.filter((d) => d.origen === 'jornada').length;
     return {
       faltan, detalle: detalle.detalle, total: detalle.total,
       supuestos: {
-        jornadas: js.length, km, kmTipo: 'transporte público', galones: null, rendimiento: null, combustible: null, preciosUsados: {},
-        transportePublico: true, diasDentro: r.diasDentro, diasFuera: r.diasFuera, tarifas, tarifasFuente: fuente, dias: r.dias,
+        jornadas: nJ, diasCronograma: dias.length - nJ, dias: r.diasDentro + r.diasFuera, lugares: dias.reduce((s, d) => s + d.lugares, 0),
+        km: r2(dias.reduce((s, d) => s + (d.km || 0), 0)), kmTipo: 'transporte público', galones: null, rendimiento: null, combustible: null, preciosUsados: {},
+        transportePublico: true, diasDentro: r.diasDentro, diasFuera: r.diasFuera, tarifas, tarifasFuente: fuente, diasDetalle: r.dias,
         posicion: rep?.position ?? null, dentroSegun: conZona ? 'zona' : 'residencia',
         diasAlimentacion: r.diasDentro + r.diasFuera, tarifaAlimentacion: null, reembolsoPorKm: null, hospedajes: hoteles.length,
         combustibleCalculado: r.transporte, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
+        semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares })),
       },
       avisos: [...avisosZona, ...(topado.topado ? [`El transporte calculado (RD$${r.transporte.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [])],
     };

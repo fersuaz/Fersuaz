@@ -25,7 +25,7 @@ export const COLECCIONES = {
   hoteles: { tabla: 'hoteles', campos: ['nombre', 'provincia', 'municipio', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'calificacion', 'fuente', 'precioNoche', 'requisitos', 'notas', 'verificadoPor', 'verificadoEn', 'estado', 'creadoPor'], json: ['requisitos'] },
   preregistros: { tabla: 'preregistros', campos: ['email', 'nombre', 'telefono', 'posicion', 'provincias', 'estado', 'usuarioId', 'creadoPor'], json: ['provincias'] },
   preciosMedicamento: { tabla: 'precios_medicamento', campos: ['medicamentoId', 'precio', 'vigenteDesde', 'fuente', 'registradoPor'], json: [] },
-  cronogramas: { tabla: 'cronogramas', campos: ['representanteId', 'fecha', 'lugares', 'nota', 'estado', 'motivo', 'creadoPor'], json: ['lugares'] },
+  cronogramas: { tabla: 'cronogramas', campos: ['representanteId', 'fecha', 'lugares', 'nota', 'estado', 'motivo', 'creadoPor', 'kmEstimado', 'minutosEstimados', 'kmOrigen'], json: ['lugares'] },
   notificaciones: { tabla: 'notificaciones', campos: ['usuarioId', 'tipo', 'titulo', 'texto', 'enlace', 'leida', 'correo'], json: [] },
   presupuestos: { tabla: 'presupuestos_viatico', campos: ['representanteId', 'mes', 'detalle', 'supuestos', 'total', 'estado', 'montoAprobado', 'aprobadoPor', 'motivo', 'desembolsos', 'gastos', 'liquidacion'], json: ['detalle', 'supuestos', 'desembolsos', 'gastos', 'liquidacion'] },
 };
@@ -75,7 +75,7 @@ export class PgData {
     for (const f of c.campos) {
       let v = r[snake(f)];
       if (v instanceof Date) v = v.toISOString().slice(0, 10);
-      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision', 'precioGalon', 'kmEstimados', 'kmReales', 'peajes', 'estacionamiento', 'otros', 'tarifaAlimentacion', 'reembolsoPorKm', 'montoAprobado', 'precio', 'lat', 'lng', 'precioNoche', 'calificacion', 'topeCombustible', 'kmPorGalon'].includes(f)) v = Number(v);
+      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision', 'precioGalon', 'kmEstimados', 'kmReales', 'peajes', 'estacionamiento', 'otros', 'tarifaAlimentacion', 'reembolsoPorKm', 'montoAprobado', 'precio', 'lat', 'lng', 'precioNoche', 'calificacion', 'topeCombustible', 'kmPorGalon', 'kmEstimado'].includes(f)) v = Number(v);
       out[f] = v;
     }
     return out;

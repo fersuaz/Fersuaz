@@ -562,6 +562,46 @@ function desglose(d, total) {
     h('div', { class: 'cifra destacada' }, h('dt', {}, 'Total'), h('dd', {}, RD(total))));
 }
 
+/** "16 al 22 nov" para una semana del mes. */
+function rangoSemana(w) {
+  const d = (f) => Number(f.slice(8, 10));
+  const m = new Date(`${w.hasta}T12:00:00Z`).toLocaleDateString('es-DO', { month: 'short', timeZone: 'UTC' }).replace('.', '');
+  return w.desde === w.hasta ? `${d(w.desde)} ${m}` : `${d(w.desde)} al ${d(w.hasta)} ${m}`;
+}
+/** Cuadro por semana y explicación de cada partida del presupuesto de viáticos. */
+const COMB_NOMBRE = { gasolina_regular: 'gasolina regular', gasolina_premium: 'gasolina premium', gasoil_regular: 'gasoil regular', gasoil_optimo: 'gasoil óptimo', glp: 'GLP', electrico: 'electricidad' };
+function detalleCalculo(c) {
+  const s = c.supuestos; if (!s?.semanas?.length) return null;
+  const pub = !!s.transportePublico;
+  const tot = (k) => s.semanas.reduce((x, w) => x + (w[k] || 0), 0);
+  const filas = [...s.semanas, { total: true, desde: '', hasta: '', dias: tot('dias'), lugares: tot('lugares'), km: tot('km'), galones: tot('galones'), combustible: tot('combustible'), transporte: tot('transporte'), alimentacion: tot('alimentacion'), hospedaje: tot('hospedaje'), otros: tot('otros') }];
+  filas.at(-1).total = filas.at(-1).combustible + filas.at(-1).transporte + filas.at(-1).alimentacion + filas.at(-1).hospedaje + filas.at(-1).otros;
+  const b = (w, v) => (w.total === true || typeof w.total === 'number' && !w.n ? h('strong', {}, v) : v);
+  const cols = [
+    { t: 'Semana', v: (w) => w.n ? h('span', { class: 'sem-nombre' }, h('strong', {}, `Semana ${w.n}`), h('small', {}, rangoSemana(w))) : h('strong', {}, 'Total del mes') },
+    { t: 'Días', num: true, v: (w) => b(w, fmtN.format(w.dias)) }, { t: 'Lugares', num: true, v: (w) => b(w, fmtN.format(w.lugares)) },
+    ...(pub ? [{ t: 'Transporte', num: true, v: (w) => b(w, RD(w.transporte)) }] : [
+      { t: 'Km', num: true, v: (w) => b(w, fmtN.format(w.km)) }, { t: 'Galones', num: true, v: (w) => b(w, fmtN.format(w.galones)) }, { t: 'Combustible', num: true, v: (w) => b(w, RD(w.combustible)) }]),
+    { t: 'Comida', num: true, v: (w) => b(w, RD(w.alimentacion)) }, { t: 'Hotel', num: true, v: (w) => b(w, w.hospedaje ? RD(w.hospedaje) : '') },
+    { t: 'Peajes y otros', num: true, v: (w) => b(w, w.otros ? RD(w.otros) : '') }, { t: 'Total', num: true, v: (w) => h('strong', {}, RD(w.n ? w.total : filas.at(-1).total)) },
+  ];
+  const precios = Object.entries(s.preciosUsados ?? {}).map(([desde, p]) => `${RD(p)} por galón (vigente desde ${fecha(desde)})`).join(' y ');
+  const comb = COMB_NOMBRE[s.combustible];
+  const como = pub ? [
+    `Transporte: cada día cuenta como "dentro" si todos sus lugares están en su zona de trabajo (${RD(s.tarifas.transporteDentro)} por día) o "fuera" si visita un lugar fuera de su zona (${RD(s.tarifas.transporteFuera)} por día). Este mes: ${s.diasDentro} día(s) dentro y ${s.diasFuera} fuera.`,
+    `Comida: ${RD(s.tarifas.comidaDentro)} por día dentro de su zona y ${RD(s.tarifas.comidaFuera)} por día fuera.`,
+  ] : [
+    `Kilómetros: ruta de cada día, ${s.kmTipo}, saliendo de su residencia, pasando por los lugares del día y regresando. Total del mes: ${fmtN.format(s.km)} km.`,
+    s.reembolsoPorKm ? `Combustible: reembolso de ${RD(s.reembolsoPorKm)} por km recorrido.` : `Combustible: ${fmtN.format(s.km)} km ÷ ${fmtN.format(s.rendimiento ?? 0)} km por galón = ${fmtN.format(s.galones)} galones${comb ? ` de ${comb}` : ''}${precios ? `, a ${precios}` : ''}.`,
+    `Comida: ${s.diasAlimentacion} día(s) de trabajo × ${RD(s.tarifaAlimentacion)} por día.`,
+  ];
+  como.push(s.hospedajes ? `Hotel: ${s.hospedajes} noche(s) propuesta(s); solo cuentan las autorizadas por la gerencia.` : 'Hotel: no aplica este mes. Se agrega cuando una jornada necesita dormir fuera y la gerencia lo autoriza (se sugiere el hotel más económico que cumple los requisitos).');
+  if (s.tope != null) como.push(`Tope mensual de ${pub ? 'transporte' : 'combustible'}: ${RD(s.tope)} (${s.topeFuente === 'representante' ? 'propio del representante' : 'global'}).${s.excedenteTope ? ` Lo calculado pasa el tope por ${RD(s.excedenteTope)}; se presupuesta el tope.` : ''}`);
+  como.push(`Origen: ${s.diasCronograma ? `${s.diasCronograma} día(s) del cronograma aprobado` : ''}${s.diasCronograma && s.jornadas ? ' y ' : ''}${s.jornadas ? `${s.jornadas} jornada(s) creada(s)` : ''}. El salario no forma parte de los viáticos.`);
+  return h('div', {}, h('div', { class: 'tarjeta' }, h('h2', {}, 'Por semana'), tabla(cols, filas, ['', ''])),
+    h('div', { class: 'tarjeta como-se-calcula' }, h('h2', {}, 'Cómo se calcula'), h('ul', {}, como.map((x) => h('li', {}, x)))));
+}
+
 V.jornadas = async () => {
   const mes = mesDe();
   const cronId = param('cron');
@@ -826,6 +866,7 @@ V.presupuesto = async () => {
       for (const a of c.avisos ?? []) bloques.push(h('div', { class: 'aviso' }, a));
       bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Presupuesto calculado'), desglose(c.detalle, c.total),
         h('p', { class: 'hint', style: 'margin-top:1rem' }, c.supuestos.transportePublico ? `${c.supuestos.jornadas} jornadas en transporte público: ${c.supuestos.diasDentro} día(s) dentro de tu zona (transporte ${RD(c.supuestos.tarifas.transporteDentro)} y comida ${RD(c.supuestos.tarifas.comidaDentro)} por día) y ${c.supuestos.diasFuera} día(s) fuera (transporte ${RD(c.supuestos.tarifas.transporteFuera)} y comida ${RD(c.supuestos.tarifas.comidaFuera)} por día).${c.supuestos.tope != null ? ` Tope mensual: ${RD(c.supuestos.tope)}.` : ''} Tu salario no forma parte de este presupuesto.` : `${c.supuestos.jornadas} jornadas, ${fmtN.format(c.supuestos.km)} km (${c.supuestos.kmTipo}), ${c.supuestos.diasAlimentacion} días de alimentación a ${RD(c.supuestos.tarifaAlimentacion)}.${c.supuestos.reembolsoPorKm ? ` Reembolso de ${RD(c.supuestos.reembolsoPorKm)} por km.` : c.supuestos.galones ? ` ${fmtN.format(c.supuestos.galones)} galones a ${c.supuestos.rendimiento} km/gal.` : ''}${c.supuestos.tope != null ? ` Tope mensual de combustible: ${RD(c.supuestos.tope)} (${c.supuestos.topeFuente === 'representante' ? 'propio' : 'global'}).` : ''} Tu salario no forma parte de este presupuesto.`),
+        detalleCalculo(c),
         h('div', { class: 'acciones' }, h('button', { class: 'btn', disabled: c.faltan?.length > 0, onclick: async (ev) => {
           if (!(await confirmar('Solicitar viáticos', `Enviar a la gerencia el presupuesto de ${mes} por ${RD(c.total)}. Después no podrás cambiar las jornadas del mes.`, { okTexto: 'Solicitar' }))) return;
           ev.target.disabled = true; try { await api('POST', '/api/viaticos/presupuesto/solicitar', { mes }); } catch (e) { alert(e.message); } router();
@@ -988,8 +1029,9 @@ V.viatico = async () => {
   ], hoteles, ['', '']));
   if (!p || ['borrador', 'rechazado'].includes(p.estado)) {
     bloques.push(h('div', { class: 'aviso' }, p?.estado === 'rechazado' ? `Rechazado: ${p.motivo}. El representante puede ajustar y volver a solicitar.` : 'El representante todavía no ha solicitado este presupuesto.'));
-    if (c.detalle) bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Cálculo actual'), desglose(c.detalle, c.total)));
     if (c.faltan?.length) bloques.push(h('div', { class: 'aviso' }, c.faltan.join(' ')));
+    for (const a of c.avisos ?? []) bloques.push(h('div', { class: 'aviso' }, a));
+    if (c.detalle) bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Cálculo del mes'), desglose(c.detalle, c.total)), detalleCalculo(c));
   } else {
     bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, `Presupuesto ${EST_P[p.estado].toLowerCase()}`), desglose(p.detalle, p.total),
       h('p', { class: 'hint', style: 'margin-top:1rem' }, `${p.supuestos.jornadas} jornadas, ${fmtN.format(p.supuestos.km)} km (${p.supuestos.kmTipo}).`)), bloqueResumen(p));
