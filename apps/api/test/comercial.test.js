@@ -18,7 +18,7 @@ let pgStore;
 async function nuevoAlmacen() {
   if (!PG) return { store: new MemoryStore(), data: new MemoryData() };
   pgStore ??= await PostgresStore.connect(PG);
-  await pgStore.pool.query('TRUNCATE configuracion, inventario, recetas, operativos, cierres_comision, vouchers, medicos, farmacias, medicamentos, audit_logs, users CASCADE');
+  await pgStore.pool.query('TRUNCATE configuracion, inventario, recetas, pacientes, operativos, cierres_comision, vouchers, medicos, farmacias, medicamentos, audit_logs, users CASCADE');
   const s = pgStore; s.audit = { some: () => true }; // la auditoría en PG se verifica con SQL aparte
   return { store: s, data: new PgData(s.pool) };
 }
@@ -27,6 +27,7 @@ test.after(async () => { if (pgStore) await pgStore.pool.end(); });
 async function setup() {
   const { store, data } = await nuevoAlmacen();
   const server = createServer(createApp({ store, data, files: new MemoryFiles(), sessionSecret: SECRET, now: NOW })).listen(0);
+  setup.data = data;
   const url = `http://127.0.0.1:${server.address().port}`;
   const call = async (method, path, body, token) => {
     const r = await fetch(url + path, { method, headers: { 'content-type': 'application/json', ...(token && { authorization: `Bearer ${token}` }) }, body: body && JSON.stringify(body) });
@@ -78,7 +79,7 @@ test('vouchers: carga, duplicado, fecha futura, permisos y aprobación', async (
     const base = { referencia: 'V-001', fecha: '2026-11-05', items: [{ medicamentoId: tioDex.id, cantidad: 1, monto: 500 }] };
     assert.equal((await call('POST', '/api/vouchers', base, t.promo)).status, 403);
     const v = await call('POST', '/api/vouchers', base, t.dep);
-    assert.equal(v.status, 201); assert.equal(v.body.item.total, 500); assert.equal(v.body.item.farmacia, 'Farmacia Carol');
+    assert.equal(v.status, 201, JSON.stringify(v.body)); assert.equal(v.body.item.total, 500); assert.equal(v.body.item.farmacia, 'Farmacia Carol');
     assert.equal((await call('POST', '/api/vouchers', { ...base, referencia: ' v-001 ' }, t.dep)).status, 409);
     const fut = await call('POST', '/api/vouchers', { ...base, referencia: 'V-2', fecha: '2026-11-21' }, t.dep);
     assert.equal(fut.status, 422); assert.ok(fut.body.fields.fecha);
@@ -163,8 +164,18 @@ test('promotoras: operativo, médico, receta con foto y alerta de inventario al 
     assert.ok(rep.body.fields['items.1.medicamentoId']);
 
     // sin inventario registrado: se dice, no se inventa
-    const r1 = await call('POST', '/api/recetas', { operativoId: o.id, medicoId: med.id, items: [{ medicamentoId: tioDex.id, unidades: 18 }] }, t.promo);
-    assert.equal(r1.status, 201); assert.equal(r1.body.alertas[0].estado, 'sin_inventario');
+    // paciente obligatorio: teléfono dominicano y nombre
+    const sinPac = await call('POST', '/api/recetas', { operativoId: o.id, medicoId: med.id, items: [{ medicamentoId: tioDex.id, unidades: 18 }] }, t.promo);
+    assert.equal(sinPac.status, 422); assert.ok(sinPac.body.fields['paciente.telefono']);
+    const sinNombre = await call('POST', '/api/recetas', { operativoId: o.id, medicoId: med.id, items: [{ medicamentoId: tioDex.id, unidades: 18 }], paciente: { telefono: '809-555-0101' } }, t.promo);
+    assert.equal(sinNombre.status, 422); assert.ok(sinNombre.body.fields['paciente.nombre']);
+    assert.equal((await call('GET', '/api/pacientes?telefono=8095550101', null, t.promo)).body.paciente, null);
+    const r1 = await call('POST', '/api/recetas', { operativoId: o.id, medicoId: med.id, items: [{ medicamentoId: tioDex.id, unidades: 18 }], paciente: { telefono: '809-555-0101', nombre: 'Paciente Ejemplo Uno' } }, t.promo);
+    assert.equal(r1.status, 201); assert.equal(r1.body.alertas[0].estado, 'sin_inventario'); assert.equal(r1.body.paciente.nuevo, true);
+    // el mismo teléfono se reconoce: nombre autocompletado y sin duplicar el contacto
+    const bp = (await call('GET', '/api/pacientes?telefono=1 (809) 555 0101', null, t.promo2)).body.paciente;
+    assert.equal(bp.nombre, 'Paciente Ejemplo Uno'); assert.equal(bp.recetas, 1); assert.equal(bp.telefono, '809-555-0101');
+    assert.equal((await call('GET', '/api/pacientes?telefono=8095550101', null, t.vendedor)).status, 403);
 
     // inventario: 25 unidades en la zona
     assert.equal((await call('POST', '/api/catalogo/farmacias', { nombre: 'Farmacia Carol', provincia: 'Santiago', municipio: 'Santiago de los Caballeros' }, t.promo)).status, 403);
@@ -177,8 +188,9 @@ test('promotoras: operativo, médico, receta con foto y alerta de inventario al 
     let al = (await call('GET', '/api/alertas', null, t.promo)).body;
     assert.equal(al.umbral, 0.75); assert.equal(al.items[0].estado, 'ok'); assert.equal(al.items[0].recetado, 18);
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]).toString('base64');
-    const r2 = await call('POST', '/api/recetas', { operativoId: o.id, medicoId: med.id, items: [{ medicamentoId: tioDex.id, unidades: 1 }, { medicamentoId: otro.id, unidades: 2 }], adjunto: { nombre: 'receta.png', tipo: 'image/png', base64: png } }, t.promo);
-    assert.equal(r2.status, 201);
+    const r2 = await call('POST', '/api/recetas', { operativoId: o.id, medicoId: med.id, items: [{ medicamentoId: tioDex.id, unidades: 1 }, { medicamentoId: otro.id, unidades: 2 }], adjunto: { nombre: 'receta.png', tipo: 'image/png', base64: png }, paciente: { telefono: '8095550101', nombre: 'Otro nombre' } }, t.promo);
+    assert.equal(r2.status, 201); assert.equal(r2.body.paciente.nuevo, false); assert.equal(r2.body.paciente.nombre, 'Paciente Ejemplo Uno', 'se respeta el paciente ya registrado');
+    assert.equal((await setup.data.list('pacientes')).length, 1);
     const a = r2.body.alertas.find((x) => x.medicamentoId === tioDex.id);
     assert.equal(a.estado, 'alerta'); assert.equal(a.recetado, 19); assert.equal(a.disponible, 25);
 
@@ -199,7 +211,9 @@ test('promotoras: operativo, médico, receta con foto y alerta de inventario al 
 
     // cada promotora ve solo sus recetas; gestión ve todas
     assert.equal((await call('GET', '/api/recetas', null, t.promo2)).body.items.length, 0);
-    assert.equal((await call('GET', '/api/recetas?mes=2026-11', null, t.supervisor)).body.items.length, 2);
+    const delSup = (await call('GET', '/api/recetas?mes=2026-11', null, t.supervisor)).body.items;
+    assert.equal(delSup.length, 2); assert.equal(delSup[0].paciente.telefono, '···-···-0101', 'la supervisión ve el teléfono oculto');
+    assert.equal((await call('GET', '/api/recetas?mes=2026-11', null, t.promo)).body.items[0].paciente.telefono, '809-555-0101');
 
     // reportes
     const rep2 = (await call('GET', '/api/reportes/recetas?mes=2026-11&agrupar=medicamento', null, t.gerente)).body;

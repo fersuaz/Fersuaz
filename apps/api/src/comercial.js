@@ -30,6 +30,15 @@ function texto(errors, campo, v, { min = 2, max = 120, requerido = true, etiquet
 }
 
 
+/** Teléfono dominicano a 10 dígitos (sin +1, espacios ni guiones), o null si no es válido. */
+export function telefonoRD(v) {
+  let d = String(v ?? '').replace(/\D/g, '');
+  if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
+  return /^(809|829|849)\d{7}$/.test(d) ? d : null;
+}
+export const telefonoVisible = (d) => (d ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : '');
+const telefonoOculto = (d) => (d ? `···-···-${d.slice(6)}` : '');
+
 export function createComercial({ data, users, files, audit, now = () => new Date() }) {
   const hoy = () => hoyRD(now());
 
@@ -343,6 +352,13 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       if (!med) e.medicoId = 'Elige el médico que prescribió.';
       const items = Array.isArray(input.items) ? input.items : [];
       if (!items.length) e.items = 'Agrega al menos un medicamento.';
+      // Paciente: el teléfono lo identifica. Si ya existe, se usa el mismo (no se duplica su contacto).
+      const tel = telefonoRD(input.paciente?.telefono);
+      let paciente = null;
+      if (!tel) e['paciente.telefono'] = 'Escribe el teléfono del paciente (809, 829 u 849 y 7 dígitos).';
+      else paciente = (await data.list('pacientes', { telefono: tel }))[0] ?? null;
+      const nombrePaciente = normalizeName(input.paciente?.nombre);
+      if (tel && !paciente && nombrePaciente.length < 3) e['paciente.nombre'] = 'Escribe el nombre del paciente.';
       const lineas = []; const vistos = new Set();
       for (const [i, it] of items.entries()) {
         const m = await medicamentoActivo(it.medicamentoId);
@@ -354,13 +370,28 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       }
       if (Object.keys(e).length) invalido(e);
       const adjunto = await guardarAdjunto(files, actor, input.adjunto, 'receta');
+      let pacienteNuevo = false;
+      if (!paciente) {
+        try { paciente = await data.insert('pacientes', { telefono: tel, nombre: nombrePaciente, creadoPor: actor.id }); pacienteNuevo = true; }
+        catch { paciente = (await data.list('pacientes', { telefono: tel }))[0]; } // otra promotora lo registró en ese instante
+      }
       const r = await data.insert('recetas', {
         promotoraId: actor.id, operativoId: op.id, medicoId: med.id, fecha: op.fecha,
-        provincia: op.provincia, municipio: op.municipio, items: lineas, adjunto,
+        provincia: op.provincia, municipio: op.municipio, items: lineas, adjunto, pacienteId: paciente.id,
       });
-      await audit({ actorId: actor.id, action: 'receta_registrada', entity: 'receta', entityId: r.id, after: { items: lineas.length } });
+      await audit({ actorId: actor.id, action: 'receta_registrada', entity: 'receta', entityId: r.id, after: { items: lineas.length, pacienteNuevo } });
       const alertas = await promotoras.alertasZona(op.provincia, op.municipio, op.fecha.slice(0, 7), lineas.map((l) => l.medicamentoId));
-      return { receta: r, alertas };
+      return { receta: r, alertas, paciente: { id: paciente.id, nombre: paciente.nombre, nuevo: pacienteNuevo } };
+    },
+    /** Al escribir el teléfono completo, la promotora ve si el paciente ya existe y su nombre se completa solo. */
+    async buscarPaciente(actor, telefono) {
+      permitir(esPromotora(actor) || tieneRol(actor, ['administrador', 'gerencia']));
+      const tel = telefonoRD(telefono);
+      if (!tel) return { paciente: null };
+      const p = (await data.list('pacientes', { telefono: tel }))[0];
+      if (!p) return { paciente: null };
+      const recetas = (await data.list('recetas', { pacienteId: p.id })).length;
+      return { paciente: { id: p.id, nombre: p.nombre, telefono: telefonoVisible(tel), recetas } };
     },
     async listarRecetas(actor, { mes } = {}) {
       let rs;
@@ -368,7 +399,14 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       else { permitir(tieneRol(actor, GESTION)); rs = await data.list('recetas'); }
       if (mes) rs = rs.filter((r) => r.fecha.startsWith(mes));
       const medicos = Object.fromEntries((await data.list('medicos')).map((m) => [m.id, m]));
-      return rs.map((r) => ({ ...r, medico: medicos[r.medicoId]?.nombre ?? '', especialidad: medicos[r.medicoId]?.especialidad ?? '' }));
+      const pacientes = Object.fromEntries((await data.list('pacientes')).map((p) => [p.id, p]));
+      // El teléfono completo lo ven la promotora, la administración y la gerencia; la supervisión, oculto.
+      const completo = esPromotora(actor) || tieneRol(actor, ['administrador', 'gerencia']);
+      return rs.map((r) => {
+        const p = pacientes[r.pacienteId];
+        return { ...r, medico: medicos[r.medicoId]?.nombre ?? '', especialidad: medicos[r.medicoId]?.especialidad ?? '',
+          paciente: p ? { nombre: p.nombre, telefono: completo ? telefonoVisible(p.telefono) : telefonoOculto(p.telefono) } : null };
+      });
     },
 
     async registrarInventario(actor, input) {

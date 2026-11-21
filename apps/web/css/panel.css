@@ -573,3 +573,7 @@ a.btn, a.btn-sec { text-decoration: none; }
 @media (min-width: 901px) { .acciones-celda { flex-wrap: nowrap; } }
 .dias-semana legend { font: 500 .95rem var(--sans); color: var(--tinta); }
 .dias-semana .hint { margin: .5rem 0 0; }
+
+/* Paciente reconocido por su teléfono */
+.paciente-conocido input { background: var(--panel); border-color: var(--celeste) !important; color: var(--marino); font-weight: 600; }
+.paciente-nota { margin-top: -.5rem; }
