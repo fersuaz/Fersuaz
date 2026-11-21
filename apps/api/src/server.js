@@ -316,6 +316,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/territorio/preregistros', async ({ me }) => ({ items: await t.listarPreregistros(me) }));
   ruta('POST', /^\/api\/territorio\/preregistros\/([\w-]+)\/anular$/, async ({ me, p }) => ({ item: await t.anularPreregistro(me, p[1]) }));
   ruta('POST', /^\/api\/importar\/(medicamentos|farmacias|establecimientos|representantes)$/, async ({ me, p, body }) => t.importar(me, p[1], body), { limite: 12 * 1024 * 1024 });
+  ruta('POST', /^\/api\/catalogo\/medicamentos\/([\w-]+)\/precios$/, async ({ me, p, body }) => ({ item: await t.cambiarPrecio(me, p[1], body ?? {}) }));
   ruta('GET', /^\/api\/catalogo\/medicamentos\/([\w-]+)\/precios$/, async ({ me, p }) => ({ items: await t.historialPrecio(me, p[1]) }));
   // Búsqueda en Google Maps (solo gestión, cuesta por consulta)
   ruta('GET', '/api/territorio/google/estado', () => ({ activo: lugares.activo }));
