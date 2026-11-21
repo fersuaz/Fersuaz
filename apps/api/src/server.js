@@ -326,7 +326,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', '/api/ventas/leer', async ({ me, body }) => ventas.leer(me, body?.archivo), { limite: MAX_BODY_ADJUNTO + 1024 * 1024 });
   ruta('POST', '/api/ventas/confirmar', async ({ me, body }) => [201, await ventas.confirmar(me, body ?? {})], { limite: 4 * 1024 * 1024 });
   ruta('GET', '/api/ventas', async ({ me, q }) => ({ items: await ventas.listar(me, { mes: q.get('mes') || undefined }) }));
-  ruta('GET', '/api/pacientes', async ({ me, q }) => c.promotoras.buscarPaciente(me, q.get('telefono')));
+  ruta('GET', '/api/pacientes', async ({ me, q }) => (q.get('nombre') != null ? c.promotoras.buscarPacientesPorNombre(me, q.get('nombre')) : c.promotoras.buscarPaciente(me, q.get('telefono'))));
   ruta('POST', '/api/recetas', async ({ me, body }) => [201, await c.promotoras.crearReceta(me, body)], { limite: MAX_BODY_ADJUNTO });
   ruta('POST', '/api/inventario', async ({ me, body }) => [201, { item: await c.promotoras.registrarInventario(me, body) }]);
   ruta('GET', '/api/alertas', async ({ me, q }) => ({ umbral: await c.promotoras.umbral(), items: await c.promotoras.misAlertas(me, q.get('mes') || undefined) }));

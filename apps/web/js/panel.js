@@ -776,6 +776,67 @@ V.operativo = async () => {
     h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Operativos de hoy'),
     tabla([{ t: 'Centro', v: (o) => o.centro }, { t: 'Municipio', v: (o) => o.municipio }, { t: 'Provincia', v: (o) => o.provincia }], items, ['Aún no registras operativos hoy', 'Registra el centro donde estás para empezar a cargar recetas.']));
 };
+/**
+ * Paciente por teléfono o por nombre. Con el teléfono, si ya existe, su nombre se llena solo.
+ * Con el nombre (desde 3 letras) aparecen los pacientes ya registrados; al elegir uno se llena su teléfono
+ * (oculto salvo los 4 últimos) y la receta se suma a su historial sin duplicarlo.
+ */
+function buscadorPaciente(inTel, inNom, nota) {
+  let elegido = null; let qTel = 0; let qNom = 0; let opciones = []; let activo = -1;
+  const lista = h('ul', { class: 'pac-sugerencias', role: 'listbox', hidden: true, id: `pac-${Math.random().toString(36).slice(2)}` });
+  inNom.setAttribute('autocomplete', 'off'); inNom.setAttribute('role', 'combobox'); inNom.setAttribute('aria-autocomplete', 'list'); inNom.setAttribute('aria-controls', lista.id); inNom.setAttribute('aria-expanded', 'false');
+  inNom.parentElement.classList.add('pac-caja'); inNom.insertAdjacentElement('afterend', lista);
+  const cerrar = () => { lista.hidden = true; inNom.setAttribute('aria-expanded', 'false'); activo = -1; };
+  const marcar = () => [...lista.children].forEach((li, i) => { li.setAttribute('aria-selected', String(i === activo)); if (i === activo) inNom.setAttribute('aria-activedescendant', li.id); });
+  const soltar = () => { if (!elegido) return; elegido = null; inTel.readOnly = false; inTel.value = ''; inTel.classList.remove('paciente-conocido'); nota.textContent = ''; };
+  const elegir = (p) => {
+    elegido = p; inNom.value = p.nombre; inTel.value = p.telefono; inTel.readOnly = true; inTel.classList.add('paciente-conocido');
+    nota.replaceChildren(`Paciente ya registrado, con ${fmtN.format(p.recetas)} receta(s)${p.ultima ? `, la última el ${fecha(p.ultima)}` : ''}. Su teléfono ya está guardado; esta receta se suma a su historial. `,
+      h('button', { type: 'button', class: 'btn-enlace', onclick: () => { soltar(); inNom.value = ''; inNom.focus(); } }, 'Es otra persona'));
+    cerrar();
+  };
+  inNom.addEventListener('input', async () => {
+    if (elegido) soltar();
+    if (inTel.readOnly) return; // el teléfono ya identificó al paciente
+    const q = inNom.value.trim(); const k = ++qNom;
+    if (q.length < 3) { cerrar(); return; }
+    try {
+      const { pacientes } = await api('GET', `/api/pacientes?nombre=${encodeURIComponent(q)}`);
+      if (k !== qNom) return;
+      opciones = pacientes; activo = -1;
+      lista.replaceChildren(...pacientes.map((p, i) => h('li', { role: 'option', id: `${lista.id}-${i}`, 'aria-selected': 'false', onmousedown: (e) => { e.preventDefault(); elegir(p); } },
+        h('strong', {}, p.nombre), h('span', {}, `Tel. ${p.telefono} · ${fmtN.format(p.recetas)} receta(s)${p.municipio ? ` · ${p.municipio}` : ''}`))));
+      lista.hidden = !pacientes.length; inNom.setAttribute('aria-expanded', String(!!pacientes.length));
+      if (!pacientes.length && !String(inTel.value).replace(/\D/g, '')) nota.textContent = 'Paciente nuevo: escribe también su teléfono.';
+      else if (pacientes.length) nota.textContent = 'Si es uno de estos pacientes, elígelo: su teléfono se llena solo.';
+    } catch { cerrar(); }
+  });
+  inNom.addEventListener('keydown', (e) => {
+    if (lista.hidden) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); activo = Math.min(opciones.length - 1, activo + 1); marcar(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); activo = Math.max(0, activo - 1); marcar(); }
+    else if (e.key === 'Enter' && activo >= 0) { e.preventDefault(); elegir(opciones[activo]); }
+    else if (e.key === 'Escape') cerrar();
+  });
+  inNom.addEventListener('blur', () => setTimeout(cerrar, 120));
+  inTel.addEventListener('input', async () => {
+    if (elegido) return;
+    const d = String(inTel.value).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, ''); const k = ++qTel;
+    if (d.length < 10) { if (inNom.readOnly) { inNom.readOnly = false; inNom.value = ''; inNom.classList.remove('paciente-conocido'); nota.textContent = ''; } return; }
+    try {
+      const { paciente } = await api('GET', `/api/pacientes?telefono=${d}`);
+      if (k !== qTel) return;
+      if (paciente) { inNom.value = paciente.nombre; inNom.readOnly = true; inNom.classList.add('paciente-conocido'); cerrar(); nota.textContent = `Paciente ya registrado, con ${fmtN.format(paciente.recetas)} receta(s). Esta receta se suma a su historial; no se duplica su contacto.`; }
+      else { if (inNom.readOnly) { inNom.readOnly = false; inNom.value = ''; inNom.classList.remove('paciente-conocido'); } nota.textContent = 'Paciente nuevo: escribe su nombre.'; }
+    } catch { /* se puede escribir el nombre igual */ }
+  });
+  return {
+    valor: () => (elegido ? { id: elegido.id } : { telefono: inTel.value, nombre: inNom.value }),
+    conocido: () => Boolean(elegido) || inNom.readOnly,
+    reiniciar: () => { elegido = null; inTel.readOnly = false; inNom.readOnly = false; inTel.value = ''; inNom.value = ''; inTel.classList.remove('paciente-conocido'); inNom.classList.remove('paciente-conocido'); nota.textContent = ''; cerrar(); },
+  };
+}
+
 V.receta = async () => {
   const [ops, meds] = await Promise.all([api('GET', '/api/operativos'), api('GET', '/api/catalogo/medicos')]);
   const recientes = ops.items.filter((o) => o.fecha >= new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10)).reverse();
@@ -794,21 +855,9 @@ V.receta = async () => {
   const fNom = campo('paciente.nombre', 'Nombre del paciente', { autocomplete: 'off', required: true });
   const pacNota = h('p', { class: 'hint paciente-nota', 'aria-live': 'polite' }, 'Escribe primero el teléfono: si el paciente ya está registrado, su nombre aparece solo.');
   const inTel = fTel.querySelector('input'); const inNom = fNom.querySelector('input');
-  let consulta = 0;
-  const reiniciarPaciente = () => { inNom.readOnly = false; inNom.value = ''; fNom.classList.remove('paciente-conocido'); pacNota.textContent = 'Escribe primero el teléfono: si el paciente ya está registrado, su nombre aparece solo.'; };
-  inTel.addEventListener('input', async () => {
-    const d = inTel.value.replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
-    const n = ++consulta;
-    if (d.length < 10) { if (inNom.readOnly) reiniciarPaciente(); return; }
-    try {
-      const { paciente } = await api('GET', `/api/pacientes?telefono=${d}`);
-      if (n !== consulta) return;
-      if (paciente) {
-        inNom.value = paciente.nombre; inNom.readOnly = true; fNom.classList.add('paciente-conocido');
-        pacNota.textContent = `Paciente ya registrado, con ${fmtN.format(paciente.recetas)} receta(s). Esta receta se suma a su historial; no se duplica su contacto.`;
-      } else { if (inNom.readOnly) { inNom.readOnly = false; inNom.value = ''; fNom.classList.remove('paciente-conocido'); } pacNota.textContent = 'Paciente nuevo: escribe su nombre.'; }
-    } catch { /* si falla la búsqueda, se puede escribir el nombre igual */ }
-  });
+  const pac = buscadorPaciente(inTel, inNom, pacNota);
+  const reiniciarPaciente = () => { pac.reiniciar(); pacNota.textContent = 'Escribe el teléfono o el nombre: si el paciente ya está registrado, sus datos aparecen solos.'; };
+  pacNota.textContent = 'Escribe el teléfono o el nombre: si el paciente ya está registrado, sus datos aparecen solos.';
   const pacBloque = h('div', {}, h('h2', {}, 'Paciente'), h('div', { class: 'form-fila' }, fTel, fNom), pacNota);
   const form = h('form', { class: 'tarjeta', novalidate: true },
     campo('operativoId', 'Operativo', { options: recientes.map((o) => ({ value: o.id, label: `${o.centro}, ${o.municipio} (${fecha(o.fecha)})` })), value: recientes[0].id, required: true }),
@@ -832,11 +881,11 @@ V.receta = async () => {
         const b64 = await new Promise((ok, ko) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.onerror = ko; fr.readAsDataURL(file); });
         adjunto = { nombre: file.name, tipo: file.type, base64: b64 };
       }
-      return api('POST', '/api/recetas', { operativoId: form.operativoId.value, medicoId, items: ed.valores(), adjunto, paciente: { telefono: inTel.value, nombre: inNom.value } });
+      return api('POST', '/api/recetas', { operativoId: form.operativoId.value, medicoId, items: ed.valores(), adjunto, paciente: pac.valor() });
     });
     if (r) {
       estado(form.querySelector('.aviso'), 'ok', r.paciente?.nuevo === false ? `Receta guardada y sumada a ${r.paciente.nombre}.` : 'Receta guardada.');
-      inTel.value = ''; reiniciarPaciente();
+      reiniciarPaciente();
       alertas.replaceChildren(...r.alertas.filter((a) => a.estado !== 'ok').map((a) => h('div', { class: `aviso ${a.estado === 'alerta' ? 'error' : ''}` },
         a.estado === 'alerta' ? `Alerta: en ${a.municipio} ya se recetaron ${fmtN.format(a.recetado)} unidades de ${a.medicamento} y las farmacias de la zona tienen ${fmtN.format(a.disponible)}. Coordina compra con el vendedor.` : `${a.medicamento}: ${a.mensaje}`)));
       form.adjunto.value = ''; ed.el.replaceChildren(); ed.boton.click();
@@ -850,22 +899,14 @@ V.receta = async () => {
     const sel = h('select', { 'aria-label': 'Médico que prescribió' }, h('option', { value: '' }, 'Elige el médico'), ...listaMed.map((m) => h('option', { value: m.id }, `${m.nombre}, ${m.especialidad} (${m.municipio})`)));
     const tel = h('input', { type: 'tel', inputmode: 'tel', autocomplete: 'off', placeholder: '809-000-0000', 'aria-label': 'Teléfono del paciente' });
     const nom = h('input', { autocomplete: 'off', placeholder: 'Nombre del paciente', 'aria-label': 'Nombre del paciente' });
-    const nota = h('small', { class: 'hint' });
-    let conocido = false; let q = 0;
-    tel.addEventListener('input', async () => {
-      const d = String(tel.value).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, ''); const k = ++q;
-      if (d.length < 10) { if (conocido) { conocido = false; nom.readOnly = false; nom.value = ''; nota.textContent = ''; } return; }
-      try {
-        const { paciente } = await api('GET', `/api/pacientes?telefono=${d}`);
-        if (k !== q) return;
-        conocido = Boolean(paciente); nom.readOnly = conocido;
-        if (paciente) { nom.value = paciente.nombre; nota.textContent = `Ya registrado (${fmtN.format(paciente.recetas)} receta(s)).`; } else { if (nom.readOnly) nom.value = ''; nota.textContent = 'Paciente nuevo.'; }
-      } catch { /* se puede escribir el nombre igual */ }
-    });
+    const nota = h('small', { class: 'hint pac-nota' });
+    const lNom = h('label', {}, h('span', {}, 'Nombre del paciente'), nom);
+    const nodos = h('div', { class: 'cm-extras' }, h('label', {}, h('span', {}, 'Médico'), sel), h('label', {}, h('span', {}, 'Teléfono del paciente'), tel), lNom, nota);
+    const pac = buscadorPaciente(tel, nom, nota);
     return {
-      nodos: h('div', { class: 'cm-extras' }, h('label', {}, h('span', {}, 'Médico'), sel), h('label', {}, h('span', {}, 'Teléfono del paciente'), tel), h('label', {}, h('span', {}, 'Nombre del paciente'), nom, nota)),
-      valores: () => ({ medicoId: sel.value, paciente: { telefono: tel.value, nombre: nom.value } }),
-      valido: () => (!sel.value ? 'Elige el médico que prescribió.' : String(tel.value).replace(/\D/g, '').length < 10 ? 'Escribe el teléfono del paciente.' : !conocido && nom.value.trim().length < 3 ? 'Escribe el nombre del paciente.' : null),
+      nodos,
+      valores: () => ({ medicoId: sel.value, paciente: pac.valor() }),
+      valido: () => (!sel.value ? 'Elige el médico que prescribió.' : pac.valor().id ? null : String(tel.value).replace(/\D/g, '').length < 10 ? 'Escribe el teléfono del paciente o elige un paciente ya registrado por su nombre.' : !pac.conocido() && nom.value.trim().length < 3 ? 'Escribe el nombre del paciente.' : null),
     };
   };
   const cmR = cargaMasiva({
