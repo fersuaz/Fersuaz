@@ -9,7 +9,7 @@ import { createViaticos, COMBUSTIBLE_LABEL } from './viaticos.js';
 import { SinMapas, crearMapas } from './mapas.js';
 import { createTerritorio } from './territorio.js';
 import { createNotificaciones } from './notificaciones.js';
-import { SinCorreo, crearCorreo } from './correo.js';
+import { SinCorreo, crearCorreo, bienvenida } from './correo.js';
 import { canApprove } from './roles.js';
 import { actualizarDesdeMicm } from './combustible-micm.js';
 import { SinLugares, crearLugares } from './lugares.js';
@@ -169,19 +169,52 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/banco/cuentas', async ({ me }) => ({ items: await banco.listar(me) }));
   ruta('GET', /^\/api\/banco\/([\w-]+)$/, async ({ me, p }) => banco.ver(me, p[1]));
   ruta('POST', /^\/api\/banco\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await banco.guardar(me, p[1], body ?? {}) }));
+  // Mi cuenta: cada persona corrige su teléfono y su correo.
+  ruta('POST', '/api/auth/mis-datos', async ({ me, body }) => {
+    const e = {}; const patch = {};
+    if (body?.telefono !== undefined) {
+      const d = String(body.telefono ?? '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+      if (d && !/^(809|829|849)\d{7}$/.test(d)) e.telefono = 'Escribe un teléfono dominicano (809, 829 u 849).';
+      else if (d) patch.phone = `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+    }
+    if (body?.correo !== undefined && String(body.correo).trim()) {
+      const c = String(body.correo).trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(c)) e.correo = 'Escribe un correo válido.';
+      else { const otro = await store.findUserByEmail(c); if (otro && otro.id !== me.id) e.correo = 'Ese correo ya lo usa otra cuenta.'; else patch.email = c; }
+    }
+    if (Object.keys(e).length) throw new AuthError(422, 'Revisa los campos marcados.', e);
+    const u = Object.keys(patch).length ? await store.updateUser(me.id, patch) : me;
+    if (Object.keys(patch).length) await store.addAudit({ actorId: me.id, action: 'mis_datos', entity: 'user', entityId: me.id, before: { phone: me.phone ?? null, email: me.email ?? null }, after: patch });
+    return { item: { fullName: u.fullName, username: u.username ?? null, email: u.email ?? null, phone: u.phone ?? null } };
+  });
   ruta('POST', '/api/auth/cambiar-clave', async ({ me, body }) => ({ item: await auth.cambiarMiClave(me, body?.actual, body?.nueva) }));
   // Alta de representantes por el administrador
-  ruta('POST', '/api/representantes', async ({ me, body }) => [201, await altas.alta(me, body ?? {})]);
-  ruta('POST', /^\/api\/representantes\/([\w-]+)\/editar$/, async ({ me, p, body }) => altas.editar(me, p[1], body ?? {}));
+  /** Envía al representante su usuario, los pasos y el enlace (si tiene correo). Responde cómo quedó el envío. */
+  async function correoBienvenida(userId, cred, motivo) {
+    const u = await store.findUserById(userId);
+    if (!u?.email) return 'sin_correo';
+    if (!correo?.activo) return 'no_configurado';
+    try {
+      const m = bienvenida({ nombre: u.fullName, usuario: cred.usuario, claveTemporal: cred.claveTemporal, claveInicialGlobal: cred.claveInicialGlobal, sitio, motivo });
+      await correo.enviar({ para: u.email, asunto: m.asunto, texto: m.texto, html: m.html });
+      await store.addAudit({ actorId: userId, action: 'correo_bienvenida', entity: 'user', entityId: userId, after: { motivo } });
+      return 'enviado';
+    } catch (err) { console.error('correo de bienvenida:', err.message); return 'error'; }
+  }
+  ruta('POST', '/api/representantes', async ({ me, body }) => {
+    const r = await altas.alta(me, body ?? {});
+    return [201, { ...r, correoBienvenida: await correoBienvenida(r.representante.id, r, 'alta') }];
+  });
+  ruta('POST', /^\/api\/representantes\/([\w-]+)\/editar$/, async ({ me, p, body }) => { const r = await altas.editar(me, p[1], body ?? {}); return r.usuario ? { ...r, correoBienvenida: await correoBienvenida(p[1], r, 'nombre') } : r; });
   ruta('POST', /^\/api\/representantes\/([\w-]+)\/baja$/, async ({ me, p, body }) => altas.baja(me, p[1], body?.motivo));
-  ruta('POST', /^\/api\/representantes\/([\w-]+)\/reactivar$/, async ({ me, p }) => altas.reactivar(me, p[1]));
+  ruta('POST', /^\/api\/representantes\/([\w-]+)\/reactivar$/, async ({ me, p }) => { const r = await altas.reactivar(me, p[1]); return { ...r, correoBienvenida: await correoBienvenida(p[1], r, 'alta') }; });
   ruta('GET', '/api/representantes/clave-inicial', async ({ me }) => altas.verClaveInicial(me));
   ruta('POST', '/api/representantes/clave-inicial', async ({ me, body }) => altas.guardarClaveInicial(me, body ?? {}));
   ruta('GET', '/api/representantes/inactivos', async ({ me }) => {
     if (!['administrador', 'gerencia'].includes(me.role)) throw new AuthError(403, 'Sin permiso.');
     return { items: (await store.listUsersByStatus('inactivo')).filter((u) => u.role === 'representante').map((u) => ({ id: u.id, fullName: u.fullName, position: u.position ?? null, username: u.username ?? null })) };
   });
-  ruta('POST', /^\/api\/representantes\/([\w-]+)\/clave$/, async ({ me, p }) => altas.restablecerClave(me, p[1]));
+  ruta('POST', /^\/api\/representantes\/([\w-]+)\/clave$/, async ({ me, p }) => { const r = await altas.restablecerClave(me, p[1]); return { ...r, correoBienvenida: await correoBienvenida(p[1], r, 'clave') }; });
   // Vehículos: rendimiento de FuelEconomy.gov (EPA)
   const soloGestion = (me) => { if (!['administrador', 'gerencia', 'supervisor'].includes(me?.role)) throw new AuthError(403, 'No tienes permiso para esta acción.'); };
   const conVehiculos = async (fn) => { try { return await fn(); } catch (err) { throw new AuthError(err.status ?? 503, err.message, err.fields); } };

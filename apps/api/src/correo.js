@@ -57,3 +57,37 @@ export function plantilla({ nombre, titulo, texto, enlace, sitio }) {
 </table></td></tr></table></body></html>`;
   return { texto: plano, html };
 }
+
+/** Correo de bienvenida al representante: su usuario, los pasos para entrar y el enlace a la plataforma. */
+export function bienvenida({ nombre, usuario, claveTemporal, claveInicialGlobal, sitio, motivo = 'alta' }) {
+  const entrar = `${sitio}/entrar.html`;
+  const cuenta = `${sitio}/panel.html#cuenta`;
+  const titulo = motivo === 'nombre' ? 'Tu acceso a FERSUAZ.NET cambió' : motivo === 'clave' ? 'Tu contraseña de FERSUAZ.NET se restableció' : 'Bienvenido a FERSUAZ.NET';
+  const clave = claveInicialGlobal ? 'la contraseña inicial que te dio la administración de FERSUAZ' : claveTemporal ? `esta contraseña temporal: ${claveTemporal}` : 'la contraseña que te dio la administración';
+  const pasos = [
+    `Entra en ${entrar}`,
+    `Escribe tu usuario: ${usuario} (también puedes usar este correo).`,
+    `Escribe ${clave}.`,
+    'El sistema te pedirá crear tu propia contraseña (10 o más caracteres, con letras y números). No la compartas.',
+    `Revisa y actualiza tus datos (teléfono y correo) en "Mi cuenta": ${cuenta}`,
+    'Después, en "Mis jornadas" verás el cronograma que te programó la gerencia; desde cada día creas tu jornada y registras tus gastos.',
+  ];
+  const plano = `Hola ${nombre},\n\n${titulo}.\n\n${pasos.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\nSi no esperabas este correo, avisa a la administración de FERSUAZ.`;
+  const html = `<!doctype html><html lang="es"><body style="margin:0;background:#F5F8FB;font-family:Arial,Helvetica,sans-serif;color:#0F2A44">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F8FB;padding:32px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #C7D6E3">
+<tr><td style="background:#003463;padding:22px 28px;color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:.5px"><span style="color:#8FC3DB">FER</span>SUAZ</td></tr>
+<tr><td style="padding:28px">
+<p style="margin:0 0 6px;color:#52677A;font-size:14px">Hola ${esc(nombre)},</p>
+<h1 style="margin:0 0 16px;font-size:22px;color:#003463">${esc(titulo)}</h1>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 20px;background:#E9F0F6;border-radius:12px;width:100%"><tr><td style="padding:14px 18px;font-size:15px">
+<div style="color:#52677A;font-size:13px">Tu usuario</div><div style="font-size:20px;font-weight:bold;color:#003463;font-family:Consolas,Menlo,monospace">${esc(usuario)}</div>
+${claveTemporal && !claveInicialGlobal ? `<div style="color:#52677A;font-size:13px;margin-top:8px">Contraseña temporal</div><div style="font-size:18px;font-weight:bold;color:#003463;font-family:Consolas,Menlo,monospace">${esc(claveTemporal)}</div>` : ''}
+</td></tr></table>
+<ol style="margin:0 0 24px;padding-left:20px;font-size:15px;line-height:1.6">${pasos.map((p) => `<li style="margin-bottom:6px">${esc(p)}</li>`).join('')}</ol>
+<a href="${esc(entrar)}" style="display:inline-block;background:#003463;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:bold">Entrar a FERSUAZ.NET</a>
+</td></tr>
+<tr><td style="padding:16px 28px;background:#E9F0F6;color:#52677A;font-size:12px">Si no esperabas este correo, avisa a la administración de FERSUAZ. Nunca te pediremos tu contraseña por correo.</td></tr>
+</table></td></tr></table></body></html>`;
+  return { asunto: `FERSUAZ · ${titulo}`, texto: plano, html };
+}
