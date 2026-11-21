@@ -146,3 +146,22 @@ export function evaluarAlertaInventario({ unidadesRecetadas, unidadesDisponibles
   const cobertura = unidadesRecetadas / unidadesDisponibles;
   return { alerta: cobertura >= umbral, cobertura: round2(cobertura), faltante: Math.max(0, unidadesRecetadas - unidadesDisponibles) };
 }
+
+/**
+ * Semanas del mes (de lunes a domingo, recortadas al mes) para las fechas dadas.
+ * Devuelve [{ n, desde, hasta, fechas }] solo con las semanas que tienen alguna fecha.
+ */
+export function semanasDelMes(mes, fechas) {
+  const [y, m] = mes.split('-').map(Number);
+  const fin = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const semanas = []; let actual = null;
+  for (let d = 1; d <= fin; d++) {
+    const f = `${mes}-${String(d).padStart(2, '0')}`;
+    const dow = new Date(`${f}T12:00:00Z`).getUTCDay();
+    if (!actual || dow === 1) { actual = { n: semanas.length + 1, desde: f, hasta: f, fechas: [] }; semanas.push(actual); }
+    actual.hasta = f;
+  }
+  const set = new Set(fechas);
+  for (const s of semanas) s.fechas = [...set].filter((f) => f >= s.desde && f <= s.hasta).sort();
+  return semanas.filter((s) => s.fechas.length).map((s, i) => ({ ...s, n: semanas.indexOf(s) + 1 }));
+}

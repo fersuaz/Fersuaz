@@ -138,6 +138,45 @@ test('con mapa: el servidor ordena las paradas por distancia y usa los km del ma
   } finally { server.close(); }
 });
 
+test('presupuesto desde el cronograma aprobado: km por mapa una sola vez, por semana, comida por día', async () => {
+  let llamadas = 0;
+  const mapas = { activo: true, async ruta() { llamadas += 1; return { km: 60, minutos: 70, tramos: [], orden: [0, 1], proveedor: 'google' }; } };
+  const { server, call, tok, ids, lug } = await app(mapas);
+  try {
+    assert.equal((await call('POST', '/api/viaticos/precios', { combustible: 'gasolina_regular', precioGalon: 300, vigenteDesde: '2026-01-01' }, tok.ger)).status, 201);
+    // 3 días aprobados: viernes 20 (semana del 16) y lunes 23 y martes 24 (semana del 23)
+    await call('POST', '/api/cronogramas', { representanteId: ids.rep, fechas: ['2026-11-20', '2026-11-23', '2026-11-24'], lugares: [ref(lug.jarabacoa), ref(lug.moca)] }, tok.adm);
+    let p = (await call('GET', `/api/viaticos/presupuesto?mes=2026-11&representanteId=${ids.rep}`, null, tok.ger)).body.calculo;
+    assert.deepEqual(p.faltan, []);
+    assert.equal(p.supuestos.diasCronograma, 3); assert.equal(p.supuestos.jornadas, 0); assert.equal(p.supuestos.km, 180);
+    assert.equal(p.detalle.combustible, 1800, '180 km / 30 km/gal × RD$300'); assert.equal(p.detalle.alimentacion, 1200, '3 días × RD$400');
+    assert.deepEqual(p.supuestos.semanas.map((w) => [w.desde, w.dias, w.km, w.combustible, w.alimentacion]), [['2026-11-16', 1, 60, 600, 400], ['2026-11-23', 2, 120, 1200, 800]]);
+    assert.equal(p.supuestos.semanas[1].total, 2000);
+    assert.equal(llamadas, 3);
+    await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, tok.rep);
+    assert.equal(llamadas, 3, 'los km quedan guardados');
+    // al crear la jornada de un día, ese día se toma de la jornada (no se cuenta dos veces)
+    const cs = (await call('GET', '/api/cronogramas', null, tok.rep)).body.items;
+    await call('POST', '/api/viaticos/jornadas', { cronogramaId: cs.find((c) => c.fecha === '2026-11-20').id }, tok.rep);
+    p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, tok.rep)).body.calculo;
+    assert.equal(p.supuestos.jornadas, 1); assert.equal(p.supuestos.diasCronograma, 2); assert.equal(p.supuestos.km, 180);
+    // si cambia la residencia, se recalcula
+    await call('POST', `/api/viaticos/perfiles/${ids.rep}`, { residencia: { provincia: 'Espaillat', municipio: 'Moca' }, vehiculo: { propiedad: 'asignado', combustible: 'gasolina_regular', rendimiento: 30 }, tarifaAlimentacion: 400 }, tok.ger);
+    await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, tok.rep);
+    assert.equal(llamadas, 6, '1 de la jornada + 2 días del cronograma con la residencia nueva');
+  } finally { server.close(); }
+});
+
+test('presupuesto sin mapa: los días del cronograma sin km se avisan, no se inventan', async () => {
+  const { server, call, tok, ids, lug } = await app(new SinMapas());
+  try {
+    await call('POST', '/api/cronogramas', { representanteId: ids.rep, fechas: ['2026-11-23'], lugares: [ref(lug.moca)] }, tok.adm);
+    const p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, tok.rep)).body.calculo;
+    assert.match(p.faltan.join(' '), /1 día\(s\) del cronograma no tienen km/);
+    assert.equal(p.detalle.combustible, 0); assert.equal(p.detalle.alimentacion, 400);
+  } finally { server.close(); }
+});
+
 test('SES: firma SigV4 del servicio ses y cuerpo con asunto y HTML', async () => {
   const { SesCorreo } = await import('../src/correo.js');
   let req;
