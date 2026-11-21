@@ -146,7 +146,8 @@ function revisar(raiz) {
 /** Listas largas de casillas (por ejemplo, provincias): un buscador arriba que filtra las opciones. */
 function filtroCasillas(grupo) {
   if (grupo.dataset.buscador) return;
-  const opciones = [...grupo.children].filter((x) => x.tagName === 'LABEL' && x.querySelector('input[type=checkbox]'));
+  const opciones = [...grupo.children].filter((x) => (x.tagName === 'LABEL' || x.classList.contains('prov-item')) && x.querySelector('input[type=checkbox]'));
+  const textoDe = (l) => l.dataset.prov ?? l.textContent;
   if (opciones.length < 12) return;
   grupo.dataset.buscador = '1';
   const caja = document.createElement('div'); caja.className = 'dsp-buscar dsp-buscar-casillas';
@@ -160,7 +161,7 @@ function filtroCasillas(grupo) {
   grupo.before(caja); grupo.after(vacio); caja.append(contar);
   input.addEventListener('input', () => {
     const q = sinTilde(input.value.trim()); let n = 0;
-    for (const l of opciones) { const ok = !q || sinTilde(l.textContent).includes(q); l.hidden = !ok; n += ok; }
+    for (const l of opciones) { const ok = !q || sinTilde(textoDe(l)).includes(q); l.hidden = !ok; n += ok; }
     vacio.hidden = n > 0;
   });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const v = opciones.filter((l) => !l.hidden); if (v.length === 1) { v[0].querySelector('input').click(); input.select(); } } });

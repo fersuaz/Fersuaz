@@ -54,6 +54,23 @@ export function dentroDeZona(zona, provincia, municipio) {
   const ms = zona.municipios?.[provincia];
   return !ms?.length || ms.includes(municipio);
 }
+/**
+ * Partes del territorio que comparten dos zonas. Un municipio vacío en una provincia significa
+ * "toda la provincia". Devuelve [{ provincia, municipios: null (toda) | [comunes] }].
+ */
+export function solapes(a, b) {
+  const r = [];
+  for (const p of a?.provincias ?? []) {
+    if (!(b?.provincias ?? []).includes(p)) continue;
+    const ma = a.municipios?.[p]?.length ? a.municipios[p] : null;
+    const mb = b.municipios?.[p]?.length ? b.municipios[p] : null;
+    if (!ma && !mb) r.push({ provincia: p, municipios: null });
+    else { const comunes = !ma ? mb : !mb ? ma : ma.filter((m) => mb.includes(m)); if (comunes.length) r.push({ provincia: p, municipios: comunes }); }
+  }
+  return r;
+}
+export const textoSolapes = (xs) => xs.map((x) => x.municipios ? `${x.provincia} (${x.municipios.join(', ')})` : `${x.provincia} (toda la provincia)`).join('; ');
+
 export function tipoEstablecimiento(v) {
   const k = sinAcentos(v);
   if (TIPOS_ESTABLECIMIENTO[k]) return k;
@@ -91,6 +108,29 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
 
   // ------------------------------------------------------------ zonas
   async function zonaDe(repId) { return (await data.list('zonas', { representanteId: repId }))[0] ?? null; }
+  /** Zonas de los representantes activos de una posición (para no repetir territorio en la misma posición). */
+  async function zonasDePosicion(posicion, excluirId) {
+    if (!posicion) return [];
+    const reps = (await users.listUsers()).filter((u) => u.role === 'representante' && u.status === 'activo' && u.position === posicion && u.id !== excluirId);
+    const zonas = await data.list('zonas');
+    return reps.map((u) => ({ rep: u, zona: zonas.find((z) => z.representanteId === u.id) })).filter((x) => x.zona?.provincias?.length);
+  }
+  /** Conflictos de una zona con otros representantes de la misma posición. Posiciones distintas sí pueden compartir. */
+  async function conflictosZona(zona, posicion, excluirId) {
+    const r = [];
+    for (const { rep, zona: z } of await zonasDePosicion(posicion, excluirId)) {
+      const xs = solapes(zona, { provincias: z.provincias, municipios: z.municipios ?? {} });
+      if (xs.length) r.push({ representante: rep.fullName, representanteId: rep.id, partes: xs });
+    }
+    return r;
+  }
+  const mensajeConflicto = (cs, posicion) => `${cs.map((c) => `${c.representante} ya cubre ${textoSolapes(c.partes)}`).join('. ')}. Dos representantes de la posición ${posicion} no pueden compartir zona; con otra posición sí se puede.`;
+  /** Territorio ya ocupado por una posición, para avisar en pantalla antes de guardar. */
+  async function zonasOcupadas(actor, posicion, excluirId) {
+    permitir(rol(actor, GESTION));
+    if (!POSITIONS.includes(posicion)) invalido({ posicion: 'Elige la posición.' });
+    return (await zonasDePosicion(posicion, excluirId)).map(({ rep, zona }) => ({ representanteId: rep.id, representante: rep.fullName, provincias: zona.provincias, municipios: zona.municipios ?? {} }));
+  }
   /** Zona del actor: null = sin límite (gestión); objeto { provincias, municipios } para representantes. */
   async function zonaActor(actor) {
     if (rol(actor, ['administrador', 'gerencia', 'supervisor', 'finanzas'])) return null;
@@ -123,8 +163,11 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
       if (oficiales.length < DIVISION[p].length) municipios[p] = oficiales.sort((a, b) => a.localeCompare(b, 'es'));
     }
     let posicion = rep.position;
-    if (entrada.posicion !== undefined && entrada.posicion !== rep.position) {
-      if (!POSITIONS.includes(entrada.posicion)) invalido({ posicion: 'Elige la posición: Visitador, PVC, Vendedor o Promotora.' });
+    const cambiaPosicion = entrada.posicion !== undefined && entrada.posicion !== rep.position;
+    if (cambiaPosicion && !POSITIONS.includes(entrada.posicion)) invalido({ posicion: 'Elige la posición: Visitador, PVC, Vendedor o Promotora.' });
+    const conflictos = await conflictosZona({ provincias: lista, municipios }, cambiaPosicion ? entrada.posicion : rep.position, repId);
+    if (conflictos.length) throw new HttpError(409, mensajeConflicto(conflictos, cambiaPosicion ? entrada.posicion : rep.position), { provincias: 'Esta zona ya la cubre otro representante de la misma posición.' });
+    if (cambiaPosicion) {
       await users.updateUser(repId, { position: entrada.posicion });
       await audit({ actorId: actor.id, action: 'posicion_cambiada', entity: 'user', entityId: repId, before: { posicion: rep.position }, after: { posicion: entrada.posicion } });
       posicion = entrada.posicion;
@@ -260,7 +303,12 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
   /** Registro, paso 2: marca el pre-registro como usado y asigna sus provincias. */
   async function confirmarPreregistro(user, p) {
     await data.update('preregistros', p.id, { estado: 'usado', usuarioId: user.id });
-    if (p.provincias?.length && !(await zonaDe(user.id))) await data.insert('zonas', { representanteId: user.id, provincias: p.provincias, actualizadoPor: p.creadoPor });
+    if (p.provincias?.length && !(await zonaDe(user.id))) {
+      // Solo las provincias que no cubre ya otro representante de la misma posición
+      const libres = [];
+      for (const prov of p.provincias) if (!(await conflictosZona({ provincias: [prov], municipios: {} }, p.posicion, user.id)).length) libres.push(prov);
+      if (libres.length) await data.insert('zonas', { representanteId: user.id, provincias: libres, actualizadoPor: p.creadoPor });
+    }
     await audit({ actorId: p.creadoPor, action: 'preregistro_aplicado', entity: 'user', entityId: user.id, after: { posicion: p.posicion, provincias: p.provincias } });
   }
   async function listarPreregistros(actor) {
@@ -407,7 +455,7 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
 
   return {
     division: () => ({ provincias: PROVINCIAS, municipios: DIVISION, tipos: TIPOS_ESTABLECIMIENTO }),
-    provinciasDe, zonaActor, asignarZona, verZona, lugaresDeZona, descartarEstablecimientos, restaurarEstablecimiento,
+    provinciasDe, zonaActor, asignarZona, verZona, conflictosZona, mensajeConflicto, zonasOcupadas, lugaresDeZona, descartarEstablecimientos, restaurarEstablecimiento,
     crearEstablecimiento, listarEstablecimientos, validarEstablecimiento,
     buscarPreregistro, confirmarPreregistro, listarPreregistros, anularPreregistro,
     importar, historialPrecio,
