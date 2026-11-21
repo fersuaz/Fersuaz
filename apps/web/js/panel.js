@@ -1902,6 +1902,63 @@ function vistaCambioClave() {
   return [h('h1', {}, `Hola, ${yo.fullName.split(' ')[0]}`), h('p', { class: 'vista-sub' }, `Tu usuario es ${yo.username ?? yo.email}.`), f];
 }
 
+/** Importar representantes desde el Excel del paquete: vista previa, confirmar y verificación con lo que falta (zona). */
+function importarPaquete() {
+  const archivo = campo('archivo', 'Archivo Excel (.xlsx)', { type: 'file', accept: '.xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv' });
+  const revisar = h('button', { class: 'btn-sec', type: 'submit' }, 'Revisar archivo');
+  const salida = h('div', { 'aria-live': 'polite' });
+  const f = h('form', { class: 'tarjeta importador', novalidate: true },
+    h('h2', {}, 'Importar desde el paquete de viáticos'),
+    h('p', { class: 'hint' }, 'El Excel debe tener las columnas Representante, Posición, Días fuera de la zona y Días en la zona. Las filas de totales sin nombre se ignoran. A cada uno se le crea su usuario y entra con la contraseña inicial; después le asignas su zona.'),
+    archivo, h('div', { class: 'acciones' }, revisar), salida);
+  let leido = null;
+  const chipAccion = (x) => h('span', { class: `chip ${x.accion === 'error' ? 'rechazado' : x.accion === 'crear cuenta' ? 'validado' : 'pendiente'}` }, x.accion === 'error' ? 'Con error' : x.accion === 'crear cuenta' ? 'Cuenta nueva' : 'Ya existe: actualiza días');
+  const notas = (x) => [...x.errores.map((t) => h('small', { style: 'display:block;color:var(--alerta)' }, t)), ...x.avisos.map((t) => h('small', { style: 'display:block;color:var(--texto-2)' }, t))];
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault(); salida.replaceChildren();
+    const file = f.archivo.files[0];
+    const r = await enviar(f, revisar, async () => {
+      if (!file) throw new ApiError(422, { error: 'Elige un archivo.', fields: { archivo: 'Elige el Excel del paquete.' } });
+      if (file.size > 8 * 1024 * 1024) throw new ApiError(413, { error: 'El archivo no puede pasar de 8 MB.', fields: { archivo: 'Archivo demasiado grande.' } });
+      leido = { archivo: await archivoB64(file), nombre: file.name };
+      return api('POST', '/api/representantes/importar-paquete', leido);
+    });
+    if (!r) return;
+    const nuevos = r.filas.filter((x) => x.accion === 'crear cuenta').length;
+    salida.append(h('p', {}, `${fmtN.format(r.total)} representante(s) leídos de ${file.name}: ${fmtN.format(nuevos)} nuevo(s), ${fmtN.format(r.total - nuevos - r.errores)} ya existen${r.errores ? `, ${fmtN.format(r.errores)} con error` : ''}.`),
+      tabla([{ t: 'Fila', num: true, v: (x) => x.fila }, { t: 'Representante', v: (x) => [x.nombre, ...notas(x)] }, { t: 'Posición', v: (x) => x.posicion ?? '' },
+        { t: 'Días en la zona', num: true, v: (x) => fmtN.format(x.diasDentro) }, { t: 'Días fuera', num: true, v: (x) => fmtN.format(x.diasFuera) },
+        { t: 'Total', num: true, v: (x) => fmtN.format(x.diasDentro + x.diasFuera) }, { t: 'Qué se hará', v: chipAccion }], r.filas, ['', ''], { porPagina: 50 }));
+    if (r.errores) { salida.append(h('div', { class: 'aviso error' }, 'Corrige las filas con error en el Excel y vuelve a revisarlo. No se guarda nada mientras haya errores.')); return; }
+    const imp = h('button', { class: 'btn', type: 'button', onclick: async () => {
+      if (!(await confirmar('Importar representantes', `Se crearán ${nuevos} cuenta(s) nuevas y se guardarán los días de ${r.total} representante(s). Después asígnales su zona.`, { okTexto: 'Importar' }))) return;
+      imp.disabled = true; imp.textContent = 'Importando…';
+      try {
+        const ok = await api('POST', '/api/representantes/importar-paquete', { ...leido, confirmar: true });
+        cache = {};
+        const [{ items: reps }] = await Promise.all([api('GET', '/api/viaticos/representantes')]);
+        const zonas = await Promise.all(ok.items.map((x) => api('GET', `/api/territorio/zonas/${x.id}`).then((z) => z.item).catch(() => null)));
+        const conClave = ok.items.some((x) => x.claveTemporal);
+        const global = ok.items.some((x) => x.claveInicialGlobal);
+        const sinZona = ok.items.filter((x, i) => !zonas[i]?.provincias?.length).length;
+        const enSistema = new Set(reps.map((x) => x.id));
+        salida.replaceChildren(...[
+          h('div', { class: 'aviso ok' }, `Listo: ${ok.items.filter((x) => x.nuevo).length} cuenta(s) nuevas y ${ok.total} plan(es) de días guardados. Verificado: ${ok.items.filter((x) => enSistema.has(x.id)).length} de ${ok.total} ya aparecen en Representantes.`),
+          sinZona ? h('div', { class: 'aviso' }, `Falta asignar la zona a ${sinZona} representante(s). Usa "Asignar zona" en cada fila.`) : null,
+          global ? h('p', { class: 'hint' }, 'Entran con la contraseña inicial global y deberán cambiarla al entrar.') : null,
+          conClave ? h('p', { class: 'hint' }, 'Anota o entrega ahora las contraseñas temporales: no se vuelven a mostrar.') : null,
+          tabla([{ t: 'Representante', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, x.posicion)] },
+            { t: 'Usuario', v: (x) => x.usuario ?? '' }, ...(conClave ? [{ t: 'Contraseña temporal', v: (x) => x.claveTemporal ? h('code', {}, x.claveTemporal) : '' }] : []),
+            { t: 'Días en la zona', num: true, v: (x) => fmtN.format(x.diasDentro) }, { t: 'Días fuera', num: true, v: (x) => fmtN.format(x.diasFuera) },
+            { t: 'Zona', v: (x) => { const z = zonas[ok.items.indexOf(x)]; return z?.provincias?.length ? z.provincias.join(', ') : h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${x.id}` }, 'Asignar zona'); } }],
+          ok.items, ['', ''], { porPagina: 50 })].filter(Boolean));
+      } catch (err) { imp.disabled = false; imp.textContent = 'Importar'; salida.append(h('div', { class: 'aviso error' }, err.message)); }
+    } }, `Importar ${fmtN.format(r.total)} representante(s)`);
+    salida.append(h('div', { class: 'acciones' }, imp));
+  });
+  return f;
+}
+
 async function formClaveInicial() {
   const { configurada } = await api('GET', '/api/representantes/clave-inicial');
   const b = h('button', { class: 'btn', type: 'submit' }, configurada ? 'Cambiar contraseña inicial' : 'Guardar contraseña inicial');
@@ -1918,9 +1975,10 @@ async function formClaveInicial() {
 }
 V.representantes = async () => {
   const ver = param('ver') || 'zonas';
-  const seg = segmentos('Representantes', [...(ES_GER() ? [['nuevo', 'Nuevo representante']] : []), ['zonas', 'Zonas por representante'], ['preregistro', 'Pre-registro por Excel'], ...(yo.role === 'administrador' ? [['clave', 'Contraseña inicial']] : [])], ver, (id) => irA('representantes', { ver: id }));
+  const seg = segmentos('Representantes', [...(ES_GER() ? [['nuevo', 'Nuevo representante'], ['paquete', 'Importar desde Excel']] : []), ['zonas', 'Zonas por representante'], ['preregistro', 'Pre-registro por Excel'], ...(yo.role === 'administrador' ? [['clave', 'Contraseña inicial']] : [])], ver, (id) => irA('representantes', { ver: id }));
   if (ver === 'clave' && yo.role === 'administrador') return vista('Representantes', 'La contraseña con la que entra por primera vez cada representante nuevo o cuyo nombre cambió.', seg, await formClaveInicial());
   if (ver === 'nuevo' && ES_GER()) return vista('Representantes', 'Registra a cada Promotora, Visitador, Vendedor o PVC: su usuario se crea solo y su zona, cronograma, km, combustible y viáticos quedan conectados.', seg, await altaRepresentante(await division()));
+  if (ver === 'paquete' && ES_GER()) return vista('Representantes', 'Crea de una vez las cuentas de tu equipo desde el Excel del paquete de viáticos. Solo se toman nombre, posición y días en la zona y fuera de ella; el salario y los montos no se leen.', seg, importarPaquete());
   if (ver === 'preregistro') {
     const { items } = await api('GET', '/api/territorio/preregistros');
     const anular = async (p) => { if (await confirmar('Anular pre-registro', `${p.nombre} ya no quedará aprobado automáticamente al registrarse.`, { okTexto: 'Anular' })) { try { await api('POST', `/api/territorio/preregistros/${p.id}/anular`); } catch (e) { alert(e.message); } router(); } };
@@ -1965,6 +2023,7 @@ V.representantes = async () => {
     return vistaS('representantes', ['zona', 'lugares'], 'Zona del representante', `${r?.fullName ?? ''}: posición, provincias y municipios que visita. De aquí salen sus lugares, su cronograma, los km, el combustible y sus viáticos.`, S('zona', 'Zona y posición', f), S('lugares', `Lugares de su zona (${fmtN.format(lz.farmacias.length + lz.establecimientos.length)})`, lugares));
   }
   const zonas = await Promise.all(reps.map((r) => api('GET', `/api/territorio/zonas/${r.id}`).then((z) => z.item).catch(() => ({ provincias: [], municipios: {} }))));
+  const planes = ES_GER() ? await Promise.all(reps.map((r) => api('GET', `/api/representantes/${r.id}/plan-dias`).then((x) => x.item).catch(() => null))) : [];
   const nuevaClave = async (r) => {
     if (!(await confirmar('Nueva contraseña temporal', `${r.fullName} volverá a la contraseña inicial (la global, si está configurada, o una temporal nueva). La actual dejará de funcionar y deberá cambiarla al entrar.`, { okTexto: 'Generar' }))) return;
     try {
@@ -1999,8 +2058,9 @@ V.representantes = async () => {
       { t: '', v: (r) => h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => reactivar(r) }, 'Reactivar') }], inactivos, ['', ''])) : null;
   return vista('Representantes', 'Asigna a cada representante su posición y las provincias o municipios que visita.', seg,
     tabla([{ t: 'Representante', v: (r) => [r.fullName, h('small', { style: 'display:block;color:var(--texto-2)' }, r.position ?? '')] },
-      { t: 'Zona', v: (r) => texto(zonas[reps.indexOf(r)]) || 'Sin asignar' },
-      { t: '', v: (r) => [GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, 'Editar zona') : null,
+      { t: 'Zona', v: (r) => texto(zonas[reps.indexOf(r)]) || h('span', { class: 'chip pendiente' }, 'Sin asignar') },
+      ...(planes.some(Boolean) ? [{ t: 'Días en zona / fuera', v: (r) => { const p = planes[reps.indexOf(r)]; return p ? `${fmtN.format(p.diasDentro)} / ${fmtN.format(p.diasFuera)}` : ''; } }] : []),
+      { t: '', v: (r) => [GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, texto(zonas[reps.indexOf(r)]) ? 'Editar zona' : 'Asignar zona') : null,
         ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => editarDatos(r) }, 'Editar datos') : null,
         ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => nuevaClave(r) }, 'Nueva clave') : null,
         ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-peligro', type: 'button', onclick: () => darBaja(r) }, 'Dar de baja') : null] }], reps, ['Aún no hay representantes activos', 'Regístralos en "Nuevo representante".']), bajas);

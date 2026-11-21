@@ -8,14 +8,17 @@ import { POSITIONS, STATUS } from './roles.js';
 import { hashPassword } from './security.js';
 import { normalizeName, errorClave } from './validation.js';
 import { provinciaOficial, municipioOficial } from './territorio.js';
+import { leerFilas, clave as claveCol } from './hojas.js';
 
 const sinTilde = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const PARTICULAS = new Set(['de', 'del', 'la', 'las', 'los', 'y']); // Ashley de Jesús → ajesus
 const EMAIL = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
 
 /** Usuario base: inicial del nombre + primer apellido, sin tildes ni espacios (José Pérez → jperez). */
 export function usuarioBase(nombre, apellido) {
   const n = sinTilde(nombre).replace(/[^a-z]/g, ' ').trim().split(/\s+/)[0] ?? '';
-  const a = sinTilde(apellido).replace(/[^a-z]/g, ' ').trim().split(/\s+/)[0] ?? '';
+  const a = sinTilde(apellido).replace(/[^a-z]/g, ' ').trim().split(/\s+/).find((x) => !PARTICULAS.has(x)) ?? '';
+  if (!a) return n.slice(0, 24) || 'representante'; // solo un nombre (ej. Arianny → arianny)
   return `${n.slice(0, 1)}${a}`.slice(0, 24) || 'representante';
 }
 /** Contraseña temporal de 10 caracteres con letras y números, sin caracteres confusos (0/O, 1/l/I). */
@@ -209,5 +212,84 @@ export function createAltaRepresentantes({ store, t, v, data, notificar }) {
     const cred = await restablecerClave(actor, u.id);
     return { item: vistaRep(await store.findUserById(u.id)), ...cred };
   }
-  return { alta, restablecerClave, editar, baja, reactivar, verClaveInicial, guardarClaveInicial };
+  // ------------------------------------------------------------ importar desde el paquete de viáticos (Excel)
+  /**
+   * Lee un Excel con columnas "Representante", "Posición", "Días fuera de la zona" y "Días en la zona"
+   * (una fila por representante; las filas de totales sin nombre se ignoran). Solo toma esos datos:
+   * ni salario ni montos. Crea la cuenta (usuario + contraseña inicial) y guarda su plan de días.
+   * La zona y la residencia se asignan después en su ficha. Sin `confirmar` solo muestra la vista previa.
+   */
+  async function importarPaquete(actor, { archivo, nombre: nombreArchivo, confirmar = false } = {}) {
+    permitir(actor);
+    let buf;
+    try { buf = Buffer.from(String(archivo ?? ''), 'base64'); } catch { buf = Buffer.alloc(0); }
+    if (!buf.length) throw new HttpError(422, 'Elige un archivo.', { archivo: 'Elige un archivo .xlsx o .csv.' });
+    if (buf.length > 8 * 1024 * 1024) throw new HttpError(413, 'El archivo no puede pasar de 8 MB.', { archivo: 'Archivo demasiado grande.' });
+    let crudas;
+    try { crudas = leerFilas(buf, nombreArchivo); } catch (err) { throw new HttpError(422, 'Revisa el archivo.', { archivo: err.message }); }
+    const iEnc = crudas.findIndex((f) => f.celdas.some((c) => claveCol(c) === 'representante') && f.celdas.some((c) => /^posicion|^cargo/.test(claveCol(c))));
+    if (iEnc < 0) throw new HttpError(422, 'Revisa el archivo.', { archivo: 'No encontramos la fila con los títulos "Representante" y "Posición".' });
+    const enc = crudas[iEnc].celdas.map((c) => claveCol(c));
+    const col = (re) => enc.findIndex((c) => re.test(c ?? ''));
+    const cN = col(/^representante$/); const cP = col(/^(posicion|cargo)$/);
+    const cF = col(/^dias fuera/); const cD = col(/^dias (en|dentro)/);
+    if (cF < 0 || cD < 0) throw new HttpError(422, 'Revisa el archivo.', { archivo: 'Faltan las columnas "Días fuera de la zona" y "Días en la zona".' });
+    const existentes = (await store.listUsers()).filter((u) => u.role === 'representante');
+    const porNombre = new Map(existentes.map((u) => [sinTilde(normalizeName(u.fullName)), u]));
+    const vistos = new Map(); const filas = [];
+    for (const f of crudas.slice(iEnc + 1)) {
+      if (/estado de resultados|resumen/i.test(f.celdas[0] ?? '')) break;
+      const crudo = String(f.celdas[cN] ?? '');
+      if (!crudo.trim() || /^[\d.,\s-]+$/.test(crudo)) continue; // filas de totales
+      const e = []; const avisos = [];
+      const completo = normalizeName(crudo.replace(/\.+\s*$/, '').replace(/\s+/g, ' '));
+      const [nom, ...resto] = completo.split(' ');
+      const apellido = resto.join(' ');
+      if (!apellido) avisos.push('Solo tiene un nombre: agrega el apellido después en "Editar datos".');
+      const cargo = sinTilde(f.celdas[cP]);
+      const posicion = POSITIONS.find((p) => sinTilde(p) === cargo) ?? (cargo === 'promotor' ? 'Promotora' : null);
+      if (!posicion) e.push(`Posición "${f.celdas[cP] ?? ''}" no válida. Usa: ${POSITIONS.join(', ')}.`);
+      const num = (v) => { const n = Number(String(v ?? '').replace(/,/g, '')); return String(v ?? '').trim() === '' ? 0 : n; };
+      const fuera = num(f.celdas[cF]); const dentro = num(f.celdas[cD]);
+      if (!Number.isInteger(fuera) || fuera < 0 || fuera > 31) e.push('Los días fuera de la zona deben ser un número entero de 0 a 31.');
+      if (!Number.isInteger(dentro) || dentro < 0 || dentro > 31) e.push('Los días en la zona deben ser un número entero de 0 a 31.');
+      if (!e.length && dentro + fuera > 23) avisos.push(`Suma ${dentro + fuera} días: más que los días laborables de un mes (lunes a viernes son 20 a 23). Revisa si es correcto.`);
+      if (!e.length && dentro + fuera === 0) avisos.push('No tiene días en el plan.');
+      const k = sinTilde(completo);
+      if (vistos.has(k)) e.push(`Repetido en la fila ${vistos.get(k)}.`); else vistos.set(k, f.num);
+      const actual = porNombre.get(k) ?? null;
+      if (actual && posicion && actual.position !== posicion) avisos.push(`Ya existe como ${actual.position}; no se cambia su posición aquí.`);
+      filas.push({ fila: f.num, nombre: completo, primerNombre: nom, apellido, posicion, diasDentro: dentro, diasFuera: fuera, accion: e.length ? 'error' : actual ? 'ya existe: actualizar días' : 'crear cuenta', actual, errores: e, avisos });
+    }
+    if (!filas.length) throw new HttpError(422, 'Revisa el archivo.', { archivo: 'No encontramos representantes debajo de los títulos.' });
+    const vista = filas.map(({ actual, primerNombre, ...x }) => ({ ...x, existeId: actual?.id ?? null }));
+    const errores = filas.filter((x) => x.errores.length);
+    if (!confirmar) return { total: filas.length, filas: vista, errores: errores.length, guardado: false };
+    if (errores.length) throw new HttpError(422, `Hay ${errores.length} fila(s) con errores. Corrígelas y vuelve a subir el archivo.`, { archivo: 'Hay filas con errores.' });
+    const creados = [];
+    for (const x of filas) {
+      let u = x.actual; let cred = null;
+      if (!u) {
+        const usuario = await usuarioLibre(usuarioBase(x.primerNombre, x.apellido));
+        const ini = await claveInicial();
+        u = await store.createUser({ fullName: x.nombre, email: null, phone: null, role: 'representante', position: x.posicion, username: usuario, debeCambiarClave: true, passwordHash: ini.passwordHash, status: STATUS.ACTIVO });
+        await store.addAudit({ actorId: actor.id, action: 'representante_creado', entity: 'user', entityId: u.id, after: { usuario, posicion: x.posicion, fuente: 'excel' } });
+        cred = credenciales(usuario, ini);
+      }
+      const [plan] = await data.list('planDias', { representanteId: u.id });
+      const valor = { diasDentro: x.diasDentro, diasFuera: x.diasFuera, fuente: nombreArchivo ? String(nombreArchivo).slice(0, 120) : 'excel', actualizadoPor: actor.id };
+      if (plan) await data.update('planDias', plan.id, valor); else await data.insert('planDias', { representanteId: u.id, ...valor });
+      creados.push({ id: u.id, nombre: u.fullName, posicion: u.position, diasDentro: x.diasDentro, diasFuera: x.diasFuera, nuevo: !x.actual, usuario: cred?.usuario ?? u.username ?? null, claveTemporal: cred?.claveTemporal ?? null, claveInicialGlobal: cred?.claveInicialGlobal ?? null });
+    }
+    await store.addAudit({ actorId: actor.id, action: 'importacion', entity: 'representantes_paquete', entityId: nombreArchivo ?? 'excel', after: { total: creados.length, nuevos: creados.filter((c) => c.nuevo).length } });
+    return { total: creados.length, guardado: true, items: creados };
+  }
+  /** Plan de días (en zona / fuera) del representante, si se cargó. */
+  async function planDias(actor, id) {
+    permitir(actor);
+    const [p] = await data.list('planDias', { representanteId: id });
+    return p ? { diasDentro: Number(p.diasDentro), diasFuera: Number(p.diasFuera), fuente: p.fuente ?? null, actualizado: p.updatedAt ?? p.createdAt ?? null } : null;
+  }
+
+  return { alta, restablecerClave, editar, baja, reactivar, verClaveInicial, guardarClaveInicial, importarPaquete, planDias };
 }

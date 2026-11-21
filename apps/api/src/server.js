@@ -210,6 +210,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', /^\/api\/representantes\/([\w-]+)\/reactivar$/, async ({ me, p }) => { const r = await altas.reactivar(me, p[1]); return { ...r, correoBienvenida: await correoBienvenida(p[1], r, 'alta') }; });
   ruta('GET', '/api/representantes/clave-inicial', async ({ me }) => altas.verClaveInicial(me));
   ruta('POST', '/api/representantes/clave-inicial', async ({ me, body }) => altas.guardarClaveInicial(me, body ?? {}));
+  ruta('POST', '/api/representantes/importar-paquete', async ({ me, body }) => altas.importarPaquete(me, body ?? {}), { limite: 12 * 1024 * 1024 });
+  ruta('GET', /^\/api\/representantes\/([\w-]+)\/plan-dias$/, async ({ me, p }) => ({ item: await altas.planDias(me, p[1]) }));
   ruta('GET', '/api/representantes/inactivos', async ({ me }) => {
     if (!['administrador', 'gerencia'].includes(me.role)) throw new AuthError(403, 'Sin permiso.');
     return { items: (await store.listUsersByStatus('inactivo')).filter((u) => u.role === 'representante').map((u) => ({ id: u.id, fullName: u.fullName, position: u.position ?? null, username: u.username ?? null })) };

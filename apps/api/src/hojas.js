@@ -97,6 +97,13 @@ function leerCsv(texto) {
 /** Normaliza un encabezado: minúsculas, sin acentos ni símbolos ("Precio RD$" → "precio rd"). */
 export const clave = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
+/** Filas crudas (sin encabezado) de un Excel o CSV, para formatos con títulos agrupados. */
+export function leerFilas(buf, nombre = '') {
+  const esXlsx = buf.length > 4 && buf.readUInt32LE(0) === 0x04034b50;
+  if (!esXlsx && /\.xls$/i.test(nombre)) throw new Error('El formato .xls antiguo no está soportado. Guárdalo como .xlsx (Excel) o .csv.');
+  return (esXlsx ? leerXlsx(buf) : leerCsv(buf.toString('utf8'))).filter((f) => f.celdas.some((c) => c));
+}
+
 /**
  * Convierte un archivo en filas con encabezado. `tipo` es el MIME o la extensión.
  * La primera fila no vacía es el encabezado; las filas totalmente vacías se ignoran.
