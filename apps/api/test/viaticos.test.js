@@ -52,6 +52,7 @@ async function setup() {
   }
   // Ejemplo: un hospital en Moca y las provincias de cada representante, para programar cronogramas.
   const est = await data.insert('establecimientos', { tipo: 'hospital', nombre: 'Hospital Regional (Ejemplo)', provincia: 'Espaillat', municipio: 'Moca', estado: 'validado', fuente: 'manual' });
+  setup.est = est;
   for (const r of ['rep', 'rep2']) await call('POST', `/api/territorio/zonas/${id[r]}`, { provincias: ['Espaillat'] }, t.gerente);
   /** El administrador programa el día y el representante crea su jornada desde ese cronograma. */
   const planificar = async (body, token) => {
@@ -507,6 +508,30 @@ test('vouchers: precio por unidad suma el total; el Vendedor carga a nombre de u
     assert.equal(deLaDep.find((v) => v.referencia === 'EJ-002').cargadoPor, 'rep2');
     assert.ok((await call('GET', '/api/notificaciones', null, t.dep)).body.items.some((x) => x.titulo === 'Voucher cargado a tu nombre'));
     assert.equal((await call('POST', `/api/vouchers/${v2.body.item.id}/anular`, null, t.rep2)).body.item.estado, 'anulado');
+  } finally { server.close(); }
+});
+
+test('representante: corregir sus datos, darlo de baja (libera su zona y sus días futuros) y reactivarlo', async () => {
+  const { server, call, t, id, planificar } = await setup();
+  try {
+    assert.equal((await call('POST', `/api/representantes/${id.rep}/editar`, { nombre: 'Otro', apellido: 'Nombre' }, t.rep)).status, 403);
+    const mal = await call('POST', `/api/representantes/${id.rep}/editar`, { nombre: 'A', apellido: '', telefono: '123' }, t.admin);
+    assert.equal(mal.status, 422); assert.ok(mal.body.fields.nombre && mal.body.fields.telefono);
+    const ed = await call('POST', `/api/representantes/${id.rep}/editar`, { nombre: 'José', apellido: 'Pérez Ejemplo', telefono: '8095550123' }, t.admin);
+    assert.equal(ed.status, 200, JSON.stringify(ed.body)); assert.equal(ed.body.item.fullName, 'José Pérez Ejemplo'); assert.equal(ed.body.item.phone, '809-555-0123');
+    // Un día pasado con jornada se conserva; uno futuro sin jornada se anula
+    await planificar(jornada('2026-11-10', 30), t.rep);
+    await call('POST', '/api/cronogramas', { representanteId: id.rep, fechas: ['2026-11-27'], lugares: [{ refTipo: 'establecimiento', refId: setup.est.id }] }, t.admin);
+    assert.equal((await call('POST', `/api/representantes/${id.rep}/baja`, {}, t.admin)).status, 422, 'la baja pide el motivo');
+    const b = await call('POST', `/api/representantes/${id.rep}/baja`, { motivo: 'Renunció (Ejemplo)' }, t.admin);
+    assert.equal(b.status, 200, JSON.stringify(b.body)); assert.equal(b.body.item.status, 'inactivo'); assert.equal(b.body.cronogramasAnulados, 1);
+    assert.equal((await call('GET', '/api/viaticos/jornadas?mes=2026-11', null, t.rep)).status, 403, 'ya no entra');
+    assert.equal((await call('GET', '/api/viaticos/jornadas?representanteId=' + id.rep + '&mes=2026-11', null, t.admin)).body.items.length, 1, 'su historial se conserva');
+    assert.equal((await call('GET', '/api/territorio/zonas-ocupadas?posicion=Visitador', null, t.gerente)).body.items.length, 0, 'su territorio queda libre');
+    assert.equal((await call('GET', '/api/representantes/inactivos', null, t.gerente)).body.items[0].id, id.rep);
+    const r = await call('POST', `/api/representantes/${id.rep}/reactivar`, {}, t.admin);
+    assert.equal(r.status, 200); assert.ok(r.body.claveTemporal); assert.equal(r.body.item.status, 'activo');
+    assert.equal((await call('POST', `/api/representantes/${id.rep}/reactivar`, {}, t.admin)).status, 409);
   } finally { server.close(); }
 });
 

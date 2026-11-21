@@ -27,7 +27,7 @@ export function claveTemporal() {
   return c.join('');
 }
 
-export function createAltaRepresentantes({ store, t, v }) {
+export function createAltaRepresentantes({ store, t, v, data, notificar }) {
   const permitir = (a) => {
     if (!(a?.status === STATUS.ACTIVO && ['administrador', 'gerencia'].includes(a.role))) throw new HttpError(403, 'Solo la administración o la gerencia registran representantes.');
   };
@@ -101,5 +101,72 @@ export function createAltaRepresentantes({ store, t, v }) {
     await store.addAudit({ actorId: actor.id, action: 'clave_temporal_generada', entity: 'user', entityId: u.id });
     return { usuario, claveTemporal: clave };
   }
-  return { alta, restablecerClave };
+  async function representante(id) {
+    const u = await store.findUserById(id);
+    if (!u || u.role !== 'representante') throw new HttpError(404, 'El representante no existe.');
+    return u;
+  }
+  /** Corregir nombre, teléfono o correo. El usuario de acceso no cambia (para no dejarlo fuera). */
+  async function editar(actor, id, input = {}) {
+    permitir(actor);
+    const u = await representante(id);
+    const e = {}; const patch = {};
+    if (input.nombre !== undefined || input.apellido !== undefined) {
+      const nombre = normalizeName(input.nombre); const apellido = normalizeName(input.apellido);
+      if (nombre.length < 2) e.nombre = 'Escribe el nombre.';
+      if (apellido.length < 2) e.apellido = 'Escribe el apellido.';
+      patch.fullName = `${nombre} ${apellido}`.trim();
+    }
+    if (input.telefono !== undefined && input.telefono !== '') {
+      const d = String(input.telefono).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+      if (!/^(809|829|849)\d{7}$/.test(d)) e.telefono = 'Escribe un teléfono dominicano (809, 829 u 849).';
+      else patch.phone = `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+    }
+    if (input.correo !== undefined && input.correo !== '') {
+      const c = String(input.correo).trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(c)) e.correo = 'Escribe un correo válido.';
+      else { const otro = await store.findUserByEmail(c); if (otro && otro.id !== u.id) e.correo = 'Ese correo ya lo usa otra cuenta.'; else patch.email = c; }
+    }
+    if (Object.keys(e).length) throw new HttpError(422, 'Revisa los campos marcados.', e);
+    if (!Object.keys(patch).length) return { item: vistaRep(u) };
+    const out = await store.updateUser(u.id, patch);
+    await store.addAudit({ actorId: actor.id, action: 'representante_editado', entity: 'user', entityId: u.id, before: { fullName: u.fullName, phone: u.phone ?? null, email: u.email ?? null }, after: patch });
+    return { item: vistaRep(out) };
+  }
+  const vistaRep = (u) => ({ id: u.id, fullName: u.fullName, username: u.username ?? null, email: u.email ?? null, phone: u.phone ?? null, position: u.position ?? null, status: u.status });
+  /**
+   * Dar de baja: la cuenta queda inactiva (no entra más), su territorio queda libre para otro de su posición y
+   * se anulan sus días de cronograma futuros sin jornada. Su historial (jornadas, viáticos, recetas) se conserva.
+   */
+  async function baja(actor, id, motivo) {
+    permitir(actor);
+    const u = await representante(id);
+    if (u.status !== STATUS.ACTIVO) throw new HttpError(409, 'Este representante ya está dado de baja.');
+    const m = normalizeName(motivo);
+    if (m.length < 3) throw new HttpError(422, 'Revisa los campos marcados.', { motivo: 'Escribe el motivo de la baja.' });
+    const hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santo_Domingo' });
+    let anulados = 0;
+    if (data) {
+      const js = await data.list('jornadas', { representanteId: u.id });
+      for (const c of await data.list('cronogramas', { representanteId: u.id })) {
+        if (c.estado !== 'aprobado' || c.fecha < hoy || js.some((j) => j.cronogramaId === c.id && j.estado !== 'cancelada')) continue;
+        await data.update('cronogramas', c.id, { estado: 'anulado', motivo: `Baja del representante: ${m}` }); anulados++;
+      }
+    }
+    const out = await store.updateUser(u.id, { status: STATUS.INACTIVO });
+    await store.addAudit({ actorId: actor.id, action: 'representante_baja', entity: 'user', entityId: u.id, before: { status: u.status }, after: { status: STATUS.INACTIVO, motivo: m, cronogramasAnulados: anulados } });
+    return { item: vistaRep(out), cronogramasAnulados: anulados };
+  }
+  /** Reactivar: vuelve a entrar con una contraseña temporal nueva. Su zona se revisa de nuevo al editarla. */
+  async function reactivar(actor, id) {
+    permitir(actor);
+    const u = await representante(id);
+    if (u.status === STATUS.ACTIVO) throw new HttpError(409, 'Este representante ya está activo.');
+    if (u.status !== STATUS.INACTIVO) throw new HttpError(409, 'Solo se reactivan representantes dados de baja.');
+    await store.updateUser(u.id, { status: STATUS.ACTIVO });
+    await store.addAudit({ actorId: actor.id, action: 'representante_reactivado', entity: 'user', entityId: u.id, before: { status: u.status }, after: { status: STATUS.ACTIVO } });
+    const cred = await restablecerClave(actor, u.id);
+    return { item: vistaRep(await store.findUserById(u.id)), ...cred };
+  }
+  return { alta, restablecerClave, editar, baja, reactivar };
 }

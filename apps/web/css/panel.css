@@ -616,3 +616,8 @@ a.btn, a.btn-sec { text-decoration: none; }
 .balance-partidas th:first-child { text-align: left; }
 .balance-partidas thead th { border-top: 0; font: 500 .82rem var(--sans); color: var(--texto-2); }
 td .sem-nombre, .td-fecha { white-space: nowrap; }
+.btn-peligro { border-color: rgba(192, 70, 44, .45); color: var(--alerta); }
+.btn-peligro:hover { border-color: var(--alerta); background: rgba(192, 70, 44, .06); }
+.bajas summary { cursor: pointer; font-weight: 600; color: var(--marino); }
+.bajas[open] summary { margin-bottom: 1rem; }
+#dialogo-cuerpo .field { margin-top: .75rem; }
