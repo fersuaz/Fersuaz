@@ -2,6 +2,7 @@
 import { apiBase } from './api.js';
 import { activarDesplegables } from './desplegable.js';
 import { activarNumeros } from './numeros.js';
+import { verImagen } from './visor.js';
 import { descargarXlsx, imprimirPdf } from './exportar.js';
 
 // ---------------------------------------------------------------- utilidades
@@ -430,7 +431,7 @@ function cargaMasiva(cfg) {
       f.totalEl = cfg.conPrecio ? h('strong', {}, RD(0)) : null;
       f.extras = cfg.extras ? cfg.extras(f) : null;
       const vista = file.type === 'application/pdf' ? h('span', { class: 'cm-pdf' }, 'PDF') : h('img', { src: f.url, alt: `Foto ${file.name}`, loading: 'lazy' });
-      const ver = h('button', { type: 'button', class: 'cm-foto', 'aria-label': 'Ver la foto en grande', onclick: () => window.open(f.url, '_blank', 'noopener') }, vista);
+      const ver = h('button', { type: 'button', class: 'cm-foto', 'aria-label': 'Ver la foto en grande', onclick: () => verImagen(f.url, { nombre: file.name, tipo: file.type }) }, vista);
       f.el = h('article', { class: 'cm-fila' }, ver,
         h('div', { class: 'cm-datos' },
           h('div', { class: 'cm-cabeza' }, h('div', {}, f.num, h('small', {}, file.name)), f.fecha ? h('label', { class: 'cm-fecha' }, h('span', {}, 'Fecha'), f.fecha) : null,
@@ -1023,10 +1024,14 @@ V.misRecetas = async () => {
     { t: 'Foto', v: (r) => r.adjunto ? h('button', { class: 'btn-sec btn-peq', onclick: () => verAdjunto(r.adjunto.clave) }, 'Ver') : 'Sin foto' },
   ], items.slice().reverse(), ['No hay recetas en este mes', 'Las recetas que registres aparecerán aquí.']));
 };
+let ultimoAdjunto = null;
 async function verAdjunto(clave) {
   const r = await fetch(`${API}/api/adjuntos/${encodeURIComponent(clave)}`, { headers: { authorization: `Bearer ${token()}` } });
   if (!r.ok) return alert('No se pudo abrir la foto.');
-  window.open(URL.createObjectURL(await r.blob()), '_blank', 'noopener');
+  const b = await r.blob();
+  if (ultimoAdjunto) URL.revokeObjectURL(ultimoAdjunto);
+  ultimoAdjunto = URL.createObjectURL(b);
+  verImagen(ultimoAdjunto, { nombre: 'Foto adjunta', tipo: b.type });
 }
 function filtroMes(mes, ruta, extra, { futuro = false } = {}) {
   const inp = h('input', { type: 'month', value: mes, id: 'filtro-mes', max: futuro ? null : mesActual() });

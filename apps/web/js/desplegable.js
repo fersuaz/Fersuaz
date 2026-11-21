@@ -30,6 +30,9 @@ function mejorar(sel) {
   const panel = document.createElement('div'); panel.className = 'dsp-panel'; panel.hidden = true;
   panel.innerHTML = `<div class="dsp-buscar">${LUPA}<input type="search" autocomplete="off" spellcheck="false" placeholder="Buscar" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="${id}-l"></div><ul class="dsp-lista" role="listbox" id="${id}-l"></ul><p class="dsp-vacio" hidden>Sin resultados. Prueba con otra palabra.</p>`;
   const buscar = panel.querySelector('input'); const lista = panel.querySelector('ul'); const vacio = panel.querySelector('.dsp-vacio');
+  // El desplegable puede estar dentro de un <label>: sin esto, el clic en una opción lo "reenvía" al
+  // control de la etiqueta y la lista se vuelve a abrir sola después de elegir.
+  panel.addEventListener('click', (e) => { if (!e.target.closest('input')) e.preventDefault(); });
   sel.parentNode.insertBefore(caja, sel);
   caja.append(sel, boton, panel);
   sel.classList.add('dsp-nativo'); sel.tabIndex = -1; sel.setAttribute('aria-hidden', 'true');
