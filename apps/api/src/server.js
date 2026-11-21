@@ -82,7 +82,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const vehiculos = createVehiculos({ fetchImpl: vehiculosFetch });
   const agregados = createVehiculosAgregados({ data, audit: (e) => store.addAudit(e) });
   const banco = createBanco({ data, users: store, audit: (e) => store.addAudit(e) });
-  const altas = createAltaRepresentantes({ store, t, v });
+  const altas = createAltaRepresentantes({ store, t, v, data });
   const inicio = createInicio({ data, users: store, v, c, t, now: now ?? (() => new Date()) });
 
   // Registro automático desde Google Maps (recorre municipios y guarda lo que falte)
@@ -168,6 +168,13 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', '/api/auth/cambiar-clave', async ({ me, body }) => ({ item: await auth.cambiarMiClave(me, body?.actual, body?.nueva) }));
   // Alta de representantes por el administrador
   ruta('POST', '/api/representantes', async ({ me, body }) => [201, await altas.alta(me, body ?? {})]);
+  ruta('POST', /^\/api\/representantes\/([\w-]+)\/editar$/, async ({ me, p, body }) => altas.editar(me, p[1], body ?? {}));
+  ruta('POST', /^\/api\/representantes\/([\w-]+)\/baja$/, async ({ me, p, body }) => altas.baja(me, p[1], body?.motivo));
+  ruta('POST', /^\/api\/representantes\/([\w-]+)\/reactivar$/, async ({ me, p }) => altas.reactivar(me, p[1]));
+  ruta('GET', '/api/representantes/inactivos', async ({ me }) => {
+    if (!['administrador', 'gerencia'].includes(me.role)) throw new AuthError(403, 'Sin permiso.');
+    return { items: (await store.listUsersByStatus('inactivo')).filter((u) => u.role === 'representante').map((u) => ({ id: u.id, fullName: u.fullName, position: u.position ?? null, username: u.username ?? null })) };
+  });
   ruta('POST', /^\/api\/representantes\/([\w-]+)\/clave$/, async ({ me, p }) => altas.restablecerClave(me, p[1]));
   // Vehículos: rendimiento de FuelEconomy.gov (EPA)
   const soloGestion = (me) => { if (!['administrador', 'gerencia', 'supervisor'].includes(me?.role)) throw new AuthError(403, 'No tienes permiso para esta acción.'); };

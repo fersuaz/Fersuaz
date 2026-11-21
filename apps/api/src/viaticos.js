@@ -140,7 +140,8 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     permitir(rol(actor, VEN_PERFIL));
     const reps = (await users.listUsers()).filter((u) => u.role === 'representante' && u.status === 'activo');
     const out = [];
-    for (const u of reps) out.push({ id: u.id, fullName: u.fullName, position: u.position, perfil: ocultarDireccion(actor, await perfilDe(u.id)) });
+    const contacto = rol(actor, ['administrador', 'gerencia']); // teléfono y correo, para corregirlos
+    for (const u of reps) out.push({ id: u.id, fullName: u.fullName, position: u.position, ...(contacto ? { phone: u.phone ?? null, email: u.email ?? null } : {}), perfil: ocultarDireccion(actor, await perfilDe(u.id)) });
     return out;
   }
 

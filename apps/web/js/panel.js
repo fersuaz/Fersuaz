@@ -74,7 +74,7 @@ async function enviar(form, boton, fn) {
   catch (e) { mostrarErrores(form, e); estado(st, 'error', e.message); return null; }
   finally { boton.disabled = false; boton.textContent = txt; }
 }
-function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false, casilla = null } = {}) {
+function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false, casilla = null, campos = null } = {}) {
   const d = $('#dialogo');
   $('#dialogo-titulo').textContent = titulo;
   const c = $('#dialogo-cuerpo'); c.replaceChildren(h('p', {}, cuerpo));
@@ -82,9 +82,11 @@ function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false,
   if (pedirMotivo) { motivo = h('textarea', { id: 'motivo', rows: 3 }); c.append(h('label', { for: 'motivo', class: 'hint' }, 'Motivo'), motivo); }
   // Una casilla opcional: la respuesta es { casilla: true | false } en vez de true.
   if (casilla) { caja = h('input', { type: 'checkbox', checked: casilla.marcada !== false }); c.append(h('label', { class: 'check', style: 'margin-top:.75rem' }, caja, h('span', {}, casilla.texto))); }
+  // Campos opcionales: la respuesta es { nombre: valor } con lo que se escribió.
+  const entradas = (campos ?? []).map((x) => { const el = h('input', { id: `dlg-${x.name}`, name: x.name, type: x.type ?? 'text', value: x.value ?? '', autocomplete: 'off', ...(x.inputmode ? { inputmode: x.inputmode } : {}) }); c.append(h('div', { class: 'field' }, h('label', { for: `dlg-${x.name}` }, x.label), el)); return el; });
   $('#dialogo-ok').textContent = okTexto;
   d.showModal();
-  return new Promise((res) => d.addEventListener('close', () => res(d.returnValue !== 'ok' ? null : motivo ? motivo.value : caja ? { casilla: caja.checked } : true), { once: true }));
+  return new Promise((res) => d.addEventListener('close', () => res(d.returnValue !== 'ok' ? null : motivo ? motivo.value : caja ? { casilla: caja.checked } : entradas.length ? Object.fromEntries(entradas.map((x) => [x.name, x.value])) : true), { once: true }));
 }
 const sinTilde = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 /** Texto buscable de una fila: sus valores (hasta dos niveles) y las celdas que son texto. */
@@ -1787,10 +1789,38 @@ V.representantes = async () => {
     } catch (e) { alert(e.message); }
   };
   const texto = (z) => z.provincias.map((p) => (z.municipios?.[p]?.length ? `${p} (${z.municipios[p].join(', ')})` : p)).join('; ');
+  const editarDatos = async (r) => {
+    const [nombre, ...resto] = (r.fullName ?? '').split(' ');
+    const v = await confirmar('Editar datos', `Corrige los datos de ${r.fullName}. Su usuario para entrar no cambia.`, { okTexto: 'Guardar', campos: [
+      { name: 'nombre', label: 'Nombre', value: nombre }, { name: 'apellido', label: 'Apellido', value: resto.join(' ') },
+      { name: 'telefono', label: 'Teléfono (opcional)', value: r.phone ?? '', type: 'tel', inputmode: 'tel' }, { name: 'correo', label: 'Correo (opcional)', value: r.email ?? '', type: 'email' }] });
+    if (!v) return;
+    try { await api('POST', `/api/representantes/${r.id}/editar`, v); router(); } catch (e) { alert(e.fields ? Object.values(e.fields).join(' ') : e.message); }
+  };
+  const darBaja = async (r) => {
+    const m = await confirmar('Dar de baja', `${r.fullName} ya no podrá entrar. Su zona queda libre para otro ${r.position ?? 'representante'} y se anulan sus días de cronograma futuros que no tengan jornada. Su historial (jornadas, viáticos, recetas) se conserva y puedes reactivarlo después.`, { okTexto: 'Dar de baja', pedirMotivo: true });
+    if (m == null) return;
+    try { const x = await api('POST', `/api/representantes/${r.id}/baja`, { motivo: m }); alert(`${r.fullName} quedó dado de baja.${x.cronogramasAnulados ? ` Se anularon ${x.cronogramasAnulados} día(s) futuros de su cronograma.` : ''}`); router(); } catch (e) { alert(e.fields ? Object.values(e.fields).join(' ') : e.message); }
+  };
+  const inactivos = ES_GER() ? await api('GET', '/api/representantes/inactivos').then((x) => x.items).catch(() => []) : [];
+  const reactivar = async (r) => {
+    if (!(await confirmar('Reactivar', `${r.fullName} podrá entrar de nuevo con una contraseña temporal. Revisa su zona después: si otro de su posición ya cubre ese territorio, deberás ajustarla.`, { okTexto: 'Reactivar' }))) return;
+    try {
+      const x = await api('POST', `/api/representantes/${r.id}/reactivar`);
+      $('#dialogo-titulo').textContent = 'Reactivado'; $('#dialogo-cuerpo').replaceChildren(h('dl', { class: 'credenciales-lista' }, h('dt', {}, 'Usuario'), h('dd', {}, x.usuario), h('dt', {}, 'Contraseña temporal'), h('dd', {}, x.claveTemporal)), h('p', { class: 'hint' }, 'No se volverá a mostrar. Entrégala por un medio seguro.'));
+      $('#dialogo-ok').textContent = 'Listo'; $('#dialogo').addEventListener('close', () => router(), { once: true }); $('#dialogo').showModal();
+    } catch (e) { alert(e.message); }
+  };
+  const bajas = inactivos.length ? h('details', { class: 'tarjeta bajas', style: 'margin-top:1.25rem' }, h('summary', {}, `Dados de baja (${fmtN.format(inactivos.length)})`),
+    tabla([{ t: 'Representante', v: (r) => [r.fullName, h('small', { style: 'display:block;color:var(--texto-2)' }, r.position ?? '')] }, { t: 'Usuario', v: (r) => r.username ?? '' },
+      { t: '', v: (r) => h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => reactivar(r) }, 'Reactivar') }], inactivos, ['', ''])) : null;
   return vista('Representantes', 'Asigna a cada representante su posición y las provincias o municipios que visita.', seg,
     tabla([{ t: 'Representante', v: (r) => [r.fullName, h('small', { style: 'display:block;color:var(--texto-2)' }, r.position ?? '')] },
       { t: 'Zona', v: (r) => texto(zonas[reps.indexOf(r)]) || 'Sin asignar' },
-      { t: '', v: (r) => [GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, 'Editar zona') : null, ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => nuevaClave(r) }, 'Nueva clave') : null] }], reps, ['Aún no hay representantes activos', 'Impórtalos en "Pre-registro por Excel".']));
+      { t: '', v: (r) => [GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, 'Editar zona') : null,
+        ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => editarDatos(r) }, 'Editar datos') : null,
+        ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => nuevaClave(r) }, 'Nueva clave') : null,
+        ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-peligro', type: 'button', onclick: () => darBaja(r) }, 'Dar de baja') : null] }], reps, ['Aún no hay representantes activos', 'Regístralos en "Nuevo representante".']), bajas);
 };
 
 
