@@ -23,6 +23,7 @@ import { createLectorIA } from './lector-ia.js';
 import { createAltaRepresentantes } from './representantes.js';
 import { createBanco, BANCOS, TIPOS_CUENTA } from './banco.js';
 import { createTienda } from './tienda.js';
+import { createMedicos, pareceMedico } from './medicos.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -86,6 +87,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const vehiculos = createVehiculos({ fetchImpl: vehiculosFetch });
   const agregados = createVehiculosAgregados({ data, audit: (e) => store.addAudit(e) });
   const ventas = createVentas({ data, audit: (e) => store.addAudit(e), lector: lectorIA, territorio: t, hoy: () => hoyRD(now ? now() : new Date()) });
+  const medicos = createMedicos({ data, audit: (e) => store.addAudit(e), lector: lectorIA });
   const tienda = createTienda({ data, users: store, files, audit: (e) => store.addAudit(e), notificar: (id, m) => n.notificar(id, m), notificarRoles: (r, m) => n.notificarRoles(r, m), ventas, hoy: () => hoyRD(now ? now() : new Date()) });
   const banco = createBanco({ data, users: store, audit: (e) => store.addAudit(e) });
   const altas = createAltaRepresentantes({ store, t, v, data });
@@ -93,10 +95,11 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
 
   // Registro automático desde Google Maps (recorre municipios y guarda lo que falte)
   const barrido = createBarrido({
-    data, lugares, now: now ?? (() => new Date()), pausa: barridoPausa ?? 250, notificar: n.notificar, audit: (e) => store.addAudit(e),
+    data, lugares, now: now ?? (() => new Date()), pausa: barridoPausa ?? 250, aceptar: (tipo, l) => tipo !== 'medico' || pareceMedico(l.nombre), notificar: n.notificar, audit: (e) => store.addAudit(e),
     guardar: (actor, tipo, l) => tipo === 'farmacia'
       ? c.catalogo.crearFarmacia(actor, { nombre: l.nombre, provincia: l.provincia, municipio: l.municipio }, l, { revisado: true })
       : tipo === 'hotel' ? hoteles.crear(actor, l, { fuente: 'google' })
+      : tipo === 'medico' ? medicos.registrar(actor, { provincia: l.provincia, municipio: l.municipio }, { fuente: 'google', google: l })
       : t.crearEstablecimiento(actor, { nombre: l.nombre, tipo, provincia: l.provincia, municipio: l.municipio, direccion: l.direccion, telefono: l.telefono, lat: l.lat, lng: l.lng, placeId: l.placeId }, { fuente: 'google', verificado: true }),
   });
   const puedeBarrido = (me) => {
@@ -107,7 +110,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     const { provincias, municipios, tipos } = t.division();
     if (provincia !== 'todas' && !provincias.includes(provincia)) throw new AuthError(422, 'Elige una provincia oficial.');
     if (municipio && (provincia === 'todas' || !municipios[provincia].includes(municipio))) throw new AuthError(422, 'Ese municipio no pertenece a la provincia.');
-    if (!['farmacia', 'hotel', 'salud'].includes(src.tipo) && !tipos[src.tipo]) throw new AuthError(422, 'Elige el tipo de establecimiento.');
+    if (!['farmacia', 'hotel', 'salud', 'medico'].includes(src.tipo) && !tipos[src.tipo]) throw new AuthError(422, 'Elige el tipo de establecimiento.');
     return { tipo: src.tipo, provincia, municipio };
   }
 
@@ -273,8 +276,11 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', '/api/catalogo/medicamentos', async ({ me, body }) => [201, { item: await c.catalogo.crearMedicamento(me, body) }]);
   ruta('GET', '/api/catalogo/farmacias', async () => ({ items: await c.catalogo.listarFarmacias() }));
   ruta('POST', '/api/catalogo/farmacias', async ({ me, body }) => [201, { item: await c.catalogo.crearFarmacia(me, body) }]);
-  ruta('GET', '/api/catalogo/medicos', async () => ({ items: await c.catalogo.listarMedicos() }));
-  ruta('POST', '/api/catalogo/medicos', async ({ me, body }) => [201, { item: await c.catalogo.crearMedico(me, body) }]);
+  ruta('GET', '/api/catalogo/medicos', async () => ({ items: await medicos.listar(), especialidades: medicos.especialidades(), iaActiva: medicos.iaActiva() }));
+  ruta('POST', '/api/catalogo/medicos', async ({ me, body }) => { const r = await medicos.registrar(me, body ?? {}); return [r.accion === 'creado' ? 201 : 200, r]; });
+  ruta('POST', /^\/api\/catalogo\/medicos\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await medicos.editar(me, p[1], body ?? {}) }));
+  ruta('POST', '/api/medicos/documento/leer', async ({ me, body }) => medicos.leerDocumento(me, body?.archivo), { limite: 9 * 1024 * 1024 });
+  ruta('POST', '/api/medicos/documento/confirmar', async ({ me, body }) => medicos.confirmarDocumento(me, body ?? {}), { limite: 4 * 1024 * 1024 });
   ruta('POST', /^\/api\/catalogo\/(farmacias|medicos)\/([\w-]+)\/validar$/, async ({ me, p }) => ({ item: await c.catalogo.validar(me, p[1], p[2]) }));
 
   // Dependientes: vouchers y comisiones
