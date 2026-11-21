@@ -1,5 +1,6 @@
 // Panel de trabajo FERSUAZ. Muestra a cada rol solo lo suyo; el servidor vuelve a comprobar cada permiso.
 import { apiBase } from './api.js';
+import { activarDesplegables } from './desplegable.js';
 
 // ---------------------------------------------------------------- utilidades
 const $ = (s, r = document) => r.querySelector(s);
@@ -770,7 +771,7 @@ V.presupuesto = async () => {
     if (c.detalle) {
       for (const a of c.avisos ?? []) bloques.push(h('div', { class: 'aviso' }, a));
       bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Presupuesto calculado'), desglose(c.detalle, c.total),
-        h('p', { class: 'hint', style: 'margin-top:1rem' }, c.supuestos.transportePublico ? `${c.supuestos.jornadas} jornadas en transporte público: ${c.supuestos.diasDentro} día(s) dentro de tu municipio (transporte ${RD(c.supuestos.tarifas.transporteDentro)} y comida ${RD(c.supuestos.tarifas.comidaDentro)} por día) y ${c.supuestos.diasFuera} día(s) fuera (transporte ${RD(c.supuestos.tarifas.transporteFuera)} y comida ${RD(c.supuestos.tarifas.comidaFuera)} por día).${c.supuestos.tope != null ? ` Tope mensual: ${RD(c.supuestos.tope)}.` : ''} Tu salario no forma parte de este presupuesto.` : `${c.supuestos.jornadas} jornadas, ${fmtN.format(c.supuestos.km)} km (${c.supuestos.kmTipo}), ${c.supuestos.diasAlimentacion} días de alimentación a ${RD(c.supuestos.tarifaAlimentacion)}.${c.supuestos.reembolsoPorKm ? ` Reembolso de ${RD(c.supuestos.reembolsoPorKm)} por km.` : c.supuestos.galones ? ` ${fmtN.format(c.supuestos.galones)} galones a ${c.supuestos.rendimiento} km/gal.` : ''}${c.supuestos.tope != null ? ` Tope mensual de combustible: ${RD(c.supuestos.tope)} (${c.supuestos.topeFuente === 'representante' ? 'propio' : 'global'}).` : ''} Tu salario no forma parte de este presupuesto.`),
+        h('p', { class: 'hint', style: 'margin-top:1rem' }, c.supuestos.transportePublico ? `${c.supuestos.jornadas} jornadas en transporte público: ${c.supuestos.diasDentro} día(s) dentro de tu zona (transporte ${RD(c.supuestos.tarifas.transporteDentro)} y comida ${RD(c.supuestos.tarifas.comidaDentro)} por día) y ${c.supuestos.diasFuera} día(s) fuera (transporte ${RD(c.supuestos.tarifas.transporteFuera)} y comida ${RD(c.supuestos.tarifas.comidaFuera)} por día).${c.supuestos.tope != null ? ` Tope mensual: ${RD(c.supuestos.tope)}.` : ''} Tu salario no forma parte de este presupuesto.` : `${c.supuestos.jornadas} jornadas, ${fmtN.format(c.supuestos.km)} km (${c.supuestos.kmTipo}), ${c.supuestos.diasAlimentacion} días de alimentación a ${RD(c.supuestos.tarifaAlimentacion)}.${c.supuestos.reembolsoPorKm ? ` Reembolso de ${RD(c.supuestos.reembolsoPorKm)} por km.` : c.supuestos.galones ? ` ${fmtN.format(c.supuestos.galones)} galones a ${c.supuestos.rendimiento} km/gal.` : ''}${c.supuestos.tope != null ? ` Tope mensual de combustible: ${RD(c.supuestos.tope)} (${c.supuestos.topeFuente === 'representante' ? 'propio' : 'global'}).` : ''} Tu salario no forma parte de este presupuesto.`),
         h('div', { class: 'acciones' }, h('button', { class: 'btn', disabled: c.faltan?.length > 0, onclick: async (ev) => {
           if (!(await confirmar('Solicitar viáticos', `Enviar a la gerencia el presupuesto de ${mes} por ${RD(c.total)}. Después no podrás cambiar las jornadas del mes.`, { okTexto: 'Solicitar' }))) return;
           ev.target.disabled = true; try { await api('POST', '/api/viaticos/presupuesto/solicitar', { mes }); } catch (e) { alert(e.message); } router();
@@ -826,17 +827,29 @@ V.perfiles = async () => {
       ft.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(ft, bt, () => api('POST', '/api/viaticos/tope-global', { monto: ft.monto.value || null }))) router(); });
       const { item: tp } = await api('GET', '/api/viaticos/tarifas-publico');
       const bp = h('button', { class: 'btn', type: 'submit' }, 'Guardar montos');
-      const fp = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Transporte público: montos globales por día'),
-        h('p', { class: 'hint' }, 'Para quienes no tienen vehículo. Cada día del cronograma cuenta como "dentro" si todas sus paradas están en su municipio de residencia, o "fuera" si va a otro municipio. Un representante puede tener montos propios en su perfil.'),
-        h('div', { class: 'form-fila' }, ...TARIFAS_PUB.map(([k, l]) => campo(k, `${l} RD$`, { type: 'number', min: 0, step: 0.01, value: tp[k] ?? '', inputmode: 'decimal' }))), h('div', { class: 'acciones' }, bp));
-      fp.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(fp, bp, () => api('POST', '/api/viaticos/tarifas-publico', Object.fromEntries(TARIFAS_PUB.map(([k]) => [k, fp.elements[k].value || null]))))) router(); });
+      const inp = (pre, k, val) => h('input', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal', name: `${pre}.${k}`, value: val ?? '', 'aria-label': `${TARIFAS_PUB.find((x) => x[0] === k)[1]}${pre === 'global' ? '' : `, ${pre}`}` });
+      const cab = h('tr', {}, h('th', { scope: 'col' }, ''), ...TARIFAS_PUB.map(([, l]) => h('th', { scope: 'col' }, l)));
+      const tablaPos = h('div', { class: 'tabla-montos' }, h('table', {}, h('thead', {}, cab),
+        h('tbody', {}, ...POSICIONES.map((pos) => h('tr', {}, h('th', { scope: 'row' }, pos), ...TARIFAS_PUB.map(([k]) => h('td', {}, inp(pos, k, tp.porPosicion?.[pos]?.[k]))))))));
+      const filaGlobal = h('div', { class: 'tabla-montos' }, h('table', {}, h('thead', {}, cab.cloneNode(true)),
+        h('tbody', {}, h('tr', {}, h('th', { scope: 'row' }, 'Todas las posiciones'), ...TARIFAS_PUB.map(([k]) => h('td', {}, inp('global', k, tp.global?.[k])))))));
+      const modo = h('fieldset', { class: 'modo-montos' }, h('legend', {}, '¿Cómo se fijan los montos?'),
+        h('label', {}, h('input', { type: 'radio', name: 'modo', value: 'posicion', checked: tp.modo !== 'global' }), h('span', {}, h('strong', {}, 'Por posición'), h('small', {}, 'Un monto para Visitador, otro para Promotora, etc.'))),
+        h('label', {}, h('input', { type: 'radio', name: 'modo', value: 'global', checked: tp.modo === 'global' }), h('span', {}, h('strong', {}, 'Un monto para todos'), h('small', {}, 'El mismo monto sin importar la posición.'))));
+      const pintarModo = () => { const g = modo.querySelector('input:checked').value === 'global'; tablaPos.hidden = g; filaGlobal.hidden = !g; };
+      modo.addEventListener('change', pintarModo); pintarModo();
+      const fp = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Transporte público: montos por día'),
+        h('p', { class: 'hint' }, 'Para quienes no tienen vehículo. Un día del cronograma cuenta como "dentro" si todas sus paradas están en su zona de trabajo (las provincias y municipios que le asignaste), aunque no viva allí; si va a un lugar fuera de su zona, cuenta como "fuera". Un representante puede tener montos propios en su perfil.'),
+        modo, tablaPos, filaGlobal, h('div', { class: 'acciones' }, bp));
+      const leer = (pre) => Object.fromEntries(TARIFAS_PUB.map(([k]) => [k, fp.elements[`${pre}.${k}`].value || null]));
+      fp.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(fp, bp, () => api('POST', '/api/viaticos/tarifas-publico', { modo: fp.elements.modo.value, global: leer('global'), porPosicion: Object.fromEntries(POSICIONES.map((p) => [p, leer(p)])) }))) router(); });
       bloques.push(S('tope', 'Montos globales', fp, ft));
     }
     return vistaS('perfiles', ['lista', 'tope'], 'Perfiles de viático', 'Vehículo, residencia, tarifa y tope de cada representante. La dirección exacta solo la ven la gerencia y el propio representante.', S('lista', 'Representantes', lista), ...bloques);
   }
   const r = reps.find((x) => x.id === id);
   const [pf, div, { item: globales }] = await Promise.all([api('GET', `/api/viaticos/perfiles/${id}`).then((x) => x.item), division(), api('GET', '/api/viaticos/tarifas-publico')]);
-  const veh = formularioVehiculo(pf, combs, globales);
+  const veh = formularioVehiculo(pf, combs, globales, r?.position);
   const res = residenciaCampos(div, pf?.residencia);
   const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar perfil');
   const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, r?.fullName ?? 'Representante'),
@@ -1251,13 +1264,16 @@ V.hoteles = async () => {
 
 // ---------------------------------------------------------------- vehículo del representante (EPA o a mano) o transporte público
 const TIPOS_VEH = [['carro', 'Carro'], ['jeepeta', 'Jeepeta'], ['camioneta', 'Camioneta'], ['motocicleta', 'Motocicleta']];
-const TARIFAS_PUB = [['transporteDentro', 'Transporte por día dentro de su municipio'], ['comidaDentro', 'Comida por día dentro de su municipio'], ['transporteFuera', 'Transporte por día fuera de su municipio'], ['comidaFuera', 'Comida por día fuera de su municipio']];
+const TARIFAS_PUB = [['transporteDentro', 'Transporte dentro de su zona'], ['comidaDentro', 'Comida dentro de su zona'], ['transporteFuera', 'Transporte fuera de su zona'], ['comidaFuera', 'Comida fuera de su zona']];
+const POSICIONES = ['Visitador', 'PVC', 'Vendedor', 'Promotora'];
+/** Monto que le tocaría a una posición según la configuración (por posición o global). */
+const montoBase = (g, pos, k) => (g?.modo === 'global' || !pos ? g?.global?.[k] : g?.porPosicion?.[pos]?.[k]) ?? null;
 /**
  * Campos del vehículo. Con vehículo: año, marca, modelo y versión desde FuelEconomy.gov (EPA) completan el
  * rendimiento en km por galón; si no aparece (p. ej., motocicleta o modelo que no se vende en EE. UU.), se escribe a mano.
  * Sin vehículo: transporte público, con montos propios opcionales (vacío = monto global).
  */
-function formularioVehiculo(pf, combs, globales) {
+function formularioVehiculo(pf, combs, globales, posicion) {
   const v = pf?.vehiculo ?? {};
   let tiene = v.propiedad ? v.propiedad !== 'ninguno' : true;
   let epaId = v.epaId ?? null; let fuente = v.rendimientoFuente ?? (v.epaId ? 'epa' : 'manual');
@@ -1316,8 +1332,8 @@ function formularioVehiculo(pf, combs, globales) {
 
   // --- sin vehículo: transporte público
   const pub = pf?.publico ?? {};
-  const sinVehiculo = h('div', { class: 'grupo-vehiculo' }, h('p', { class: 'hint' }, 'Montos por día. Déjalos vacíos para usar los montos globales; escribe uno solo si este representante tiene un monto distinto. "Dentro" es su municipio de residencia; "fuera", cualquier otro municipio del cronograma.'),
-    h('div', { class: 'form-fila' }, ...TARIFAS_PUB.map(([k, l]) => campo(`publico.${k}`, l, { type: 'number', min: 0, step: 0.01, value: pub[k] ?? '', inputmode: 'decimal', placeholder: globales?.[k] != null ? `Global: ${RD(globales[k])}` : 'Sin monto global' }))));
+  const sinVehiculo = h('div', { class: 'grupo-vehiculo' }, h('p', { class: 'hint' }, `Montos por día. Déjalos vacíos para usar los de ${globales?.modo === 'global' ? 'todas las posiciones' : posicion ? `la posición ${posicion}` : 'su posición'}; escribe uno solo si este representante tiene un monto distinto. "Dentro" es su zona de trabajo; "fuera", cualquier lugar fuera de ella.`),
+    h('div', { class: 'form-fila' }, ...TARIFAS_PUB.map(([k, l]) => { const b = montoBase(globales, posicion, k); return campo(`publico.${k}`, `${l} (por día)`, { type: 'number', min: 0, step: 0.01, value: pub[k] ?? '', inputmode: 'decimal', placeholder: b != null ? `Según posición: ${RD(b)}` : (globales?.modo === 'global' || posicion ? 'Sin monto configurado' : 'Según su posición') }); })));
   const pintar = () => { conVehiculo.hidden = !tiene; sinVehiculo.hidden = tiene; if (tiene && !manualCaja.checked) cargarAnios(); };
   eleccion.addEventListener('change', (e) => { tiene = e.target.value === 'si'; pintar(); });
   pintar();
@@ -1828,3 +1844,5 @@ $('#salir').addEventListener('click', salir);
   router();
   campana();
 })();
+
+activarDesplegables();
