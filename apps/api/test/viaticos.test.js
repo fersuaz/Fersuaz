@@ -517,11 +517,21 @@ test('representante: corregir sus datos, darlo de baja (libera su zona y sus dí
     assert.equal((await call('POST', `/api/representantes/${id.rep}/editar`, { nombre: 'Otro', apellido: 'Nombre' }, t.rep)).status, 403);
     const mal = await call('POST', `/api/representantes/${id.rep}/editar`, { nombre: 'A', apellido: '', telefono: '123' }, t.admin);
     assert.equal(mal.status, 422); assert.ok(mal.body.fields.nombre && mal.body.fields.telefono);
-    const ed = await call('POST', `/api/representantes/${id.rep}/editar`, { nombre: 'José', apellido: 'Pérez Ejemplo', telefono: '8095550123' }, t.admin);
-    assert.equal(ed.status, 200, JSON.stringify(ed.body)); assert.equal(ed.body.item.fullName, 'José Pérez Ejemplo'); assert.equal(ed.body.item.phone, '809-555-0123');
     // Un día pasado con jornada se conserva; uno futuro sin jornada se anula
     await planificar(jornada('2026-11-10', 30), t.rep);
     await call('POST', '/api/cronogramas', { representanteId: id.rep, fechas: ['2026-11-27'], lugares: [{ refTipo: 'establecimiento', refId: setup.est.id }] }, t.admin);
+    // Contraseña inicial global: solo la administración; se guarda cifrada y no se puede volver a ver
+    assert.equal((await call('POST', '/api/representantes/clave-inicial', { clave: 'Fersuaz1234567' }, t.gerente)).status, 403);
+    assert.equal((await call('POST', '/api/representantes/clave-inicial', { clave: 'corta' }, t.admin)).status, 422);
+    assert.equal((await call('POST', '/api/representantes/clave-inicial', { clave: 'Ejemplo1234567' }, t.admin)).body.configurada, true);
+    assert.equal((await call('GET', '/api/representantes/clave-inicial', null, t.gerente)).body.configurada, true);
+    // Cambiar el nombre: usuario nuevo y vuelve a la contraseña inicial, que debe cambiar al entrar
+    const ed = await call('POST', `/api/representantes/${id.rep}/editar`, { nombre: 'José', apellido: 'Pérez Ejemplo', telefono: '8095550123' }, t.admin);
+    assert.equal(ed.status, 200, JSON.stringify(ed.body)); assert.equal(ed.body.item.fullName, 'José Pérez Ejemplo'); assert.equal(ed.body.item.phone, '809-555-0123');
+    assert.equal(ed.body.usuario, 'jperez'); assert.equal(ed.body.claveInicialGlobal, true); assert.equal(ed.body.claveTemporal, null);
+    const entra = await call('POST', '/api/auth/login', { email: 'jperez', password: 'Ejemplo1234567' });
+    assert.equal(entra.status, 200, JSON.stringify(entra.body)); assert.equal(entra.body.user.debeCambiarClave, true);
+    assert.equal((await call('POST', `/api/representantes/${id.rep}/editar`, { telefono: '8095550124' }, t.admin)).body.usuario, undefined, 'cambiar solo el teléfono no toca el acceso');
     assert.equal((await call('POST', `/api/representantes/${id.rep}/baja`, {}, t.admin)).status, 422, 'la baja pide el motivo');
     const b = await call('POST', `/api/representantes/${id.rep}/baja`, { motivo: 'Renunció (Ejemplo)' }, t.admin);
     assert.equal(b.status, 200, JSON.stringify(b.body)); assert.equal(b.body.item.status, 'inactivo'); assert.equal(b.body.cronogramasAnulados, 1);
@@ -530,7 +540,7 @@ test('representante: corregir sus datos, darlo de baja (libera su zona y sus dí
     assert.equal((await call('GET', '/api/territorio/zonas-ocupadas?posicion=Visitador', null, t.gerente)).body.items.length, 0, 'su territorio queda libre');
     assert.equal((await call('GET', '/api/representantes/inactivos', null, t.gerente)).body.items[0].id, id.rep);
     const r = await call('POST', `/api/representantes/${id.rep}/reactivar`, {}, t.admin);
-    assert.equal(r.status, 200); assert.ok(r.body.claveTemporal); assert.equal(r.body.item.status, 'activo');
+    assert.equal(r.status, 200); assert.equal(r.body.claveInicialGlobal, true, 'con contraseña inicial global no se muestra ninguna'); assert.equal(r.body.item.status, 'activo');
     assert.equal((await call('POST', `/api/representantes/${id.rep}/reactivar`, {}, t.admin)).status, 409);
   } finally { server.close(); }
 });
@@ -665,6 +675,30 @@ test('vehículos: modelo agregado (K5 2015) queda guardado y referencia oficial 
     // Versiones traducidas
     const vs = (await call('GET', '/api/vehiculos/versiones?anio=2021&marca=Kia&modelo=K5', null, t.admin)).body.items;
     assert.equal(vs[1].texto, 'Automática CVT (sin cambios fijos), 4 cilindros, motor de 2.0 L'); assert.equal(vs[1].original, 'Auto (AV-S8), 4 cyl, 2.0 L, SIDI');
+  } finally { server.close(); }
+});
+
+test('con vehículo: comida por día dentro o fuera de su zona según su posición; combustible por la ruta', async () => {
+  const { server, call, t, id, planificar } = await setup();
+  try {
+    const data = setup.data;
+    const gh = await data.insert('establecimientos', { tipo: 'hospital', nombre: 'Hospital Ejemplo Gaspar 2', provincia: 'Espaillat', municipio: 'Gaspar Hernández', estado: 'validado', fuente: 'manual' });
+    await call('POST', `/api/viaticos/perfiles/${id.rep}`, PERFIL, t.gerente);
+    await call('POST', '/api/viaticos/precios', { combustible: 'gasoil_regular', precioGalon: 250, vigenteDesde: '2026-01-01' }, t.finanzas);
+    await call('POST', `/api/territorio/zonas/${id.rep}`, { provincias: ['Espaillat'], municipios: { Espaillat: ['Moca', 'Gaspar Hernández'] } }, t.gerente);
+    await planificar(jornada('2026-11-23', 70), t.rep);
+    const c = (await call('POST', '/api/cronogramas', { representanteId: id.rep, fechas: ['2026-11-24'], lugares: [{ refTipo: 'establecimiento', refId: gh.id }] }, t.admin)).body.items[0];
+    await call('POST', `/api/territorio/zonas/${id.rep}`, { provincias: ['Espaillat'], municipios: { Espaillat: ['Moca'] } }, t.gerente);
+    await call('POST', '/api/viaticos/jornadas', { cronogramaId: c.id, kmEstimados: 70 }, t.rep);
+    // Sin montos por posición: la tarifa diaria del perfil (500) para los dos días
+    let p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
+    assert.equal(p.detalle.alimentacion, 1000); assert.equal(p.supuestos.comidaFuente, 'perfil');
+    // Visitador: 500 dentro y 1,500 fuera de su zona; el transporte queda automático por ruta
+    await call('POST', '/api/viaticos/tarifas-publico', { modo: 'posicion', porPosicion: { Visitador: { comidaDentro: 500, comidaFuera: 1500 } } }, t.gerente);
+    p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
+    assert.equal(p.supuestos.diasComidaDentro, 1); assert.equal(p.supuestos.diasComidaFuera, 1);
+    assert.equal(p.detalle.alimentacion, 2000); assert.equal(p.supuestos.comidaFuente, 'posicion');
+    assert.equal(p.detalle.combustible, 1000, '140 km / 35 km/gal × 250');
   } finally { server.close(); }
 });
 

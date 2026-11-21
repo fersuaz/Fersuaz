@@ -687,7 +687,7 @@ function rangoSemana(w) {
 }
 /** Cuadro por semana y explicación de cada partida del presupuesto de viáticos. */
 const COMB_NOMBRE = { gasolina_regular: 'gasolina regular', gasolina_premium: 'gasolina premium', gasoil_regular: 'gasoil regular', gasoil_optimo: 'gasoil óptimo', glp: 'GLP', electrico: 'electricidad' };
-function detalleCalculo(c) {
+function detalleCalculo(c, partes = false) {
   const s = c.supuestos; if (!s?.semanas?.length) return null;
   const pub = !!s.transportePublico;
   const tot = (k) => s.semanas.reduce((x, w) => x + (w[k] || 0), 0);
@@ -710,13 +710,16 @@ function detalleCalculo(c) {
   ] : [
     `Kilómetros: ruta de cada día, ${s.kmTipo}, saliendo de su residencia, pasando por los lugares del día y regresando. Total del mes: ${fmtN.format(s.km)} km.`,
     s.reembolsoPorKm ? `Combustible: reembolso de ${RD(s.reembolsoPorKm)} por km recorrido.` : `Combustible: ${fmtN.format(s.km)} km ÷ ${fmtN.format(s.rendimiento ?? 0)} km por galón = ${fmtN.format(s.galones)} galones${comb ? ` de ${comb}` : ''}${precios ? `, a ${precios}` : ''}.`,
-    `Comida: ${s.diasAlimentacion} día(s) de trabajo × ${RD(s.tarifaAlimentacion)} por día.`,
+    s.comidaFuera != null && s.comidaFuera !== s.comidaDentro
+      ? `Comida: ${s.diasComidaDentro} día(s) dentro de su zona × ${RD(s.comidaDentro)} y ${s.diasComidaFuera} día(s) fuera × ${RD(s.comidaFuera)}${s.comidaFuente === 'posicion' ? ` (montos de la posición ${s.posicion})` : s.comidaFuente === 'global' ? ' (monto global)' : ''}.`
+      : `Comida: ${s.diasAlimentacion} día(s) de trabajo × ${RD(s.tarifaAlimentacion)} por día.`,
   ];
   como.push(s.hospedajes ? `Hotel: ${s.hospedajes} noche(s) propuesta(s); solo cuentan las autorizadas por la gerencia.` : 'Hotel: no aplica este mes. Se agrega cuando una jornada necesita dormir fuera y la gerencia lo autoriza (se sugiere el hotel más económico que cumple los requisitos).');
   if (s.tope != null) como.push(`Tope mensual de ${pub ? 'transporte' : 'combustible'}: ${RD(s.tope)} (${s.topeFuente === 'representante' ? 'propio del representante' : 'global'}).${s.excedenteTope ? ` Lo calculado pasa el tope por ${RD(s.excedenteTope)}; se presupuesta el tope.` : ''}`);
   como.push(`Origen: ${s.diasCronograma ? `${s.diasCronograma} día(s) del cronograma aprobado` : ''}${s.diasCronograma && s.jornadas ? ' y ' : ''}${s.jornadas ? `${s.jornadas} jornada(s) creada(s)` : ''}. El salario no forma parte de los viáticos.`);
-  return h('div', {}, h('div', { class: 'tarjeta' }, h('h2', {}, 'Por semana'), tabla(cols, filas, ['', ''])),
-    h('div', { class: 'tarjeta como-se-calcula' }, h('h2', {}, 'Cómo se calcula'), h('ul', {}, como.map((x) => h('li', {}, x)))));
+  const semana = h('div', { class: 'tarjeta' }, h('h2', {}, 'Por semana'), tabla(cols, filas, ['', '']));
+  const explicacion = h('div', { class: 'tarjeta como-se-calcula' }, h('h2', {}, 'Cómo se calcula'), h('ul', {}, como.map((x) => h('li', {}, x))));
+  return partes ? { semana, como: explicacion } : h('div', {}, semana, explicacion);
 }
 
 V.jornadas = async () => {
@@ -1103,8 +1106,17 @@ V.perfiles = async () => {
       const bp = h('button', { class: 'btn', type: 'submit' }, 'Guardar montos');
       const inp = (pre, k, val) => h('input', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal', name: `${pre}.${k}`, value: val ?? '', 'aria-label': `${TARIFAS_PUB.find((x) => x[0] === k)[1]}${pre === 'global' ? '' : `, ${pre}`}` });
       const cab = h('tr', {}, h('th', { scope: 'col' }, ''), ...TARIFAS_PUB.map(([, l]) => h('th', { scope: 'col' }, l)));
+      // Visitador, Vendedor y PVC usan vehículo: su transporte sale solo de la ruta (km ÷ km por galón × precio).
+      // Se puede escribir un monto para quien de esas posiciones no tenga vehículo.
+      const CON_VEHICULO = ['Visitador', 'Vendedor', 'PVC'];
+      const celdaPos = (pos, k) => {
+        const i = inp(pos, k, tp.porPosicion?.[pos]?.[k]);
+        if (CON_VEHICULO.includes(pos) && k.startsWith('transporte')) { i.placeholder = 'Automático por ruta'; i.title = 'Se calcula por los km de su ruta y su vehículo. Escribe un monto solo para quien no tenga vehículo.'; }
+        return h('td', {}, i);
+      };
       const tablaPos = h('div', { class: 'tabla-montos' }, h('table', {}, h('thead', {}, cab),
-        h('tbody', {}, ...POSICIONES.map((pos) => h('tr', {}, h('th', { scope: 'row' }, pos), ...TARIFAS_PUB.map(([k]) => h('td', {}, inp(pos, k, tp.porPosicion?.[pos]?.[k]))))))));
+        h('tbody', {}, ...POSICIONES.map((pos) => h('tr', {}, h('th', { scope: 'row' }, pos, CON_VEHICULO.includes(pos) ? h('small', { style: 'display:block;font-weight:400;color:var(--texto-2)' }, 'Transporte por ruta') : null), ...TARIFAS_PUB.map(([k]) => celdaPos(pos, k)))))),
+        h('p', { class: 'hint', style: 'margin-top:.75rem' }, 'Comida: aplica a todos los de la posición, tengan o no vehículo (dentro o fuera de su zona). Transporte de Visitador, Vendedor y PVC: automático por los km de su ruta, el rendimiento de su vehículo y el precio del combustible; escribe un monto solo si alguno no tiene vehículo.'));
       const filaGlobal = h('div', { class: 'tabla-montos' }, h('table', {}, h('thead', {}, cab.cloneNode(true)),
         h('tbody', {}, h('tr', {}, h('th', { scope: 'row' }, 'Todas las posiciones'), ...TARIFAS_PUB.map(([k]) => h('td', {}, inp('global', k, tp.global?.[k])))))));
       const modo = h('fieldset', { class: 'modo-montos' }, h('legend', {}, '¿Cómo se fijan los montos?'),
@@ -1112,8 +1124,8 @@ V.perfiles = async () => {
         h('label', {}, h('input', { type: 'radio', name: 'modo', value: 'global', checked: tp.modo === 'global' }), h('span', {}, h('strong', {}, 'Un monto para todos'), h('small', {}, 'El mismo monto sin importar la posición.'))));
       const pintarModo = () => { const g = modo.querySelector('input:checked').value === 'global'; tablaPos.hidden = g; filaGlobal.hidden = !g; };
       modo.addEventListener('change', pintarModo); pintarModo();
-      const fp = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Transporte público: montos por día'),
-        h('p', { class: 'hint' }, 'Para quienes no tienen vehículo. Un día del cronograma cuenta como "dentro" si todas sus paradas están en su zona de trabajo (las provincias y municipios que le asignaste), aunque no viva allí; si va a un lugar fuera de su zona, cuenta como "fuera". Un representante puede tener montos propios en su perfil.'),
+      const fp = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Comida y transporte: montos por día'),
+        h('p', { class: 'hint' }, 'Comida por día para todos y transporte para quienes no tienen vehículo. Un día del cronograma cuenta como "dentro" si todas sus paradas están en su zona de trabajo (las provincias y municipios que le asignaste), aunque no viva allí; si va a un lugar fuera de su zona, cuenta como "fuera". Un representante puede tener montos propios en su perfil.'),
         modo, tablaPos, filaGlobal, h('div', { class: 'acciones' }, bp));
       const leer = (pre) => Object.fromEntries(TARIFAS_PUB.map(([k]) => [k, fp.elements[`${pre}.${k}`].value || null]));
       fp.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(fp, bp, () => api('POST', '/api/viaticos/tarifas-publico', { modo: fp.elements.modo.value, global: leer('global'), porPosicion: Object.fromEntries(POSICIONES.map((p) => [p, leer(p)])) }))) router(); });
@@ -1200,7 +1212,7 @@ V.viatico = async () => {
   const bloques = [h('p', {}, h('a', { href: `#viaticos?mes=${mes}` }, 'Volver al consolidado'))];
   const hoteles = js.filter((j) => j.hospedaje && j.estado !== 'cancelada');
   const sub = (t) => h('small', { style: 'display:block;color:var(--texto-2)' }, t);
-  if (hoteles.length) bloques.push(h('h2', { style: 'margin:1rem 0 .75rem;font-size:1.2rem' }, 'Hospedajes'), tabla([
+  if (hoteles.length) bloques.push(S('hoteles', `Hospedajes (${fmtN.format(hoteles.length)})`, tabla([
     { t: 'Fecha', v: (j) => fecha(j.fecha) },
     { t: 'Hotel', v: (j) => [j.hospedaje.hotel ?? 'Sin nombre', sub(`${j.hospedaje.municipio ?? ''}${j.hospedaje.telefonoHotel ? `. Tel. ${j.hospedaje.telefonoHotel}` : ''}`),
       j.hospedaje.cambioHotel ? sub(`En vez de ${j.hospedaje.recomendado ?? 'el aprobado'}`) : null] },
@@ -1219,7 +1231,7 @@ V.viatico = async () => {
         accion(() => api('POST', `/api/viaticos/jornadas/${j.id}/hospedaje`, { aprobar: true, actualizarPrecio }));
       } }, 'Autorizar'),
       h('button', { class: 'btn-sec btn-peq', onclick: async () => { const m = await confirmar('No autorizar hotel', 'Explica la razón al representante.', { okTexto: 'No autorizar', pedirMotivo: true }); if (m != null) accion(() => api('POST', `/api/viaticos/jornadas/${j.id}/hospedaje`, { aprobar: false, nota: m })); } }, 'No autorizar')] : '' },
-  ], hoteles, ['', '']));
+  ], hoteles, ['', ''])));
   if (!p || ['borrador', 'rechazado'].includes(p.estado)) {
     bloques.push(h('div', { class: 'aviso' }, p?.estado === 'rechazado' ? `Rechazado: ${p.motivo}. Puedes asignarlo de nuevo cuando esté listo.` : 'Aún no tiene viáticos asignados este mes. Asígnalos desde su cronograma aprobado: el representante verá su balance y registrará sus gastos.'));
     if (ger && c.detalle) bloques.push(h('div', { class: 'acciones' }, h('button', { class: 'btn', disabled: c.faltan?.length > 0, title: c.faltan?.length ? c.faltan.join(' ') : null, onclick: async () => {
@@ -1228,10 +1240,11 @@ V.viatico = async () => {
     } }, `Asignar ${RD(c.total)}`)));
     if (c.faltan?.length) bloques.push(h('div', { class: 'aviso' }, c.faltan.join(' ')));
     for (const a of c.avisos ?? []) bloques.push(h('div', { class: 'aviso' }, a));
-    if (c.detalle) bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Cálculo del mes'), desglose(c.detalle, c.total)), detalleCalculo(c));
+    if (c.detalle) { const d = detalleCalculo(c, true); bloques.push(S('calculo', 'Cálculo del mes', h('div', { class: 'tarjeta' }, h('h2', {}, 'Cálculo del mes'), desglose(c.detalle, c.total)), d?.semana), S('como', 'Cómo se calcula', d?.como)); }
   } else {
-    bloques.push(balanceViaticos(p), h('div', { class: 'tarjeta' }, h('h2', {}, `Presupuesto ${EST_P[p.estado].toLowerCase()}${p.origen === 'asignado' ? ' (asignado por la gerencia)' : ''}`), desglose(p.detalle, p.total),
-      h('p', { class: 'hint', style: 'margin-top:1rem' }, `${p.supuestos.jornadas} jornadas, ${fmtN.format(p.supuestos.km)} km (${p.supuestos.kmTipo}).`)), bloqueResumen(p));
+    const dp = detalleCalculo({ supuestos: p.supuestos }, true);
+    bloques.push(S('calculo', 'Cálculo del mes', balanceViaticos(p), h('div', { class: 'tarjeta' }, h('h2', {}, `Presupuesto ${EST_P[p.estado].toLowerCase()}${p.origen === 'asignado' ? ' (asignado por la gerencia)' : ''}`), desglose(p.detalle, p.total),
+      h('p', { class: 'hint', style: 'margin-top:1rem' }, `${p.supuestos.jornadas} jornadas, ${fmtN.format(p.supuestos.km)} km (${p.supuestos.kmTipo}).`)), bloqueResumen(p), dp?.semana), dp ? S('como', 'Cómo se calcula', dp.como) : null);
     const acc = h('div', { class: 'acciones' });
     if (ger && p.estado === 'solicitado') {
       acc.append(h('button', { class: 'btn', onclick: async () => { const m = await confirmar('Aprobar presupuesto', `Monto a aprobar (máximo ${RD(p.total)}). Déjalo vacío para aprobar el total.`, { okTexto: 'Aprobar', pedirMotivo: true }); if (m == null) return; accion(() => api('POST', `/api/viaticos/presupuestos/${p.id}/aprobar`, { montoAprobado: m.trim() ? Number(m.replace(',', '.')) : null })); } }, 'Aprobar'),
@@ -1243,18 +1256,18 @@ V.viatico = async () => {
         h('div', { class: 'form-fila' }, campo('monto', 'Monto RD$', { type: 'number', min: 0.01, step: 0.01, value: r2(p.montoAprobado - p.resumen.entregado) }), campo('fecha', 'Fecha', { type: 'date', value: hoy(), max: hoy() }), campo('referencia', 'Referencia (transferencia o cheque)')),
         h('div', { class: 'acciones' }, b));
       f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', `/api/viaticos/presupuestos/${p.id}/desembolsos`, { monto: f.monto.value, fecha: f.fecha.value, referencia: f.referencia.value }))) recargar(); });
-      bloques.push(f);
+      bloques.push(S('calculo', 'Cálculo del mes', f));
     }
     if (fin && p.estado === 'desembolsado') acc.append(h('button', { class: 'btn', onclick: async () => { if (await confirmar('Liquidar viáticos', `Cerrar ${mes} de ${nombre}. Entregado ${RD(p.resumen.entregado)}, justificado ${RD(p.resumen.justificado)}.`, { okTexto: 'Liquidar' })) accion(() => api('POST', `/api/viaticos/presupuestos/${p.id}/liquidar`)); } }, 'Liquidar'));
-    bloques.push(acc, h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Gastos y comprobantes'),
+    bloques.push(S('calculo', 'Cálculo del mes', acc), S('gastos', `Gastos y comprobantes (${fmtN.format((p.gastos ?? []).length)})`,
       tablaGastos(p, fin && p.estado !== 'liquidado' ? (g) => g.estado === 'reportado' ? h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' },
         h('button', { class: 'btn btn-peq', onclick: () => accion(() => api('POST', `/api/viaticos/presupuestos/${p.id}/gastos/${g.id}/aceptar`)) }, 'Aceptar'),
-        h('button', { class: 'btn-sec btn-peq', onclick: async () => { const m = await confirmar('No aceptar gasto', 'Explica el motivo.', { okTexto: 'No aceptar', pedirMotivo: true }); if (m != null) accion(() => api('POST', `/api/viaticos/presupuestos/${p.id}/gastos/${g.id}/rechazar`, { motivo: m })); } }, 'No aceptar')) : '' : null));
+        h('button', { class: 'btn-sec btn-peq', onclick: async () => { const m = await confirmar('No aceptar gasto', 'Explica el motivo.', { okTexto: 'No aceptar', pedirMotivo: true }); if (m != null) accion(() => api('POST', `/api/viaticos/presupuestos/${p.id}/gastos/${g.id}/rechazar`, { motivo: m })); } }, 'No aceptar')) : '' : null)));
   }
-  bloques.push(h('h2', { style: 'margin:1.5rem 0 .75rem;font-size:1.2rem' }, 'Jornadas'),
+  bloques.push(S('jornadas', `Jornadas (${fmtN.format(js.length)})`,
     tabla([{ t: 'Fecha', v: (j) => fecha(j.fecha) }, { t: 'Paradas', v: (j) => j.paradas.map((x) => x.lugar).join(' → ') }, { t: 'Km', num: true, v: (j) => `${fmtN.format(j.kmEstimados)}${j.kmReales != null ? ` / ${fmtN.format(j.kmReales)} real` : ''}` }, { t: 'Estado', v: (j) => chipP(j.estado) }],
-      js, ['Sin jornadas en el mes', '']));
-  return vista(`${nombre}: viáticos de ${mes}`, null, ...bloques);
+      js, ['Sin jornadas creadas en el mes', 'El representante las crea desde su cronograma; mientras tanto, el cálculo usa los días aprobados.'], { porPagina: 10 })));
+  return vistaS('viatico', ['calculo', 'como', 'jornadas', 'hoteles', 'gastos'], `${nombre}: viáticos de ${mes}`, null, ...bloques);
 };
 const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -1742,6 +1755,16 @@ async function buscarReferencia({ marca, modelo, anio }, boton, caja, usar) {
   boton.disabled = false; boton.textContent = texto0;
 }
 
+/** Muestra el usuario y la contraseña para entregar al representante (la temporal solo se ve una vez). */
+function mostrarCredenciales(titulo, x, alCerrar) {
+  $('#dialogo-titulo').textContent = titulo;
+  $('#dialogo-cuerpo').replaceChildren(h('dl', { class: 'credenciales-lista' }, h('dt', {}, 'Usuario'), h('dd', {}, x.usuario),
+    h('dt', {}, x.claveInicialGlobal ? 'Contraseña' : 'Contraseña temporal'), h('dd', {}, x.claveInicialGlobal ? 'La contraseña inicial global de FERSUAZ' : x.claveTemporal)),
+    h('p', { class: 'hint' }, x.claveInicialGlobal ? 'Al entrar por primera vez deberá cambiarla por una propia.' : 'No se volverá a mostrar. Entrégala por un medio seguro; al entrar deberá cambiarla.'));
+  $('#dialogo-ok').textContent = 'Listo';
+  if (alCerrar) $('#dialogo').addEventListener('close', alCerrar, { once: true });
+  $('#dialogo').showModal();
+}
 /** Provincias (y municipios opcionales) de una zona, como casillas. */
 function filasZona(div, item) {
   const marcadas = new Set(item?.provincias ?? []);
@@ -1824,9 +1847,9 @@ async function altaRepresentante(div) {
     const r = await enviar(f, b, () => api('POST', '/api/representantes', body));
     if (!r) return;
     const copiar = h('button', { type: 'button', class: 'btn-sec' }, 'Copiar usuario y clave');
-    copiar.addEventListener('click', async () => { try { await navigator.clipboard.writeText(`Usuario: ${r.representante.usuario}\nContraseña temporal: ${r.claveTemporal}`); copiar.textContent = 'Copiado'; } catch { copiar.textContent = 'Cópialo a mano'; } });
+    copiar.addEventListener('click', async () => { try { await navigator.clipboard.writeText(`Usuario: ${r.representante.usuario}\nContraseña: ${r.claveInicialGlobal ? 'la contraseña inicial de FERSUAZ' : r.claveTemporal}\nAl entrar por primera vez debe cambiarla.`); copiar.textContent = 'Copiado'; } catch { copiar.textContent = 'Cópialo a mano'; } });
     salida.replaceChildren(h('div', { class: 'credenciales', role: 'status' }, h('h3', {}, `${r.representante.nombre} quedó registrado`),
-      h('dl', {}, h('div', {}, h('dt', {}, 'Usuario'), h('dd', {}, r.representante.usuario)), h('div', {}, h('dt', {}, 'Contraseña temporal'), h('dd', {}, r.claveTemporal))),
+      h('dl', {}, h('div', {}, h('dt', {}, 'Usuario'), h('dd', {}, r.representante.usuario)), h('div', {}, h('dt', {}, r.claveInicialGlobal ? 'Contraseña' : 'Contraseña temporal'), h('dd', {}, r.claveInicialGlobal ? 'La contraseña inicial global' : r.claveTemporal))),
       h('p', {}, 'Entrégale estos datos en persona o por un medio seguro. Esta contraseña no se volverá a mostrar; si la pierde, genera una nueva desde la lista de representantes. Al entrar, deberá cambiarla.'),
       h('div', { class: 'acciones' }, copiar, h('a', { class: 'btn', href: `#representantes?rep=${r.representante.id}&sec=lugares` }, 'Ver su zona'))));
     salida.scrollIntoView({ block: 'nearest' });
@@ -1851,9 +1874,24 @@ function vistaCambioClave() {
   return [h('h1', {}, `Hola, ${yo.fullName.split(' ')[0]}`), h('p', { class: 'vista-sub' }, `Tu usuario es ${yo.username ?? yo.email}.`), f];
 }
 
+async function formClaveInicial() {
+  const { configurada } = await api('GET', '/api/representantes/clave-inicial');
+  const b = h('button', { class: 'btn', type: 'submit' }, configurada ? 'Cambiar contraseña inicial' : 'Guardar contraseña inicial');
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Contraseña inicial global'),
+    h('p', {}, configurada ? 'Hay una contraseña inicial configurada. Por seguridad no se puede ver; puedes cambiarla o quitarla.' : 'Aún no hay contraseña inicial: a cada representante se le genera una temporal distinta al azar.'),
+    h('p', { class: 'hint' }, 'Se usa al registrar un representante, al cambiarle el nombre, al darle "Nueva clave" y al reactivarlo. Al entrar por primera vez, el sistema le obliga a cambiarla por una propia. Cuidado: quien la conozca puede entrar a las cuentas que todavía no la cambiaron; compártela solo con el equipo nuevo y cámbiala de vez en cuando.'),
+    h('div', { class: 'form-fila' }, campo('clave', 'Contraseña inicial', { type: 'password', autocomplete: 'new-password', minlength: 10 }, '(10 o más caracteres, con letras y números)')),
+    h('div', { class: 'acciones' }, b, configurada ? h('button', { class: 'btn-sec btn-peligro', type: 'button', onclick: async () => {
+      if (!(await confirmar('Quitar contraseña inicial', 'Desde ahora, cada representante recibirá una contraseña temporal distinta al azar.', { okTexto: 'Quitar' }))) return;
+      try { await api('POST', '/api/representantes/clave-inicial', { quitar: true }); router(); } catch (e) { alert(e.message); }
+    } }, 'Quitar') : null));
+  f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/representantes/clave-inicial', { clave: f.clave.value }))) { f.clave.value = ''; router(); } });
+  return f;
+}
 V.representantes = async () => {
   const ver = param('ver') || 'zonas';
-  const seg = segmentos('Representantes', [...(ES_GER() ? [['nuevo', 'Nuevo representante']] : []), ['zonas', 'Zonas por representante'], ['preregistro', 'Pre-registro por Excel']], ver, (id) => irA('representantes', { ver: id }));
+  const seg = segmentos('Representantes', [...(ES_GER() ? [['nuevo', 'Nuevo representante']] : []), ['zonas', 'Zonas por representante'], ['preregistro', 'Pre-registro por Excel'], ...(yo.role === 'administrador' ? [['clave', 'Contraseña inicial']] : [])], ver, (id) => irA('representantes', { ver: id }));
+  if (ver === 'clave' && yo.role === 'administrador') return vista('Representantes', 'La contraseña con la que entra por primera vez cada representante nuevo o cuyo nombre cambió.', seg, await formClaveInicial());
   if (ver === 'nuevo' && ES_GER()) return vista('Representantes', 'Registra a cada Promotora, Visitador, Vendedor o PVC: su usuario se crea solo y su zona, cronograma, km, combustible y viáticos quedan conectados.', seg, await altaRepresentante(await division()));
   if (ver === 'preregistro') {
     const { items } = await api('GET', '/api/territorio/preregistros');
@@ -1900,21 +1938,20 @@ V.representantes = async () => {
   }
   const zonas = await Promise.all(reps.map((r) => api('GET', `/api/territorio/zonas/${r.id}`).then((z) => z.item).catch(() => ({ provincias: [], municipios: {} }))));
   const nuevaClave = async (r) => {
-    if (!(await confirmar('Nueva contraseña temporal', `Se generará una contraseña temporal para ${r.fullName}. La actual dejará de funcionar y deberá cambiarla al entrar.`, { okTexto: 'Generar' }))) return;
+    if (!(await confirmar('Nueva contraseña temporal', `${r.fullName} volverá a la contraseña inicial (la global, si está configurada, o una temporal nueva). La actual dejará de funcionar y deberá cambiarla al entrar.`, { okTexto: 'Generar' }))) return;
     try {
       const x = await api('POST', `/api/representantes/${r.id}/clave`);
-      $('#dialogo-titulo').textContent = 'Contraseña temporal'; $('#dialogo-cuerpo').replaceChildren(h('dl', { class: 'credenciales-lista' }, h('dt', {}, 'Usuario'), h('dd', {}, x.usuario), h('dt', {}, 'Contraseña temporal'), h('dd', {}, x.claveTemporal)), h('p', { class: 'hint' }, 'No se volverá a mostrar. Entrégala por un medio seguro.'));
-      $('#dialogo-ok').textContent = 'Listo'; $('#dialogo').showModal();
+      mostrarCredenciales('Nueva contraseña', x);
     } catch (e) { alert(e.message); }
   };
   const texto = (z) => z.provincias.map((p) => (z.municipios?.[p]?.length ? `${p} (${z.municipios[p].join(', ')})` : p)).join('; ');
   const editarDatos = async (r) => {
     const [nombre, ...resto] = (r.fullName ?? '').split(' ');
-    const v = await confirmar('Editar datos', `Corrige los datos de ${r.fullName}. Su usuario para entrar no cambia.`, { okTexto: 'Guardar', campos: [
+    const v = await confirmar('Editar datos', `Corrige los datos de ${r.fullName}. Si cambias el nombre o el apellido, se le crea un usuario nuevo y vuelve a la contraseña inicial (deberá cambiarla al entrar).`, { okTexto: 'Guardar', campos: [
       { name: 'nombre', label: 'Nombre', value: nombre }, { name: 'apellido', label: 'Apellido', value: resto.join(' ') },
       { name: 'telefono', label: 'Teléfono (opcional)', value: r.phone ?? '', type: 'tel', inputmode: 'tel' }, { name: 'correo', label: 'Correo (opcional)', value: r.email ?? '', type: 'email' }] });
     if (!v) return;
-    try { await api('POST', `/api/representantes/${r.id}/editar`, v); router(); } catch (e) { alert(e.fields ? Object.values(e.fields).join(' ') : e.message); }
+    try { const x = await api('POST', `/api/representantes/${r.id}/editar`, v); if (x.usuario) mostrarCredenciales('Nombre cambiado: acceso nuevo', x, () => router()); else router(); } catch (e) { alert(e.fields ? Object.values(e.fields).join(' ') : e.message); }
   };
   const darBaja = async (r) => {
     const m = await confirmar('Dar de baja', `${r.fullName} ya no podrá entrar. Su zona queda libre para otro ${r.position ?? 'representante'} y se anulan sus días de cronograma futuros que no tengan jornada. Su historial (jornadas, viáticos, recetas) se conserva y puedes reactivarlo después.`, { okTexto: 'Dar de baja', pedirMotivo: true });
@@ -1926,8 +1963,7 @@ V.representantes = async () => {
     if (!(await confirmar('Reactivar', `${r.fullName} podrá entrar de nuevo con una contraseña temporal. Revisa su zona después: si otro de su posición ya cubre ese territorio, deberás ajustarla.`, { okTexto: 'Reactivar' }))) return;
     try {
       const x = await api('POST', `/api/representantes/${r.id}/reactivar`);
-      $('#dialogo-titulo').textContent = 'Reactivado'; $('#dialogo-cuerpo').replaceChildren(h('dl', { class: 'credenciales-lista' }, h('dt', {}, 'Usuario'), h('dd', {}, x.usuario), h('dt', {}, 'Contraseña temporal'), h('dd', {}, x.claveTemporal)), h('p', { class: 'hint' }, 'No se volverá a mostrar. Entrégala por un medio seguro.'));
-      $('#dialogo-ok').textContent = 'Listo'; $('#dialogo').addEventListener('close', () => router(), { once: true }); $('#dialogo').showModal();
+      mostrarCredenciales('Reactivado', x, () => router());
     } catch (e) { alert(e.message); }
   };
   const bajas = inactivos.length ? h('details', { class: 'tarjeta bajas', style: 'margin-top:1.25rem' }, h('summary', {}, `Dados de baja (${fmtN.format(inactivos.length)})`),
