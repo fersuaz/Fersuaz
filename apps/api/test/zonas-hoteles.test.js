@@ -101,6 +101,16 @@ test('vehículos EPA: lee menús y ficha en JSON o XML', async () => {
   assert.equal(leerFicha({ comb08: '0' }), null);
 });
 
+test('versiones de la EPA en palabras claras', async () => {
+  const { traducirVersion } = await import('../src/vehiculos.js');
+  assert.equal(traducirVersion('Auto 8-spd, 6 cyl, 3.8 L'), 'Automática de 8 velocidades, 6 cilindros, motor de 3.8 L');
+  assert.equal(traducirVersion('Man 6-spd, 4 cyl, 1.6 L, Turbo'), 'Manual de 6 velocidades, 4 cilindros, motor de 1.6 L, turbo');
+  assert.equal(traducirVersion('Auto (S6), 4 cyl, 2.4 L, SIDI'), 'Automática de 6 velocidades, 4 cilindros, motor de 2.4 L');
+  assert.equal(traducirVersion('Auto(AM7), 4 cyl, 1.6 L, Turbo'), 'Automática de doble embrague de 7 velocidades, 4 cilindros, motor de 1.6 L, turbo');
+  assert.equal(traducirVersion('Auto (variable gear ratios), 4 cyl, 1.8 L, Hybrid'), 'Automática CVT (sin cambios fijos), 4 cilindros, motor de 1.8 L, híbrido');
+  assert.equal(traducirVersion('Auto (A1), 4 cyl, 2.0 L, PHEV'), 'Automática de una velocidad, 4 cilindros, motor de 2.0 L, híbrido enchufable');
+});
+
 test('alta: usuario a partir del nombre y clave temporal con letras y números', async () => {
   const { usuarioBase, claveTemporal } = await import('../src/representantes.js');
   assert.equal(usuarioBase('José Miguel', 'Pérez de la Cruz'), 'jperez');

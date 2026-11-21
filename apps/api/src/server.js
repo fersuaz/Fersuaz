@@ -16,7 +16,7 @@ import { SinLugares, crearLugares } from './lugares.js';
 import { createBarrido } from './barrido-google.js';
 import { createHoteles, REQUISITOS } from './hoteles.js';
 import { createInicio } from './inicio.js';
-import { createVehiculos } from './vehiculos.js';
+import { createVehiculos, createVehiculosAgregados } from './vehiculos.js';
 import { createAltaRepresentantes } from './representantes.js';
 import { createBanco, BANCOS, TIPOS_CUENTA } from './banco.js';
 import { signSession, verifySession } from './security.js';
@@ -80,6 +80,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   }
 
   const vehiculos = createVehiculos({ fetchImpl: vehiculosFetch });
+  const agregados = createVehiculosAgregados({ data, audit: (e) => store.addAudit(e) });
   const banco = createBanco({ data, users: store, audit: (e) => store.addAudit(e) });
   const altas = createAltaRepresentantes({ store, t, v });
   const inicio = createInicio({ data, users: store, v, c, t, now: now ?? (() => new Date()) });
@@ -170,10 +171,36 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', /^\/api\/representantes\/([\w-]+)\/clave$/, async ({ me, p }) => altas.restablecerClave(me, p[1]));
   // Vehículos: rendimiento de FuelEconomy.gov (EPA)
   const soloGestion = (me) => { if (!['administrador', 'gerencia', 'supervisor'].includes(me?.role)) throw new AuthError(403, 'No tienes permiso para esta acción.'); };
-  const conVehiculos = async (fn) => { try { return await fn(); } catch (err) { throw new AuthError(err.status ?? 503, err.message); } };
+  const conVehiculos = async (fn) => { try { return await fn(); } catch (err) { throw new AuthError(err.status ?? 503, err.message, err.fields); } };
+  // Si la EPA no responde, igual se muestran los modelos agregados por la gestión.
+  const epaOVacio = async (fn, hayLocales) => { try { return await fn(); } catch (err) { if (hayLocales) return []; throw new AuthError(err.status ?? 503, err.message); } };
   ruta('GET', '/api/vehiculos/anios', async ({ me }) => { soloGestion(me); return { items: await conVehiculos(() => vehiculos.anios()) }; });
-  ruta('GET', '/api/vehiculos/marcas', async ({ me, q }) => { soloGestion(me); return { items: await conVehiculos(() => vehiculos.marcas(q.get('anio'))) }; });
-  ruta('GET', '/api/vehiculos/modelos', async ({ me, q }) => { soloGestion(me); return { items: await conVehiculos(() => vehiculos.modelos(q.get('anio'), q.get('marca'))) }; });
+  ruta('GET', '/api/vehiculos/marcas', async ({ me, q }) => {
+    soloGestion(me);
+    const locales = [...new Set((await agregados.listar(q.get('anio'))).map((v) => v.marca))];
+    const epa = await epaOVacio(() => vehiculos.marcas(q.get('anio')), locales.length);
+    const extra = locales.filter((m) => !epa.some((x) => x.toLowerCase() === m.toLowerCase()));
+    return { items: [...epa, ...extra].sort((a, b) => a.localeCompare(b, 'es')) };
+  });
+  ruta('GET', '/api/vehiculos/modelos', async ({ me, q }) => {
+    soloGestion(me);
+    const locales = await agregados.listar(q.get('anio'), q.get('marca'));
+    return { items: await epaOVacio(() => vehiculos.modelos(q.get('anio'), q.get('marca')), locales.length), agregados: locales };
+  });
+  ruta('GET', '/api/vehiculos/referencia', async ({ me, q }) => {
+    soloGestion(me);
+    const marca = q.get('marca'); const modelo = q.get('modelo'); const anio = Number(q.get('anio'));
+    const norm = (t) => String(t ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    // 1) un modelo ya agregado por la gestión, del año más cercano
+    const propios = [];
+    for (let d = 0; d <= 8 && !propios.length; d++) for (const a of new Set([anio - d, anio + d])) propios.push(...(await agregados.listar(a, marca)).filter((v) => norm(v.modelo) === norm(modelo)));
+    const agregado = propios[0] ? { anio: propios[0].anio, marca: propios[0].marca, modelo: propios[0].modelo, kmPorGalon: propios[0].kmPorGalon, fuente: 'agregado' } : null;
+    // 2) el dato oficial de la EPA
+    let epa = null; let epaError = null;
+    try { epa = await vehiculos.referencia(marca, modelo, anio); } catch (err) { epaError = err.message; }
+    return { agregado, epa, epaError };
+  });
+  ruta('POST', '/api/vehiculos/agregados', async ({ me, body }) => { soloGestion(me); return [201, { item: await conVehiculos(() => agregados.agregar(me, body ?? {})) }]; });
   ruta('GET', '/api/vehiculos/versiones', async ({ me, q }) => { soloGestion(me); return { items: await conVehiculos(() => vehiculos.versiones(q.get('anio'), q.get('marca'), q.get('modelo'))) }; });
   ruta('GET', /^\/api\/vehiculos\/ficha\/(\d+)$/, async ({ me, p }) => { soloGestion(me); return { item: await conVehiculos(() => vehiculos.ficha(p[1])) }; });
   // Panel de inicio por rol
