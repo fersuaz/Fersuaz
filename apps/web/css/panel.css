@@ -586,3 +586,33 @@ a.btn, a.btn-sec { text-decoration: none; }
 .como-se-calcula ul { margin: 0; padding-left: 1.2rem; display: grid; gap: .55rem; color: var(--tinta); line-height: 1.5; }
 .como-se-calcula li::marker { color: var(--celeste); }
 .sem-nombre { display: grid; white-space: nowrap; } .sem-nombre small { color: var(--texto-2); }
+
+/* Hotel en la jornada */
+.hotel-jornada summary { cursor: pointer; font-weight: 600; color: var(--marino); }
+.hotel-jornada[open] summary { margin-bottom: 1rem; }
+.hotel-aprobado { display: grid; gap: .15rem; padding: 1rem 1.15rem; border-radius: 14px; background: #fff; border: 1.5px solid var(--celeste); margin-bottom: 1rem; }
+.hotel-aprobado strong { font: 600 1.15rem var(--serif); color: var(--marino); }
+.hotel-aprobado small { color: var(--texto-2); }
+.hotel-sello { justify-self: start; padding: .15rem .6rem; border-radius: 999px; background: var(--marino); color: #fff; font-size: .78rem; font-weight: 600; margin-bottom: .25rem; }
+.hotel-precio { font-weight: 600; color: var(--celeste-texto); }
+.hotel-modos { margin: 0 0 1rem; }
+.hotel-otro, .precio-distinto { margin-bottom: 1rem; }
+.precio-campos { margin-top: .75rem; padding: .9rem 1rem; border-radius: 12px; background: #fff; border: 1.5px dashed var(--linea); }
+.precio-subio { display: block; color: var(--alerta); font-weight: 600; }
+
+/* Balance de viáticos */
+.balance-cifras { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1rem; }
+.balance-cifras > div { display: grid; gap: .2rem; padding: .9rem 1rem; border-radius: 14px; background: var(--panel); }
+.balance-cifras span { color: var(--texto-2); font-size: .9rem; }
+.balance-cifras strong { font: 600 1.45rem var(--serif); color: var(--marino); }
+.balance-cifras .balance-disp { background: var(--marino); }
+.balance-cifras .balance-disp span { color: #C9E1EE; }
+.balance-cifras .balance-disp strong { color: #fff; }
+.balance-cifras .balance-neg strong, td.balance-neg { color: var(--alerta); }
+.balance-barra { height: 10px; border-radius: 999px; background: var(--panel); margin: 1rem 0; overflow: hidden; }
+.balance-barra span { display: block; height: 100%; border-radius: 999px; background: var(--celeste); }
+.balance-partidas { width: 100%; border-collapse: collapse; margin-top: .5rem; }
+.balance-partidas th, .balance-partidas td { padding: .5rem .4rem; text-align: right; border-top: 1px solid var(--linea); font-variant-numeric: tabular-nums; }
+.balance-partidas th:first-child { text-align: left; }
+.balance-partidas thead th { border-top: 0; font: 500 .82rem var(--sans); color: var(--texto-2); }
+td .sem-nombre, .td-fecha { white-space: nowrap; }

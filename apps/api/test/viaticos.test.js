@@ -284,8 +284,62 @@ test('hoteles: la administración confirma precio y requisitos; se recomienda el
     assert.equal(j.body.item.hospedaje.tarifaNoche, 1800); assert.equal(j.body.item.hospedaje.hotel, 'Hotel Ejemplo C'); assert.equal(j.body.item.hospedaje.hotelId, c.id);
     const mal = await planificar(jornada('2026-11-26', 100, { hospedaje: { hotelId: b.id, noches: 1, motivo: 'Ejemplo' } }), t.rep);
     assert.equal(mal.status, 422);
+    // El hotel aprobado a su precio queda autorizado solo
+    assert.equal(j.body.item.hospedaje.estado, 'aprobado'); assert.equal(j.body.item.hospedaje.decididoPor, 'hotel-aprobado');
+    // Otro hotel: exige la razón y espera a la gerencia (que recibe aviso)
+    const sinRazon = await planificar(jornada('2026-11-27', 100, { hospedaje: { hotelId: a.id, noches: 1 } }), t.rep);
+    assert.equal(sinRazon.status, 422); assert.ok(sinRazon.body.fields['hospedaje.motivoCambio']);
+    const otro = await call('POST', '/api/viaticos/jornadas', { cronogramaId: (await call('GET', '/api/cronogramas?mes=2026-11', null, t.rep)).body.items.find((x) => x.fecha === '2026-11-27').id, hospedaje: { hotelId: a.id, noches: 1, motivoCambio: 'El aprobado estaba lleno (Ejemplo)' }, kmEstimados: 100 }, t.rep);
+    assert.equal(otro.status, 201, JSON.stringify(otro.body));
+    assert.equal(otro.body.item.hospedaje.estado, 'propuesto'); assert.equal(otro.body.item.hospedaje.cambioHotel, true); assert.equal(otro.body.item.hospedaje.recomendado, 'Hotel Ejemplo C');
+    assert.ok((await call('GET', '/api/notificaciones', null, t.gerente)).body.items.some((x) => x.titulo === 'Cambio de hotel por aprobar'));
+    // Precio distinto: exige el comprobante; la gerencia llama, aprueba y puede actualizar el precio del hotel
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]).toString('base64');
+    const sinVoucher = await planificar(jornada('2026-11-30', 100, { hospedaje: { hotelId: c.id, noches: 1, tarifaCobrada: 2100, motivoCambio: 'El hotel subió el precio (Ejemplo)' } }), t.rep);
+    assert.equal(sinVoucher.status, 422); assert.ok(sinVoucher.body.fields['hospedaje.comprobante']);
+    const cron30 = (await call('GET', '/api/cronogramas?mes=2026-11', null, t.rep)).body.items.find((x) => x.fecha === '2026-11-30').id;
+    const caro = await call('POST', '/api/viaticos/jornadas', { cronogramaId: cron30, kmEstimados: 100, hospedaje: { hotelId: c.id, noches: 1, tarifaCobrada: 2100, motivoCambio: 'El hotel subió el precio (Ejemplo)', comprobante: { nombre: 'voucher.png', tipo: 'image/png', base64: png } } }, t.rep);
+    assert.equal(caro.status, 201, JSON.stringify(caro.body));
+    const hs = caro.body.item.hospedaje;
+    assert.equal(hs.estado, 'propuesto'); assert.equal(hs.cambioPrecio, true); assert.equal(hs.tarifaAprobada, 1800); assert.equal(hs.tarifaNoche, 2100); assert.ok(hs.comprobante);
+    assert.ok((await call('GET', '/api/notificaciones', null, t.gerente)).body.items.some((x) => x.titulo === 'Hotel con precio distinto' && /2,100/.test(x.texto)));
+    assert.equal((await call('POST', `/api/viaticos/jornadas/${otro.body.item.id}/hospedaje`, { aprobar: false }, t.gerente)).status, 422, 'no autorizar exige la razón');
+    assert.equal((await call('POST', `/api/viaticos/jornadas/${otro.body.item.id}/hospedaje`, { aprobar: false, nota: 'Usa el hotel aprobado' }, t.gerente)).status, 200);
+    assert.equal((await call('POST', `/api/viaticos/jornadas/${caro.body.item.id}/hospedaje`, { aprobar: true, actualizarPrecio: true }, t.gerente)).status, 200);
+    assert.equal((await call('POST', `/api/viaticos/jornadas/${caro.body.item.id}/hospedaje`, { aprobar: true }, t.gerente)).status, 409, 'ya decidido');
+    assert.equal((await call('GET', '/api/hoteles/recomendado?provincia=Espaillat&municipio=Moca', null, t.rep)).body.item.hotel.precioNoche, 2000, 'C pasó a 2,100; ahora el más económico es A');
     const audit = (await call('GET', '/api/hoteles?provincia=Espaillat', null, t.admin)).body.items;
     assert.equal(audit.length, 3);
+  } finally { server.close(); }
+});
+
+test('viáticos asignados por la gerencia: balance que baja con los gastos; un hotel después suma un ajuste', async () => {
+  const { server, call, t, id, planificar } = await setup();
+  try {
+    await call('POST', `/api/viaticos/perfiles/${id.rep}`, PERFIL, t.gerente);
+    await call('POST', '/api/viaticos/precios', { combustible: 'gasoil_regular', precioGalon: 250, vigenteDesde: '2026-01-01' }, t.finanzas);
+    await planificar(jornada('2026-11-23', 70), t.rep); await planificar(jornada('2026-11-24', 70), t.rep);
+    assert.equal((await call('POST', '/api/viaticos/presupuestos/asignar', { representanteId: id.rep, mes: '2026-11' }, t.rep)).status, 403);
+    const a = await call('POST', '/api/viaticos/presupuestos/asignar', { representanteId: id.rep, mes: '2026-11' }, t.gerente);
+    assert.equal(a.status, 201, JSON.stringify(a.body));
+    const p = a.body.item;
+    assert.equal(p.estado, 'aprobado'); assert.equal(p.origen, 'asignado'); assert.equal(p.montoAprobado, 2000, '140 km / 35 × 250 = 1,000 + 2 días × 500');
+    assert.equal(p.resumen.disponible, 2000); assert.equal(p.resumen.porCategoria.alimentacion.asignado, 1000);
+    assert.ok((await call('GET', '/api/notificaciones', null, t.rep)).body.items.some((x) => x.titulo === 'Viáticos del mes asignados'));
+    // Gasto registrado: baja el disponible total y el de su partida
+    const g = await call('POST', `/api/viaticos/presupuestos/${p.id}/gastos`, { categoria: 'alimentacion', monto: 450, fecha: '2026-11-20', referencia: 'B0100000001' }, t.rep);
+    assert.equal(g.status, 201, JSON.stringify(g.body));
+    assert.equal(g.body.item.resumen.disponible, 1550); assert.equal(g.body.item.resumen.porCategoria.alimentacion.disponible, 550);
+    // Con el presupuesto asignado, sigue creando las jornadas de su cronograma; un hotel aprobado suma un ajuste
+    const hh = (await call('POST', '/api/hoteles', { nombre: 'Hotel Ejemplo Moca', provincia: 'Espaillat', municipio: 'Moca' }, t.admin)).body.item;
+    const reqs = Object.fromEntries((await call('GET', '/api/hoteles/requisitos', null, t.rep)).body.items.map((r) => [r.value, true]));
+    await call('POST', `/api/hoteles/${hh.id}`, { precioNoche: 1900, requisitos: reqs }, t.admin);
+    const j = await planificar(jornada('2026-11-25', 70, { hospedaje: { hotelId: hh.id, noches: 1 } }), t.rep);
+    assert.equal(j.status, 201, JSON.stringify(j.body)); assert.equal(j.body.item.hospedaje.estado, 'aprobado');
+    const ver = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.guardado;
+    assert.equal(ver.montoAprobado, 3900); assert.equal(ver.ajustes.length, 1); assert.equal(ver.ajustes[0].monto, 1900);
+    assert.equal(ver.resumen.porCategoria.hospedaje.asignado, 1900);
+    assert.equal((await call('POST', '/api/viaticos/presupuestos/asignar', { representanteId: id.rep, mes: '2026-11' }, t.gerente)).status, 409, 'ya aprobado: se ajusta, no se reasigna');
   } finally { server.close(); }
 });
 

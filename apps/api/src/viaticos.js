@@ -27,7 +27,7 @@ const invalido = (f) => { throw new HttpError(422, 'Revisa los campos marcados.'
 const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const num = (v) => (v === '' || v == null ? null : Number(v));
 
-export function createViaticos({ data, users, files, audit, mapas, notificar, hoteles, now = () => new Date() }) {
+export function createViaticos({ data, users, files, audit, mapas, notificar, notificarRoles, hoteles, now = () => new Date() }) {
   const hoy = () => hoyRD(now());
   async function rep(id) {
     const u = await users.findUserById(id);
@@ -337,26 +337,68 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
     input = { ...input, fecha: ruta.cronograma.fecha, paradas: ruta.paradas };
     // Con mapa, los km son los del servidor; nunca la cifra que envía el navegador.
     // Hotel del catálogo: nombre, municipio y precio por noche salen del hotel verificado, no del navegador.
-    let hotel = null;
-    if (input.hospedaje?.hotelId && hoteles) {
-      hotel = await hoteles.paraHospedaje(input.hospedaje.hotelId);
-      input = { ...input, hospedaje: { ...input.hospedaje, tarifaNoche: hotel.precioNoche, hotel: hotel.nombre, municipio: hotel.municipio } };
+    // Hotel aprobado por la gerencia (verificado, el más económico que cumple todo) a su precio: queda autorizado.
+    // Otro hotel exige la razón del cambio; un precio distinto exige además el comprobante. Ambos esperan a la gerencia.
+    let hotel = null; let cambio = null;
+    if (input.hospedaje) {
+      const hs = input.hospedaje;
+      const fin = ruta.paradas.at(-1) ?? {};
+      const rec = hoteles && fin.provincia ? await hoteles.recomendado(actor, { provincia: fin.provincia, municipio: fin.municipio }).catch(() => null) : null;
+      if (hs.hotelId && hoteles) hotel = await hoteles.paraHospedaje(hs.hotelId);
+      const cobrada = hs.tarifaCobrada == null || hs.tarifaCobrada === '' ? null : num(hs.tarifaCobrada);
+      const cambioHotel = !!rec && (!hotel || hotel.id !== rec.hotel.id); // sin hotel aprobado en la zona no hay "cambio"
+      const cambioPrecio = !!hotel && cobrada != null && r2(cobrada) !== r2(Number(hotel.precioNoche));
+      const motivoCambio = normalizeName(hs.motivoCambio);
+      if (cobrada != null && (!Number.isFinite(cobrada) || cobrada <= 0)) e['hospedaje.tarifaCobrada'] = 'Escribe lo que cobró el hotel por noche.';
+      if ((cambioHotel || cambioPrecio) && motivoCambio.length < 5) e['hospedaje.motivoCambio'] = cambioPrecio ? 'Explica por qué el precio es distinto.' : 'Explica por qué cambias el hotel aprobado.';
+      if (cambioPrecio && !hs.comprobante) e['hospedaje.comprobante'] = 'Sube el comprobante (voucher) con el precio cobrado.';
+      cambio = { cambioHotel, cambioPrecio, motivoCambio: motivoCambio || null, recomendadoId: rec?.hotel?.id ?? null, recomendado: rec?.hotel?.nombre ?? null,
+        tarifaAprobada: hotel ? r2(Number(hotel.precioNoche)) : null, telefonoHotel: hotel?.telefono ?? null, comprobanteEntrada: hs.comprobante ?? null };
+      const motivo = normalizeName(hs.motivo) || (hotel && rec && !cambioHotel && !cambioPrecio ? 'Hotel programado por la gerencia' : motivoCambio);
+      input = { ...input, hospedaje: { ...hs, motivo, ...(hotel ? { tarifaNoche: cambioPrecio ? cobrada : hotel.precioNoche, hotel: hotel.nombre, municipio: hotel.municipio } : {}) } };
     }
     const entrada = ruta.km != null ? { ...input, kmEstimados: ruta.km, kmFuente: 'google' } : { ...input, kmFuente: 'manual' };
     const d = validarJornada(entrada, e);
-    if (hotel && d.hospedaje) d.hospedaje = { ...d.hospedaje, hotelId: hotel.id };
     if (Object.keys(e).length) invalido(e);
+    if (d.hospedaje && cambio) {
+      const { comprobanteEntrada, ...resto } = cambio;
+      const comprobante = resto.cambioPrecio ? await guardarAdjunto(files, actor, comprobanteEntrada, 'comprobante') : null;
+      const auto = !!hotel && !!resto.recomendadoId && !resto.cambioHotel && !resto.cambioPrecio;
+      d.hospedaje = { ...d.hospedaje, hotelId: hotel?.id ?? null, ...resto, comprobante, estado: auto ? 'aprobado' : 'propuesto', decididoPor: auto ? 'hotel-aprobado' : null };
+    }
     if ((await data.list('jornadas', { representanteId: actor.id, fecha: input.fecha })).some((j) => j.estado !== 'cancelada')) {
       throw new HttpError(409, 'Ya tienes una jornada ese día. Edítala en vez de crear otra.', { fecha: 'Ya hay una jornada ese día.' });
     }
-    if (await presupuestoBloqueado(actor.id, input.fecha.slice(0, 7))) throw new HttpError(409, 'El presupuesto de ese mes ya fue solicitado; pide a la gerencia que lo devuelva para cambiar jornadas.');
+    if (await presupuestoBloqueado(actor.id, input.fecha.slice(0, 7))) throw new HttpError(409, 'El presupuesto de ese mes está esperando aprobación; cuando la gerencia decida, podrás crear tus jornadas.');
     const j = await data.insert('jornadas', { representanteId: actor.id, cronogramaId: ruta.cronograma.id, fecha: input.fecha, ...d, kmReales: null, estado: 'planificada' });
-    await audit({ actorId: actor.id, action: 'jornada_planificada', entity: 'jornada', entityId: j.id, after: { fecha: j.fecha, km: j.kmEstimados } });
+    await audit({ actorId: actor.id, action: 'jornada_planificada', entity: 'jornada', entityId: j.id, after: { fecha: j.fecha, km: j.kmEstimados, hospedaje: j.hospedaje?.estado ?? null } });
+    if (j.hospedaje?.estado === 'aprobado') await ajustarPorHospedaje(j, actor.id);
+    if (j.hospedaje?.estado === 'propuesto') {
+      const hs = j.hospedaje;
+      const texto = hs.cambioPrecio
+        ? `${actor.fullName}: ${hs.hotel} cobró ${RDtxt(hs.tarifaNoche)} por noche; el precio aprobado es ${RDtxt(hs.tarifaAprobada)}. Motivo: ${hs.motivoCambio}${hs.telefonoHotel ? `. Teléfono del hotel: ${hs.telefonoHotel}` : ''}. Llama para verificar y aprueba o no.`
+        : `${actor.fullName} pidió ${hs.hotel ?? 'otro hotel'} (${RDtxt(hs.tarifaNoche)} por noche) en vez de ${hs.recomendado ?? 'el aprobado'}. Motivo: ${hs.motivoCambio}.`;
+      await notificarRoles?.(['administrador', 'gerencia'], { tipo: 'viaticos', titulo: hs.cambioPrecio ? 'Hotel con precio distinto' : 'Cambio de hotel por aprobar', texto, enlace: `#viatico?rep=${actor.id}&mes=${j.fecha.slice(0, 7)}` });
+    }
     return j;
   }
+  // Mientras la gerencia decide una solicitud, las jornadas no cambian. Aprobado o asignado, el representante
+  // sigue creando las jornadas de su cronograma (ya están contadas en el presupuesto).
   async function presupuestoBloqueado(repId, mes) {
     const p = (await data.list('presupuestos', { representanteId: repId, mes }))[0];
-    return p && p.estado !== 'borrador' && p.estado !== 'rechazado';
+    return p?.estado === 'solicitado';
+  }
+  const RDtxt = (n) => `RD$${Number(n ?? 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  /** Un hotel autorizado después de aprobar el presupuesto suma un ajuste auditable al monto aprobado. */
+  async function ajustarPorHospedaje(j, actorId) {
+    const p = (await data.list('presupuestos', { representanteId: j.representanteId, mes: j.fecha.slice(0, 7) }))[0];
+    if (!p || !['aprobado', 'desembolsado'].includes(p.estado)) return;
+    const hs = j.hospedaje;
+    const monto = calcularHospedaje({ noches: hs.noches, tarifaNoche: hs.tarifaNoche, cargos: hs.cargos });
+    if ((p.ajustes ?? []).some((a) => a.jornadaId === j.id)) return;
+    const ajuste = { id: crypto.randomUUID(), jornadaId: j.id, categoria: 'hospedaje', monto, motivo: `Hotel ${hs.hotel ?? ''} del ${j.fecha}, ${hs.noches} noche(s)`, por: actorId, fecha: hoy() };
+    await data.update('presupuestos', p.id, { ajustes: [...(p.ajustes ?? []), ajuste], montoAprobado: r2((p.montoAprobado ?? 0) + monto), total: r2((p.total ?? 0) + monto) });
+    await audit({ actorId, action: 'presupuesto_ajuste', entity: 'presupuesto', entityId: p.id, before: { montoAprobado: p.montoAprobado }, after: { ajuste: monto, motivo: ajuste.motivo } });
   }
   async function actualizarJornada(actor, id, accion, input = {}) {
     const j = await data.get('jornadas', id);
@@ -380,9 +422,18 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
     if (accion === 'hospedaje') {
       permitir(rol(actor, ['administrador', 'gerencia']), 'Solo la gerencia autoriza hospedaje.');
       if (!j.hospedaje) throw new HttpError(409, 'Esta jornada no tiene hospedaje propuesto.');
+      if (j.hospedaje.estado !== 'propuesto') throw new HttpError(409, 'Este hospedaje ya fue decidido.');
       const estado = input.aprobar ? 'aprobado' : 'rechazado';
-      const out = await data.update('jornadas', id, { hospedaje: { ...j.hospedaje, estado, decididoPor: actor.id } });
-      await audit({ actorId: actor.id, action: `hospedaje_${estado}`, entity: 'jornada', entityId: id, before: { estado: j.hospedaje.estado }, after: { estado } });
+      const nota = normalizeName(input.nota) || null;
+      if (!input.aprobar && (nota ?? '').length < 3) invalido({ nota: 'Explica por qué no se autoriza.' });
+      const out = await data.update('jornadas', id, { hospedaje: { ...j.hospedaje, estado, decididoPor: actor.id, nota } });
+      await audit({ actorId: actor.id, action: `hospedaje_${estado}`, entity: 'jornada', entityId: id, before: { estado: j.hospedaje.estado }, after: { estado, nota } });
+      // Precio nuevo confirmado con el hotel: se puede actualizar en el catálogo para los próximos.
+      if (input.aprobar && input.actualizarPrecio && j.hospedaje.cambioPrecio && j.hospedaje.hotelId && hoteles) {
+        await hoteles.actualizar(actor, j.hospedaje.hotelId, { precioNoche: j.hospedaje.tarifaNoche });
+      }
+      if (input.aprobar) await ajustarPorHospedaje(out, actor.id);
+      await notificar?.(j.representanteId, { tipo: 'viaticos', titulo: input.aprobar ? 'Hotel autorizado' : 'Hotel no autorizado', texto: input.aprobar ? `Tu hotel del ${j.fecha} fue autorizado.` : `Tu hotel del ${j.fecha} no fue autorizado: ${nota}`, enlace: `#jornadas?mes=${j.fecha.slice(0, 7)}` });
       return out;
     }
     throw new HttpError(404, 'Acción no válida.');
@@ -616,7 +667,29 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
     const entregado = r2((p.desembolsos ?? []).reduce((s, d) => s + d.monto, 0));
     const reportado = r2((p.gastos ?? []).filter((g) => g.estado !== 'rechazado').reduce((s, g) => s + g.monto, 0));
     const justificado = r2((p.gastos ?? []).filter((g) => g.estado === 'aceptado').reduce((s, g) => s + g.monto, 0));
-    return { ...p, resumen: { aprobado: p.montoAprobado ?? null, entregado, reportado, justificado, saldo: r2(entregado - justificado), diferenciaPresupuesto: r2(p.total - justificado) } };
+    // Balance: lo asignado menos lo que el representante ya registró como gastado (sin contar lo rechazado).
+    const porCategoria = Object.fromEntries(CATEGORIAS_GASTO.map((k) => {
+      const asignado = r2((p.detalle?.[k] ?? 0) + (p.ajustes ?? []).filter((a) => a.categoria === k).reduce((s, a) => s + a.monto, 0));
+      const gastado = r2((p.gastos ?? []).filter((g) => g.estado !== 'rechazado' && g.categoria === k).reduce((s, g) => s + g.monto, 0));
+      return [k, { asignado, gastado, disponible: r2(asignado - gastado) }];
+    }));
+    const disponible = p.montoAprobado == null ? null : r2(p.montoAprobado - reportado);
+    return { ...p, resumen: { aprobado: p.montoAprobado ?? null, entregado, reportado, justificado, disponible, porCategoria, saldo: r2(entregado - justificado), diferenciaPresupuesto: r2(p.total - justificado) } };
+  }
+  /** La gerencia asigna los viáticos del mes desde el cronograma aprobado: queda aprobado y el representante ve su balance. */
+  async function asignarPresupuesto(actor, repId, mes) {
+    permitir(rol(actor, ['administrador', 'gerencia']), 'Solo la gerencia asigna viáticos.');
+    if (!MES.test(String(mes))) throw new HttpError(422, 'Elige el mes.');
+    const rep = repId && await users.findUserById(repId);
+    if (!rep || rep.role !== 'representante') throw new HttpError(404, 'El representante no existe.');
+    const c = await calcular(repId, mes);
+    if (c.faltan?.length) throw new HttpError(409, `Todavía no se puede asignar: ${c.faltan.join(' ')}`);
+    const prev = (await data.list('presupuestos', { representanteId: repId, mes }))[0];
+    if (prev && !['borrador', 'rechazado', 'solicitado'].includes(prev.estado)) throw new HttpError(409, 'Ese mes ya tiene viáticos aprobados. Los cambios se hacen con ajustes.');
+    const datos = { representanteId: repId, mes, detalle: c.detalle, supuestos: c.supuestos, total: c.total, estado: 'aprobado', montoAprobado: c.total, aprobadoPor: actor.id, motivo: null, desembolsos: prev?.desembolsos ?? [], gastos: prev?.gastos ?? [], ajustes: prev?.ajustes ?? [], origen: 'asignado' };
+    const p = prev ? await data.update('presupuestos', prev.id, datos) : await data.insert('presupuestos', datos);
+    await audit({ actorId: actor.id, action: 'presupuesto_asignado', entity: 'presupuesto', entityId: p.id, before: prev ? { estado: prev.estado } : null, after: { total: p.total } });
+    return conSaldo(p);
   }
   async function solicitar(actor, mes) {
     permitir(esRep(actor), 'Solo el representante solicita su presupuesto.');
@@ -756,6 +829,6 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
     crearCronograma, listarCronogramas, anularCronograma,
     vistaPreviaRuta: async (actor, id) => { permitir(esRep(actor)); const r = await rutaDeCronograma(actor, id); return { fecha: r.cronograma.fecha, paradas: r.paradas, km: r.km, minutos: r.minutos ?? null, kmFuente: r.kmFuente, optimizado: r.optimizado }; }, mapasActivo: () => Boolean(mapas?.activo),
     crearCronogramaLote, proponerCronograma, verTopeGlobal, guardarTopeGlobal, prepararPerfil, verTarifasPublico, guardarTarifasPublico,
-    verPresupuesto, solicitar, decidirPresupuesto, desembolsar, reportarGasto, revisarGasto, liquidar, consolidado, presupuestoPorId,
+    verPresupuesto, solicitar, asignarPresupuesto, decidirPresupuesto, desembolsar, reportarGasto, revisarGasto, liquidar, consolidado, presupuestoPorId,
   };
 }

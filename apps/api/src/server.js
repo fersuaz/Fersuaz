@@ -46,7 +46,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const auth = createAuthService(store, { preregistro: { buscar: t.buscarPreregistro, confirmar: t.confirmarPreregistro }, farmaciaPara: farmaciaActiva });
   const c = createComercial({ data, users: store, files, audit: (e) => store.addAudit(e), now });
   const hoteles = createHoteles({ data, audit: (e) => store.addAudit(e), now: now ?? (() => new Date()) });
-  const v = createViaticos({ data, users: store, files, mapas, hoteles, notificar: n.notificar, audit: (e) => store.addAudit(e), now });
+  const v = createViaticos({ data, users: store, files, mapas, hoteles, notificar: n.notificar, notificarRoles: n.notificarRoles, audit: (e) => store.addAudit(e), now });
 
   const GESTION_LUGARES = ['administrador', 'gerencia', 'supervisor'];
   const sinAcento = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -343,6 +343,11 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', '/api/viaticos/jornadas', async ({ me, body }) => [201, { item: await v.crearJornada(me, body) }]);
   ruta('POST', /^\/api\/viaticos\/jornadas\/([\w-]+)\/(realizada|cancelar|hospedaje)$/, async ({ me, p, body }) => ({ item: await v.actualizarJornada(me, p[1], p[2], body) }));
   ruta('GET', '/api/viaticos/presupuesto', async ({ me, q }) => v.verPresupuesto(me, q.get('representanteId') || me.id, q.get('mes')));
+  ruta('POST', '/api/viaticos/presupuestos/asignar', async ({ me, body }) => {
+    const item = await v.asignarPresupuesto(me, body?.representanteId, body?.mes);
+    avisar(() => n.notificar(item.representanteId, { tipo: 'viaticos', titulo: 'Viáticos del mes asignados', texto: `La gerencia asignó tus viáticos de ${item.mes}: RD$${item.montoAprobado.toLocaleString('es-DO', { minimumFractionDigits: 2 })}. Registra tus gastos a medida que cumples tus jornadas.`, enlace: `#presupuesto?mes=${item.mes}` }));
+    return [201, { item }];
+  });
   ruta('POST', '/api/viaticos/presupuesto/solicitar', async ({ me, body }) => {
     const item = await v.solicitar(me, body.mes);
     avisar(() => n.notificarRoles(['administrador', 'gerencia'], { tipo: 'viaticos', titulo: 'Presupuesto de viáticos por aprobar', texto: `${me.fullName} solicitó el presupuesto de ${item.mes}.`, enlace: `#viatico?rep=${me.id}&mes=${item.mes}` }));

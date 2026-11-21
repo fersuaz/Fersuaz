@@ -74,15 +74,17 @@ async function enviar(form, boton, fn) {
   catch (e) { mostrarErrores(form, e); estado(st, 'error', e.message); return null; }
   finally { boton.disabled = false; boton.textContent = txt; }
 }
-function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false } = {}) {
+function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false, casilla = null } = {}) {
   const d = $('#dialogo');
   $('#dialogo-titulo').textContent = titulo;
   const c = $('#dialogo-cuerpo'); c.replaceChildren(h('p', {}, cuerpo));
-  let motivo;
+  let motivo; let caja;
   if (pedirMotivo) { motivo = h('textarea', { id: 'motivo', rows: 3 }); c.append(h('label', { for: 'motivo', class: 'hint' }, 'Motivo'), motivo); }
+  // Una casilla opcional: la respuesta es { casilla: true | false } en vez de true.
+  if (casilla) { caja = h('input', { type: 'checkbox', checked: casilla.marcada !== false }); c.append(h('label', { class: 'check', style: 'margin-top:.75rem' }, caja, h('span', {}, casilla.texto))); }
   $('#dialogo-ok').textContent = okTexto;
   d.showModal();
-  return new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok' ? (motivo ? motivo.value : true) : null), { once: true }));
+  return new Promise((res) => d.addEventListener('close', () => res(d.returnValue !== 'ok' ? null : motivo ? motivo.value : caja ? { casilla: caja.checked } : true), { once: true }));
 }
 const sinTilde = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 /** Texto buscable de una fila: sus valores (hasta dos niveles) y las celdas que son texto. */
@@ -625,14 +627,46 @@ V.jornadas = async () => {
       api('GET', `/api/hoteles?provincia=${encodeURIComponent(fin.provincia)}`).catch(() => ({ items: [] })),
       api('GET', `/api/hoteles/recomendado?provincia=${encodeURIComponent(fin.provincia)}&municipio=${encodeURIComponent(fin.municipio)}`).catch(() => ({ item: null }))]);
     const aptos = hotelesProv.filter((x) => x.cumple && x.precioNoche);
-    const inicial = rec?.hotel?.id ?? (aptos.length ? '' : 'otro');
-    const selHotel = campo('hospedaje.hotelId', 'Hotel', { options: [...aptos.map((x) => ({ value: x.id, label: `${x.nombre} (${x.municipio}), ${RD(x.precioNoche)} por noche${rec?.hotel?.id === x.id ? ', recomendado' : ''}` })), { value: 'otro', label: 'Otro hotel (lo escribo yo)' }], value: inicial, placeholder: 'Elige el hotel' });
-    const manual = h('div', { class: 'form-fila', hidden: inicial !== 'otro' }, campo('hospedaje.hotel', 'Nombre del hotel'), campo('hospedaje.tarifaNoche', 'Tarifa por noche RD$', { type: 'number', min: 0, step: 0.01 }));
-    selHotel.querySelector('select').addEventListener('change', (e) => { manual.hidden = e.target.value !== 'otro'; });
-    const hosp = h('details', { class: 'tarjeta', style: 'background:var(--canvas)' }, h('summary', { style: 'cursor:pointer;font-weight:600;color:var(--marino)' }, '¿Necesitas hotel? La gerencia debe autorizarlo'),
-      h('p', { class: 'hint', style: 'margin-top:1rem' }, rec ? `Recomendado: ${rec.hotel.nombre}, el más económico ${rec.alcance === 'municipio' ? `en ${fin.municipio}` : `de ${fin.provincia}`} que cumple servicios básicos, aire, agua, cama cómoda, higiene, parqueo y seguridad. El precio sale del hotel verificado.` : `Aún no hay hoteles verificados en ${fin.provincia}. Puedes escribir uno; la gerencia lo revisará.`),
-      h('div', { class: 'form-fila' }, selHotel, campo('hospedaje.noches', 'Noches', { type: 'number', min: 1, step: 1, inputmode: 'numeric', value: 1 }), campo('hospedaje.cargos', 'Impuestos y cargos RD$', { type: 'number', min: 0, step: 0.01, value: 0 })),
-      manual, campo('hospedaje.motivo', 'Motivo del hospedaje'));
+    // Hotel: el aprobado por la gerencia, con su precio. Cambiarlo pide la razón; otro precio pide el comprobante.
+    const otros = aptos.filter((x) => x.id !== rec?.hotel?.id);
+    const opcion = (v, titulo, texto, marcado) => h('label', {}, h('input', { type: 'radio', name: 'hotelModo', value: v, checked: marcado }), h('span', {}, h('strong', {}, titulo), h('small', {}, texto)));
+    const modos = h('fieldset', { class: 'modo-montos hotel-modos' }, h('legend', { class: 'sr-only' }, 'Hotel'),
+      rec ? opcion('aprobado', 'Usar el hotel aprobado', 'Queda autorizado al guardar la jornada.', true) : null,
+      opcion('otro', rec ? 'Usar otro hotel' : 'Proponer un hotel', rec ? 'Explica por qué; la gerencia lo revisa.' : 'Aún no hay hotel aprobado aquí; la gerencia lo revisa.', !rec));
+    const tarjetaRec = rec ? h('div', { class: 'hotel-aprobado' },
+      h('span', { class: 'hotel-sello' }, 'Aprobado por la gerencia'),
+      h('strong', {}, rec.hotel.nombre), h('span', {}, `${rec.hotel.municipio}, ${rec.hotel.provincia}${rec.hotel.telefono ? `. Tel. ${rec.hotel.telefono}` : ''}`),
+      h('span', { class: 'hotel-precio' }, `${RD(rec.hotel.precioNoche)} por noche`),
+      h('small', {}, `El más económico ${rec.alcance === 'municipio' ? `en ${fin.municipio}` : `de ${fin.provincia}`} que cumple servicios básicos, aire, agua, cama cómoda, higiene, parqueo y seguridad.`)) : null;
+    const precioCaja = h('input', { type: 'checkbox', name: 'precioDistinto' });
+    const precioDistinto = h('div', { class: 'precio-distinto', hidden: !rec },
+      h('label', { class: 'check' }, precioCaja, h('span', {}, 'El hotel me cobró un precio distinto')),
+      h('div', { class: 'precio-campos', hidden: true },
+        h('div', { class: 'form-fila' }, campo('hospedaje.tarifaCobrada', 'Precio cobrado por noche RD$', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal' }),
+          campo('hospedaje.comprobante', 'Comprobante (voucher)', { type: 'file', accept: 'image/jpeg,image/png,image/webp,application/pdf', capture: 'environment' }, '(foto o PDF, hasta 5 MB)')),
+        h('p', { class: 'hint' }, 'La gerencia recibe un aviso para llamar al hotel y aprobar o no el precio. Así queda registro si el hotel subió el precio.')));
+    precioCaja.addEventListener('change', () => { precioDistinto.querySelector('.precio-campos').hidden = !precioCaja.checked; sincronizarRazon(); });
+    const selOtro = campo('hospedaje.hotelId', 'Hotel', { options: [...otros.map((x) => ({ value: x.id, label: `${x.nombre} (${x.municipio}), ${RD(x.precioNoche)} por noche` })), { value: 'manual', label: 'Otro que no está en la lista (lo escribo)' }], value: otros.length ? '' : 'manual', placeholder: 'Elige el hotel' });
+    const manual = h('div', { class: 'form-fila', hidden: !!otros.length }, campo('hospedaje.hotel', 'Nombre del hotel'), campo('hospedaje.tarifaNoche', 'Tarifa por noche RD$', { type: 'number', min: 0, step: 0.01 }));
+    selOtro.querySelector('select').addEventListener('change', (e) => { manual.hidden = e.target.value !== 'manual'; });
+    const bloqueOtro = h('div', { class: 'hotel-otro', hidden: !!rec }, selOtro, manual);
+    const razon = campo('hospedaje.motivoCambio', 'Razón del cambio', { placeholder: 'Ejemplo: el hotel aprobado estaba lleno' });
+    const sincronizarRazon = () => {
+      const modo = modos.querySelector('input:checked')?.value;
+      razon.hidden = !(modo === 'otro' || precioCaja.checked);
+      razon.querySelector('label').firstChild.textContent = precioCaja.checked && modo !== 'otro' ? 'Razón del precio distinto' : rec ? 'Razón del cambio' : 'Motivo del hospedaje';
+    };
+    modos.addEventListener('change', () => {
+      const modo = modos.querySelector('input:checked').value;
+      bloqueOtro.hidden = modo !== 'otro'; precioDistinto.hidden = modo !== 'aprobado';
+      if (modo !== 'aprobado') { precioCaja.checked = false; precioDistinto.querySelector('.precio-campos').hidden = true; }
+      sincronizarRazon();
+    });
+    sincronizarRazon();
+    const hosp = h('details', { class: 'tarjeta hotel-jornada', style: 'background:var(--canvas)' }, h('summary', {}, rec ? `¿Duermes fuera? Hotel aprobado: ${rec.hotel.nombre}, ${RD(rec.hotel.precioNoche)} por noche` : '¿Necesitas hotel? La gerencia debe autorizarlo'),
+      tarjetaRec, modos, bloqueOtro, precioDistinto,
+      h('div', { class: 'form-fila' }, campo('hospedaje.noches', 'Noches', { type: 'number', min: 1, step: 1, inputmode: 'numeric', value: 1 }), campo('hospedaje.cargos', 'Impuestos y cargos RD$', { type: 'number', min: 0, step: 0.01, value: 0 })),
+      razon);
     const form = h('form', { class: 'tarjeta', novalidate: true },
       h('h2', {}, `Ruta del ${fecha(r.fecha)}`),
       h('p', { class: 'hint' }, r.optimizado ? 'Ordenada por distancia para que recorras menos y gastes menos combustible.' : r.km != null ? 'Ruta calculada por carretera.' : 'El mapa aún no está conectado: se respeta el orden del cronograma y escribes los km por carretera.'),
@@ -647,10 +681,24 @@ V.jornadas = async () => {
       e.preventDefault();
       const g = (k) => form.elements[k]?.value;
       const body = { cronogramaId: cronId, kmEstimados: g('kmEstimados'), peajes: g('peajes'), estacionamiento: g('estacionamiento'), otros: g('otros'), conAlimentacion: form.conAlimentacion.checked,
-        hospedaje: hosp.open && g('hospedaje.noches') ? (g('hospedaje.hotelId') && g('hospedaje.hotelId') !== 'otro'
-          ? { hotelId: g('hospedaje.hotelId'), noches: Number(g('hospedaje.noches')), cargos: g('hospedaje.cargos'), motivo: g('hospedaje.motivo') }
-          : { noches: Number(g('hospedaje.noches')), tarifaNoche: g('hospedaje.tarifaNoche'), cargos: g('hospedaje.cargos'), hotel: g('hospedaje.hotel'), motivo: g('hospedaje.motivo') }) : null };
-      if (await enviar(form, boton, () => api('POST', '/api/viaticos/jornadas', body))) irA('jornadas', { mes });
+        hospedaje: null };
+      if (await enviar(form, boton, async () => {
+        if (hosp.open && g('hospedaje.noches')) {
+          const modo = form.querySelector('[name=hotelModo]:checked')?.value;
+          const base = { noches: Number(g('hospedaje.noches')), cargos: g('hospedaje.cargos'), motivoCambio: g('hospedaje.motivoCambio') };
+          if (modo === 'aprobado') {
+            body.hospedaje = { ...base, hotelId: rec.hotel.id };
+            if (precioCaja.checked) {
+              const file = form.elements['hospedaje.comprobante'].files[0];
+              if (file && file.size > 5 * 1024 * 1024) throw new ApiError(413, { error: 'El comprobante no puede pasar de 5 MB.', fields: { 'hospedaje.comprobante': 'Archivo demasiado grande.' } });
+              body.hospedaje.tarifaCobrada = g('hospedaje.tarifaCobrada');
+              body.hospedaje.comprobante = file ? { nombre: file.name, tipo: file.type, base64: await archivoB64(file) } : undefined;
+            }
+          } else if (g('hospedaje.hotelId') && g('hospedaje.hotelId') !== 'manual') body.hospedaje = { ...base, hotelId: g('hospedaje.hotelId') };
+          else body.hospedaje = { ...base, tarifaNoche: g('hospedaje.tarifaNoche'), hotel: g('hospedaje.hotel'), motivo: g('hospedaje.motivoCambio') };
+        }
+        return api('POST', '/api/viaticos/jornadas', body);
+      })) irA('jornadas', { mes });
     });
     return vista('Crear jornada', 'Los lugares y el día los programó el administrador. El sistema calcula el recorrido, el combustible y los viáticos.', form);
   }
@@ -839,6 +887,21 @@ async function campana() {
   setInterval(() => { if (document.visibilityState === 'visible') pintar(); }, 60000);
 }
 
+/** Balance del mes: asignado, gastado y disponible, total y por partida. */
+function balanceViaticos(p) {
+  const r = p.resumen; if (r.aprobado == null) return null;
+  const pct = r.aprobado ? Math.min(100, Math.round((r.reportado / r.aprobado) * 100)) : 0;
+  const partidas = Object.entries(r.porCategoria ?? {}).filter(([, x]) => x.asignado || x.gastado);
+  return h('div', { class: 'tarjeta balance' }, h('h2', {}, 'Tu balance de viáticos'),
+    h('div', { class: 'balance-cifras' },
+      h('div', {}, h('span', {}, 'Asignado'), h('strong', {}, RD(r.aprobado))),
+      h('div', {}, h('span', {}, 'Gastos registrados'), h('strong', {}, RD(r.reportado))),
+      h('div', { class: r.disponible < 0 ? 'balance-neg' : 'balance-disp' }, h('span', {}, r.disponible < 0 ? 'Te pasaste' : 'Disponible'), h('strong', {}, RD(Math.abs(r.disponible))))),
+    h('div', { class: 'balance-barra', role: 'img', 'aria-label': `Usado ${pct}% del asignado` }, h('span', { style: `width:${pct}%` })),
+    partidas.length ? h('table', { class: 'balance-partidas' }, h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, 'Partida'), h('th', { scope: 'col' }, 'Asignado'), h('th', { scope: 'col' }, 'Gastado'), h('th', { scope: 'col' }, 'Disponible'))),
+      h('tbody', {}, partidas.map(([k, x]) => h('tr', {}, h('th', { scope: 'row' }, CAT[k]), h('td', {}, RD(x.asignado)), h('td', {}, RD(x.gastado)), h('td', { class: x.disponible < 0 ? 'balance-neg' : '' }, RD(x.disponible)))))) : null,
+    h('p', { class: 'hint' }, 'Registra cada gasto con su comprobante a medida que cumples tus jornadas; el disponible baja solo. El salario no forma parte de los viáticos.'));
+}
 function bloqueResumen(p) {
   const r = p.resumen;
   return h('dl', { class: 'rejilla' },
@@ -873,7 +936,8 @@ V.presupuesto = async () => {
         } }, 'Solicitar viáticos'))));
     }
   } else {
-    bloques.push(S('resumen', 'Presupuesto', h('div', { class: 'tarjeta' }, h('h2', {}, 'Presupuesto solicitado'), desglose(p.detalle, p.total)), bloqueResumen(p)));
+    bloques.push(S('resumen', 'Presupuesto', balanceViaticos(p), h('div', { class: 'tarjeta' }, h('h2', {}, p.origen === 'asignado' ? 'Asignado por la gerencia' : 'Presupuesto solicitado'), desglose(p.detalle, p.total),
+      p.ajustes?.length ? h('div', { style: 'margin-top:1rem' }, h('h3', { style: 'font-size:1rem' }, 'Ajustes'), h('ul', {}, p.ajustes.map((a) => h('li', {}, `${fecha(a.fecha)}: ${a.motivo}, ${RD(a.monto)}`)))) : null), bloqueResumen(p)));
     if (['aprobado', 'desembolsado'].includes(p.estado)) {
       const b = h('button', { class: 'btn', type: 'submit' }, 'Reportar gasto');
       const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Reportar un gasto'),
@@ -895,7 +959,7 @@ V.presupuesto = async () => {
     }
     bloques.push(S('gastos', `Gastos reportados (${fmtN.format(p.gastos?.length ?? 0)})`, tablaGastos(p)));
   }
-  return vistaS('presupuesto', ['resumen', 'reportar', 'gastos'], 'Mi presupuesto de viáticos', 'Se calcula con tus jornadas del mes, el rendimiento de tu vehículo y el precio vigente del combustible.', ...bloques);
+  return vistaS('presupuesto', ['resumen', 'reportar', 'gastos'], 'Mi presupuesto de viáticos', 'Sale del cronograma que programó la gerencia: km de cada día, rendimiento de tu vehículo, precio del combustible, comida y hoteles. Registra tus gastos y verás cuánto te queda.', ...bloques);
 };
 
 V.perfiles = async () => {
@@ -1020,20 +1084,38 @@ V.viatico = async () => {
   const accion = async (fn) => { try { await fn(); } catch (e) { alert(e.message); } recargar(); };
   const bloques = [h('p', {}, h('a', { href: `#viaticos?mes=${mes}` }, 'Volver al consolidado'))];
   const hoteles = js.filter((j) => j.hospedaje && j.estado !== 'cancelada');
+  const sub = (t) => h('small', { style: 'display:block;color:var(--texto-2)' }, t);
   if (hoteles.length) bloques.push(h('h2', { style: 'margin:1rem 0 .75rem;font-size:1.2rem' }, 'Hospedajes'), tabla([
-    { t: 'Fecha', v: (j) => fecha(j.fecha) }, { t: 'Destino', v: (j) => j.paradas.at(-1)?.municipio ?? '' }, { t: 'Motivo', v: (j) => j.hospedaje.motivo },
-    { t: 'Costo', num: true, v: (j) => RD(j.hospedaje.noches * j.hospedaje.tarifaNoche + j.hospedaje.cargos) }, { t: 'Estado', v: (j) => chipP(j.hospedaje.estado) },
-    { t: '', v: (j) => ger && j.hospedaje.estado === 'propuesto' ? h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' },
-      h('button', { class: 'btn btn-peq', onclick: () => accion(() => api('POST', `/api/viaticos/jornadas/${j.id}/hospedaje`, { aprobar: true })) }, 'Autorizar'),
-      h('button', { class: 'btn-sec btn-peq', onclick: () => accion(() => api('POST', `/api/viaticos/jornadas/${j.id}/hospedaje`, { aprobar: false })) }, 'No autorizar')) : '' },
+    { t: 'Fecha', v: (j) => fecha(j.fecha) },
+    { t: 'Hotel', v: (j) => [j.hospedaje.hotel ?? 'Sin nombre', sub(`${j.hospedaje.municipio ?? ''}${j.hospedaje.telefonoHotel ? `. Tel. ${j.hospedaje.telefonoHotel}` : ''}`),
+      j.hospedaje.cambioHotel ? sub(`En vez de ${j.hospedaje.recomendado ?? 'el aprobado'}`) : null] },
+    { t: 'Precio por noche', num: true, v: (j) => [RD(j.hospedaje.tarifaNoche), j.hospedaje.cambioPrecio ? h('small', { class: 'precio-subio' }, `Aprobado: ${RD(j.hospedaje.tarifaAprobada)}`) : null] },
+    { t: 'Razón', v: (j) => [j.hospedaje.motivoCambio ?? j.hospedaje.motivo, j.hospedaje.comprobante ? h('button', { class: 'enlace', style: 'display:block', onclick: () => verAdjunto(j.hospedaje.comprobante.clave) }, 'Ver comprobante') : null,
+      j.hospedaje.nota ? sub(`Gerencia: ${j.hospedaje.nota}`) : null] },
+    { t: 'Total', num: true, v: (j) => RD(j.hospedaje.noches * j.hospedaje.tarifaNoche + j.hospedaje.cargos) },
+    { t: 'Estado', v: (j) => [chipP(j.hospedaje.estado), j.hospedaje.decididoPor === 'hotel-aprobado' ? sub('Hotel aprobado') : null] },
+    { t: '', v: (j) => ger && j.hospedaje.estado === 'propuesto' ? [
+      h('button', { class: 'btn btn-peq', onclick: async () => {
+        let actualizarPrecio = false;
+        if (j.hospedaje.cambioPrecio) {
+          const ok = await confirmar('Autorizar precio distinto', `${j.hospedaje.hotel} cobró ${RD(j.hospedaje.tarifaNoche)} por noche; el precio aprobado era ${RD(j.hospedaje.tarifaAprobada)}. Revisa el comprobante y confírmalo con el hotel antes de autorizar.`, { okTexto: 'Autorizar', casilla: { texto: `Actualizar el precio del hotel a ${RD(j.hospedaje.tarifaNoche)} para las próximas jornadas` } });
+          if (ok === null) return; actualizarPrecio = ok.casilla;
+        }
+        accion(() => api('POST', `/api/viaticos/jornadas/${j.id}/hospedaje`, { aprobar: true, actualizarPrecio }));
+      } }, 'Autorizar'),
+      h('button', { class: 'btn-sec btn-peq', onclick: async () => { const m = await confirmar('No autorizar hotel', 'Explica la razón al representante.', { okTexto: 'No autorizar', pedirMotivo: true }); if (m != null) accion(() => api('POST', `/api/viaticos/jornadas/${j.id}/hospedaje`, { aprobar: false, nota: m })); } }, 'No autorizar')] : '' },
   ], hoteles, ['', '']));
   if (!p || ['borrador', 'rechazado'].includes(p.estado)) {
-    bloques.push(h('div', { class: 'aviso' }, p?.estado === 'rechazado' ? `Rechazado: ${p.motivo}. El representante puede ajustar y volver a solicitar.` : 'El representante todavía no ha solicitado este presupuesto.'));
+    bloques.push(h('div', { class: 'aviso' }, p?.estado === 'rechazado' ? `Rechazado: ${p.motivo}. Puedes asignarlo de nuevo cuando esté listo.` : 'Aún no tiene viáticos asignados este mes. Asígnalos desde su cronograma aprobado: el representante verá su balance y registrará sus gastos.'));
+    if (ger && c.detalle) bloques.push(h('div', { class: 'acciones' }, h('button', { class: 'btn', disabled: c.faltan?.length > 0, title: c.faltan?.length ? c.faltan.join(' ') : null, onclick: async () => {
+      if (!(await confirmar('Asignar viáticos del mes', `${nombre} tendrá ${RD(c.total)} de viáticos en ${mes}. Cada gasto que registre rebaja su balance. Los cambios después se hacen con ajustes.`, { okTexto: 'Asignar' }))) return;
+      accion(() => api('POST', '/api/viaticos/presupuestos/asignar', { representanteId: rep, mes }));
+    } }, `Asignar ${RD(c.total)}`)));
     if (c.faltan?.length) bloques.push(h('div', { class: 'aviso' }, c.faltan.join(' ')));
     for (const a of c.avisos ?? []) bloques.push(h('div', { class: 'aviso' }, a));
     if (c.detalle) bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Cálculo del mes'), desglose(c.detalle, c.total)), detalleCalculo(c));
   } else {
-    bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, `Presupuesto ${EST_P[p.estado].toLowerCase()}`), desglose(p.detalle, p.total),
+    bloques.push(balanceViaticos(p), h('div', { class: 'tarjeta' }, h('h2', {}, `Presupuesto ${EST_P[p.estado].toLowerCase()}${p.origen === 'asignado' ? ' (asignado por la gerencia)' : ''}`), desglose(p.detalle, p.total),
       h('p', { class: 'hint', style: 'margin-top:1rem' }, `${p.supuestos.jornadas} jornadas, ${fmtN.format(p.supuestos.km)} km (${p.supuestos.kmTipo}).`)), bloqueResumen(p));
     const acc = h('div', { class: 'acciones' });
     if (ger && p.estado === 'solicitado') {
