@@ -225,6 +225,13 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
 
   // ------------------------------------------------------------ vouchers
   /** Dependientes cuya farmacia está en la zona del Vendedor o PVC. */
+  /** Pacientes que puede ver la promotora: los que registró ella o los que tienen recetas en su zona. */
+  async function pacientesVisibles(actor, recetas) {
+    if (!esPromotora(actor)) return () => true;
+    const zona = (await data.list('zonas', { representanteId: actor.id }))[0] ?? null;
+    const enZona = new Set(recetas.filter((r) => r.promotoraId === actor.id || (zona && dentroDeZona(zona, r.provincia, r.municipio))).map((r) => r.pacienteId));
+    return (p) => p.creadoPor === actor.id || enZona.has(p.id);
+  }
   async function dependientesDeZona(actor) {
     const zona = (await data.list('zonas', { representanteId: actor.id }))[0] ?? null;
     if (!zona?.provincias?.length) return [];
@@ -369,10 +376,17 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const items = Array.isArray(input.items) ? input.items : [];
       if (!items.length) e.items = 'Agrega al menos un medicamento.';
       // Paciente: el teléfono lo identifica. Si ya existe, se usa el mismo (no se duplica su contacto).
-      const tel = telefonoRD(input.paciente?.telefono);
-      let paciente = null;
-      if (!tel) e['paciente.telefono'] = 'Escribe el teléfono del paciente (809, 829 u 849 y 7 dígitos).';
-      else paciente = (await data.list('pacientes', { telefono: tel }))[0] ?? null;
+      // También se puede elegir por nombre un paciente ya registrado (su teléfono queda guardado, no se reescribe).
+      let paciente = null; let tel = null;
+      if (input.paciente?.id) {
+        const p = await data.get('pacientes', String(input.paciente.id));
+        if (!p || !(await pacientesVisibles(actor, await data.list('recetas')))(p)) e['paciente.nombre'] = 'Ese paciente no está en tu zona. Escribe su teléfono.';
+        else { paciente = p; tel = p.telefono; }
+      } else {
+        tel = telefonoRD(input.paciente?.telefono);
+        if (!tel) e['paciente.telefono'] = 'Escribe el teléfono del paciente (809, 829 u 849 y 7 dígitos).';
+        else paciente = (await data.list('pacientes', { telefono: tel }))[0] ?? null;
+      }
       const nombrePaciente = normalizeName(input.paciente?.nombre);
       if (tel && !paciente && nombrePaciente.length < 3) e['paciente.nombre'] = 'Escribe el nombre del paciente.';
       const lineas = []; const vistos = new Set();
@@ -413,6 +427,29 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       if (!p) return { paciente: null };
       const recetas = (await data.list('recetas', { pacienteId: p.id })).length;
       return { paciente: { id: p.id, nombre: p.nombre, telefono: telefonoVisible(tel), recetas } };
+    },
+    /**
+     * Pacientes por nombre (desde 3 letras), para no duplicarlos al cargar recetas. La promotora solo ve
+     * los que ella registró o los que tienen recetas en su zona; el teléfono va oculto salvo los 4 últimos.
+     */
+    async buscarPacientesPorNombre(actor, nombre) {
+      permitir(esPromotora(actor) || tieneRol(actor, ['administrador', 'gerencia']));
+      const sin = (t) => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const q = sin(nombre);
+      if (q.length < 3) return { pacientes: [] };
+      const palabras = q.split(' ');
+      const recetas = await data.list('recetas');
+      const visibles = await pacientesVisibles(actor, recetas);
+      const out = [];
+      for (const p of await data.list('pacientes')) {
+        if (!visibles(p)) continue;
+        const n = sin(p.nombre);
+        if (!palabras.every((w) => n.split(' ').some((x) => x.startsWith(w)))) continue;
+        const suyas = recetas.filter((r) => r.pacienteId === p.id).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+        out.push({ id: p.id, nombre: p.nombre, telefono: telefonoOculto(p.telefono), recetas: suyas.length, ultima: suyas[0]?.fecha ?? null, municipio: suyas[0]?.municipio ?? null });
+        if (out.length >= 8) break;
+      }
+      return { pacientes: out.sort((a, b) => b.recetas - a.recetas || a.nombre.localeCompare(b.nombre, 'es')).slice(0, 6) };
     },
     async listarRecetas(actor, { mes } = {}) {
       let rs;

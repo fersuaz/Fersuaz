@@ -752,3 +752,12 @@ td .sem-nombre, .td-fecha { white-space: nowrap; }
   .cm-extras, .cm-linea, .cm-linea.sin-precio { grid-template-columns: 1fr 1fr; }
   .cm-linea label:first-child, .cm-extras label:first-child { grid-column: 1 / -1; }
 }
+
+/* Paciente: sugerencias por nombre */
+.pac-caja { position: relative; }
+.pac-sugerencias { position: absolute; z-index: 8; left: 0; right: 0; top: 100%; margin: .25rem 0 0; padding: .3rem; list-style: none; background: #fff; border: 1px solid #C7D6E3; border-radius: 12px; box-shadow: 0 12px 30px rgba(15, 42, 68, .14); max-height: 18rem; overflow-y: auto; }
+.pac-sugerencias li { display: grid; gap: .1rem; padding: .55rem .7rem; border-radius: 8px; cursor: pointer; color: #0F2A44; }
+.pac-sugerencias li span { font-size: .84rem; color: #52677A; }
+.pac-sugerencias li:hover, .pac-sugerencias li[aria-selected="true"] { background: #E9F0F6; }
+.cm-extras .pac-nota { grid-column: 1 / -1; }
+input.paciente-conocido { background: #E9F0F6; }
