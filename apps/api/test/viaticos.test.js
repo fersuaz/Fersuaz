@@ -519,6 +519,10 @@ test('sin vehículo: dentro o fuera de su zona de trabajo (no de su casa), con m
     assert.equal(p.supuestos.diasDentro, 1, 'Moca es su zona'); assert.equal(p.supuestos.diasFuera, 1, 'Gaspar Hernández no');
     assert.equal(p.detalle.transporte, 650); assert.equal(p.detalle.alimentacion, 750); assert.equal(p.detalle.combustible, 0);
     assert.equal(p.supuestos.tarifasFuente.transporteDentro, 'posicion');
+    // Una pantalla abierta antes de actualizar manda el formato anterior: se guarda como monto global
+    await call('POST', '/api/viaticos/tarifas-publico', { transporteDentro: 120, comidaDentro: 250, transporteFuera: 400, comidaFuera: 350 }, t.gerente);
+    const viejo = (await call('GET', '/api/viaticos/tarifas-publico', null, t.gerente)).body.item;
+    assert.equal(viejo.modo, 'global'); assert.equal(viejo.global.comidaDentro, 250);
     // Si se elige un solo monto global, aplica a todas las posiciones
     await call('POST', '/api/viaticos/tarifas-publico', { modo: 'global', global: pro, porPosicion: { Visitador: vis } }, t.gerente);
     p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
