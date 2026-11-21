@@ -13,7 +13,7 @@ const hoy = () => new Date(Date.now() - 4 * 3600e3).toISOString().slice(0, 10);
 const mesActual = () => hoy().slice(0, 7);
 const fecha = (s) => (s ? new Date(`${String(s).slice(0, 10)}T12:00:00`).toLocaleDateString('es-DO', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const ROLES = { administrador: 'Administrador', gerencia: 'Gerencia', supervisor: 'Supervisor', representante: 'Representante', finanzas: 'Finanzas', dependiente: 'Dependiente de farmacia' };
-const ESTADOS = { pendiente: 'Pendiente', aprobado: 'Aprobado', rechazado: 'Rechazado', anulado: 'Anulado', alerta: 'Alerta', ok: 'Cubierto', sin_inventario: 'Sin inventario', validada: 'Validada', validado: 'Validado' };
+const ESTADOS = { pendiente: 'Pendiente', aprobado: 'Aprobado', rechazado: 'Rechazado', anulado: 'Anulado', alerta: 'Alerta', ok: 'Cubierto', sin_inventario: 'Sin inventario', validada: 'Validada', validado: 'Validado', recibido: 'Recibido', confirmado: 'Confirmado', despachado: 'Despachado', entregado: 'Entregado', cancelado: 'Cancelado' };
 
 /** Crea elementos sin innerHTML: todo texto entra como textContent. */
 function h(tag, attrs = {}, ...kids) {
@@ -331,6 +331,127 @@ function resumenComision(r) {
     Object.keys(r.porMedicamento).length ? h('div', { class: 'tarjeta', style: 'margin-top:1rem' }, h('h2', {}, 'Ventas por medicamento'),
       tabla([{ t: 'Medicamento', v: ([m]) => m }, { t: 'Ventas', num: true, v: ([, v]) => RD(v) }], Object.entries(r.porMedicamento), ['', ''])) : null);
 }
+// ---------------------------------------------------------------- tienda: pedidos de farmacias
+const PAGO_N = { transferencia: 'Transferencia', credito: 'Crédito', contra_entrega: 'Pago al entregar' };
+const fotoUrl = (u) => (u.startsWith('/api/') ? API + u : u);
+V.pedidos = async () => {
+  const estado = param('estado') || ''; const id = param('id');
+  const { items } = await api('GET', '/api/pedidos');
+  const esDep = yo.role === 'dependiente';
+  const mueve = ES_GER() || (yo.role === 'representante' && ['Vendedor', 'PVC'].includes(yo.position));
+  const SIG = { recibido: ['confirmado', 'Confirmar'], confirmado: ['despachado', 'Marcar despachado'], despachado: ['entregado', 'Marcar entregado'] };
+  const err = (e) => alert(e.fields ? Object.values(e.fields).join(' ') : e.message);
+  const mover = async (p, est, texto) => {
+    const cancelar = est === 'cancelado';
+    const cuerpo = est === 'entregado' ? `Las ${fmtN.format(p.unidades)} unidades de ${p.numero} quedarán como venta a ${p.farmacia?.nombre ?? 'la farmacia'} y su inventario sube. Esto no se puede deshacer.`
+      : cancelar ? `${p.numero} quedará cancelado. Escribe el motivo: ${esDep ? 'la gerencia' : 'la farmacia'} lo verá.` : `${p.numero} de ${p.farmacia?.nombre ?? 'la farmacia'} pasará a "${ESTADOS[est]}". La farmacia recibe el aviso.`;
+    const r = await confirmar(`${texto}: ${p.numero}`, cuerpo, { okTexto: texto, pedirMotivo: cancelar });
+    if (r == null || r === false) return;
+    try { await api('POST', `/api/pedidos/${p.id}/estado`, { estado: est, ...(cancelar ? { nota: r } : {}) }); router(); } catch (e) { err(e); }
+  };
+  const subirComp = (p) => {
+    const inp = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp,application/pdf', style: 'display:none' });
+    inp.addEventListener('change', async () => {
+      const f = inp.files[0]; if (!f) return;
+      if (f.size > 5 * 1024 * 1024) return alert('El comprobante no puede pasar de 5 MB.');
+      accionPendiente = 'subir comprobante';
+      try { await api('POST', `/api/pedidos/${p.id}/comprobante`, { comprobante: { tipo: f.type, nombre: f.name, base64: await archivoB64(f) } }); router(); } catch (e) { err(e); }
+    });
+    document.body.append(inp); inp.click(); setTimeout(() => inp.remove(), 60000);
+  };
+  const acciones = (p, detalle) => {
+    const b = [];
+    if (!detalle) b.push(h('a', { class: 'btn-sec btn-peq', href: `#pedidos?id=${p.id}` }, 'Ver'));
+    if (mueve && SIG[p.estado]) b.push(h('button', { class: 'btn btn-peq', type: 'button', onclick: () => mover(p, ...SIG[p.estado]) }, SIG[p.estado][1]));
+    if ((mueve && ['recibido', 'confirmado'].includes(p.estado)) || (esDep && p.estado === 'recibido')) b.push(h('button', { class: 'btn-sec btn-peq btn-peligro', type: 'button', onclick: () => mover(p, 'cancelado', 'Cancelar pedido') }, 'Cancelar'));
+    if (esDep && p.pago === 'transferencia' && !['entregado', 'cancelado'].includes(p.estado)) b.push(h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => subirComp(p) }, p.comprobante ? 'Cambiar comprobante' : 'Subir comprobante'));
+    return h('div', { class: 'acciones-fila' }, b);
+  };
+  const productos = (p) => p.items.map((l) => `${l.nombre} ×${fmtN.format(l.cantidad)}`).join(', ');
+  const irTienda = esDep ? h('a', { class: 'btn', href: 'tienda.html' }, 'Ir a la tienda') : null;
+  if (id) {
+    const p = items.find((x) => x.id === id);
+    if (!p) return vista('Pedido', null, h('div', { class: 'aviso' }, 'Ese pedido no existe o no lo puedes ver.'), h('a', { class: 'btn-sec', href: '#pedidos' }, 'Volver a pedidos'));
+    return vista(`Pedido ${p.numero}`, `${p.farmacia?.nombre ?? ''}${p.farmacia ? `, ${p.farmacia.municipio} (${p.farmacia.provincia})` : ''}. Hecho el ${fecha(String(p.createdAt).slice(0, 10))}.`,
+      h('div', { class: 'acciones' }, h('a', { class: 'btn-sec', href: '#pedidos' }, 'Volver a pedidos')),
+      h('dl', { class: 'rejilla' }, h('div', { class: 'cifra destacada' }, h('dt', {}, 'Total'), h('dd', {}, RD(p.total))), h('div', { class: 'cifra' }, h('dt', {}, 'Unidades'), h('dd', {}, fmtN.format(p.unidades))),
+        h('div', { class: 'cifra' }, h('dt', {}, 'Pago'), h('dd', {}, PAGO_N[p.pago])), h('div', { class: 'cifra' }, h('dt', {}, 'Estado'), h('dd', {}, chip(p.estado)))),
+      h('div', { class: 'tarjeta', style: 'margin-top:1rem' }, h('h2', {}, 'Productos'),
+        tabla([{ t: 'Producto', v: (l) => [l.nombre, l.presentacion ? h('small', { style: 'display:block;color:var(--texto-2)' }, l.presentacion) : null] }, { t: 'Precio', num: true, v: (l) => RD(l.precio) }, { t: 'Cantidad', num: true, v: (l) => fmtN.format(l.cantidad) }, { t: 'Subtotal', num: true, v: (l) => RD(l.subtotal) }], p.items, ['', ''])),
+      p.nota ? h('p', { class: 'hint', style: 'margin-top:1rem' }, `Nota de la farmacia: ${p.nota}`) : null,
+      p.pago === 'transferencia' ? h('p', { class: 'hint' }, p.comprobante ? ['Comprobante de la transferencia: ', (ES_GER() || esDep || ['supervisor', 'finanzas'].includes(yo.role)) ? h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => verAdjunto(p.comprobante.clave) }, 'Ver comprobante') : 'cargado'] : 'Aún no hay comprobante de la transferencia.') : null,
+      acciones(p, true),
+      h('div', { class: 'tarjeta', style: 'margin-top:1.25rem' }, h('h2', {}, 'Historial'), h('ol', { class: 'historial' }, (p.historial ?? []).map((x) => h('li', {}, chip(x.estado), ` ${new Date(x.fecha).toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo', dateStyle: 'medium', timeStyle: 'short' })}`, x.nota ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.nota) : null)))));
+  }
+  const vis = items.filter((p) => !estado || p.estado === estado);
+  const cuenta = (e) => items.filter((p) => p.estado === e).length;
+  const seg = segmentos('Estado del pedido', [['', `Todos (${fmtN.format(items.length)})`], ...['recibido', 'confirmado', 'despachado', 'entregado', 'cancelado'].map((e) => [e, `${ESTADOS[e]} (${fmtN.format(cuenta(e))})`])], estado, (e) => irA('pedidos', e ? { estado: e } : {}));
+  return vista(esDep ? 'Mis pedidos' : 'Pedidos de farmacias', esDep ? 'Los pedidos que haces en la tienda. Te avisamos cada vez que cambian de estado.' : 'Pedidos que las farmacias hacen en la tienda. Confírmalos, despáchalos y márcalos entregados: al entregarlos quedan como venta y suben el inventario de la farmacia.',
+    irTienda ? h('div', { class: 'acciones' }, irTienda) : null, seg,
+    tabla([{ t: 'Pedido', v: (p) => [p.numero, h('small', { style: 'display:block;color:var(--texto-2)' }, fecha(String(p.createdAt).slice(0, 10)))] },
+      ...(esDep ? [] : [{ t: 'Farmacia', v: (p) => [p.farmacia?.nombre ?? '', h('small', { style: 'display:block;color:var(--texto-2)' }, p.farmacia ? `${p.farmacia.municipio}, ${p.farmacia.provincia}` : '')] }]),
+      { t: 'Productos', v: productos }, { t: 'Total', num: true, v: (p) => RD(p.total) }, { t: 'Pago', v: (p) => PAGO_N[p.pago] }, { t: 'Estado', v: (p) => chip(p.estado) }, { t: '', v: (p) => acciones(p) }],
+    vis, esDep ? ['Aún no has hecho pedidos', 'Entra a la tienda, agrega productos y envía tu pedido.'] : ['No hay pedidos en este estado', 'Cuando una farmacia pida en la tienda, aparecerá aquí.'], { exportar: esDep ? null : { nombre: 'pedidos', titulo: 'Pedidos de farmacias' } }));
+};
+
+// ---------------------------------------------------------------- tienda: productos publicados (gestión)
+V.tienda = async () => {
+  if (!ES_GER()) return vista('Productos en tienda', null, h('div', { class: 'aviso' }, 'Solo la administración o la gerencia publican en la tienda.'));
+  const { items, fotosSitio } = await api('GET', '/api/tienda/admin');
+  const id = param('id');
+  if (!id) {
+    const pub = items.filter((m) => m.publicado).length;
+    return vista('Productos en tienda', `Elige qué medicamentos del catálogo se ven en la tienda pública, con sus fotos y su ficha. ${fmtN.format(pub)} de ${fmtN.format(items.length)} publicados.`,
+      h('div', { class: 'acciones' }, h('a', { class: 'btn-sec', href: 'tienda.html', target: '_blank', rel: 'noopener' }, 'Ver la tienda')),
+      tabla([{ t: 'Foto', v: (m) => m.fotos[0] ? h('img', { class: 'mini-foto', src: fotoUrl(m.fotos[0].url), alt: '', width: 48, height: 48, loading: 'lazy' }) : h('span', { class: 'mini-foto vacia', 'aria-hidden': 'true' }) },
+        { t: 'Medicamento', v: (m) => [m.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, m.presentacion ?? '')] },
+        { t: 'Precio', num: true, v: (m) => (m.precio != null ? RD(m.precio) : h('span', { style: 'color:var(--alerta)' }, 'Sin precio')) },
+        { t: 'Fotos', num: true, v: (m) => fmtN.format(m.fotos.length) },
+        { t: 'En tienda', v: (m) => h('span', { class: `chip ${m.publicado ? 'validado' : 'pendiente'}` }, m.publicado ? 'Publicado' : 'No publicado') },
+        { t: '', v: (m) => h('a', { class: 'btn-sec btn-peq', href: `#tienda?id=${m.id}` }, 'Editar ficha') }],
+      items, ['El catálogo no tiene medicamentos', 'Agrégalos en Catálogo → Medicamentos.']));
+  }
+  const m = items.find((x) => x.id === id);
+  if (!m) return vista('Productos en tienda', null, h('div', { class: 'aviso' }, 'Ese medicamento no existe.'));
+  const err = (e) => alert(e.fields ? Object.values(e.fields).join(' ') : e.message);
+  const guardar = async (cuerpo, texto) => { accionPendiente = texto; try { await api('POST', `/api/tienda/admin/${id}`, cuerpo); router(); } catch (e) { err(e); } };
+  const fotos = h('div', { class: 'fotos-admin' }, m.fotos.length ? m.fotos.map((f, i) => h('figure', {}, h('img', { src: fotoUrl(f.url), alt: f.nombre, loading: 'lazy' }),
+    h('figcaption', {}, i === 0 ? h('strong', {}, 'Principal') : h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => guardar({ orden: [f.id] }, 'poner como principal') }, 'Hacer principal'),
+      h('button', { class: 'btn-sec btn-peq btn-peligro', type: 'button', onclick: async () => { if (await confirmar('Quitar foto', `La foto "${f.nombre}" deja de verse en la tienda.`, { okTexto: 'Quitar foto' })) guardar({ quitar: f.id }, 'quitar foto'); } }, 'Quitar'))))
+    : h('p', { class: 'hint' }, 'Aún no tiene fotos. Agrega al menos una para poder publicarlo.'));
+  const subir = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', id: 'foto-nueva', multiple: true });
+  subir.addEventListener('change', async () => {
+    for (const f of subir.files) {
+      if (f.size > 5 * 1024 * 1024) { alert(`${f.name} pasa de 5 MB.`); continue; }
+      accionPendiente = 'subir foto';
+      try { await api('POST', `/api/tienda/admin/${id}/foto`, { foto: { tipo: f.type, nombre: f.name, base64: await archivoB64(f) } }); } catch (e) { err(e); break; }
+    }
+    router();
+  });
+  const delSitio = new Set(m.fotos.filter((f) => f.delSitio).map((f) => f.url));
+  const sitio = h('fieldset', { class: 'fotos-sitio' }, h('legend', {}, 'Fotos que ya están en el sitio'), fotosSitio.map((f) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'sitio', value: f.url, checked: delSitio.has(f.url) }), h('img', { src: f.url, alt: '', width: 56, height: 56 }), h('span', {}, f.nombre))));
+  const filaFicha = (x = {}) => { const fila = h('div', { class: 'fila-ficha' }, h('input', { name: 'dato', value: x.dato ?? '', placeholder: 'Dato (ej. Principio activo)', 'aria-label': 'Dato' }), h('input', { name: 'valor', value: x.valor ?? '', placeholder: 'Valor', 'aria-label': 'Valor' }), h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => fila.remove() }, 'Quitar')); return fila; };
+  const ficha = h('div', { class: 'ficha-filas' }, (m.ficha.length ? m.ficha : [{}]).map(filaFicha));
+  const desc = h('textarea', { id: 'descripcion', rows: 6, maxlength: 4000 }); desc.value = m.descripcion ?? '';
+  const pub = h('input', { type: 'checkbox', id: 'publicado', checked: m.publicado });
+  const btn = h('button', { class: 'btn', type: 'submit' }, 'Guardar ficha');
+  const f = h('form', { class: 'tarjeta', novalidate: true },
+    h('h2', {}, 'Fotos'), fotos, h('div', { class: 'field' }, h('label', { for: 'foto-nueva' }, 'Agregar fotos (JPG, PNG o WEBP, máximo 5 MB cada una)'), subir), sitio,
+    h('h2', { style: 'margin-top:1.5rem' }, 'Ficha'), h('p', { class: 'hint' }, 'Datos cortos que se muestran como lista: principio activo, presentación, registro sanitario.'), ficha,
+    h('div', { class: 'acciones' }, h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => ficha.append(filaFicha()) }, 'Agregar dato')),
+    h('div', { class: 'field' }, h('label', { for: 'descripcion' }, 'Descripción'), desc),
+    h('p', { class: 'hint' }, m.precio != null ? `Precio en la tienda: ${RD(m.precio)}. Se cambia en Catálogo → Medicamentos.` : 'Este medicamento no tiene precio: ponle precio en Catálogo → Medicamentos antes de publicarlo.'),
+    h('label', { class: 'check' }, pub, h('span', {}, 'Publicado en la tienda')),
+    h('div', { class: 'acciones' }, btn));
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const filas = [...ficha.querySelectorAll('.fila-ficha')].map((x) => ({ dato: x.querySelector('[name=dato]').value, valor: x.querySelector('[name=valor]').value }));
+    const r = await enviar(f, btn, () => api('POST', `/api/tienda/admin/${id}`, { descripcion: desc.value, ficha: filas, fotosSitio: [...f.querySelectorAll('[name=sitio]:checked')].map((x) => x.value), publicado: pub.checked }));
+    if (r) router();
+  });
+  return vista(m.nombre, `${m.presentacion ?? ''} · ficha en la tienda`.replace(/^ · /, 'Ficha en la tienda'), h('div', { class: 'acciones' }, h('a', { class: 'btn-sec', href: '#tienda' }, 'Volver'), m.publicado ? h('a', { class: 'btn-sec', href: `producto.html?id=${m.id}`, target: '_blank', rel: 'noopener' }, 'Ver en la tienda') : null), f);
+};
+
 V.comision = async () => vista('Mi comisión', null, resumenComision(await api('GET', '/api/comisiones/resumen')));
 
 /** Tarjeta con la cuenta de banco (número completo o enmascarado según quién la ve). */
@@ -2278,6 +2399,8 @@ const ICONOS = {
   comision: '<path d="M5 19 19 5"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="16.5" cy="16.5" r="2.5"/>',
   operativo: '<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>',
   receta: '<rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M12 8.5v6M9 11.5h6"/>',
+  pedidos: '<path d="M4.5 5h2l2 10.5h9.5l2-7.5H7.4"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>',
+  tienda: '<path d="M4.5 9.5 6 4.5h12l1.5 5"/><path d="M4.5 9.5a2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0"/><path d="M5.5 12v7.5h13V12M10 19.5v-4h4v4"/>',
   banco: '<path d="M4 9.5 12 5l8 4.5"/><path d="M5 9.5h14M6.5 10v6.5M10 10v6.5M14 10v6.5M17.5 10v6.5M4.5 19.5h15"/>',
 };
 const icono = (id) => { const sp = h('span', { class: 'menu-icono', 'aria-hidden': 'true' }); sp.innerHTML = `<svg viewBox="0 0 24 24">${ICONOS[id] ?? ICONOS.inicio}</svg>`; return sp; };
@@ -2288,7 +2411,7 @@ const icono = (id) => { const sp = h('span', { class: 'menu-icono', 'aria-hidden
  */
 function menuPara(u) {
   const G = ['administrador', 'gerencia', 'supervisor', 'finanzas'].includes(u.role);
-  if (u.role === 'dependiente') return [[null, [['inicio', 'Inicio'], ['voucher', 'Cargar voucher'], ['misVouchers', 'Mis vouchers'], ['comision', 'Mi comisión'], ['banco', 'Mi cuenta de banco']]]];
+  if (u.role === 'dependiente') return [[null, [['inicio', 'Inicio'], ['voucher', 'Cargar voucher'], ['misVouchers', 'Mis vouchers'], ['comision', 'Mi comisión'], ['banco', 'Mi cuenta de banco']]], ['Tienda', [['pedidos', 'Mis pedidos']]]];
   if (u.role === 'representante') {
     const s = [];
     if (u.position === 'Promotora') {
@@ -2296,7 +2419,7 @@ function menuPara(u) {
       s.push(['Mi trabajo', [['misRecetas', 'Mis recetas'], ['alertas', 'Alertas'], ['presupuesto', 'Mi presupuesto'], ['establecimientos', 'Establecimientos']]]);
     } else {
       s.push([null, [['inicio', 'Inicio'], ['jornadas', 'Mis jornadas'], ['presupuesto', 'Mi presupuesto']]]);
-      s.push(['Mi zona', [['establecimientos', 'Establecimientos'], ...(u.position === 'Vendedor' ? [['catalogo', 'Farmacias'], ['inventario', 'Inventario']] : [])]]);
+      s.push(['Mi zona', [['establecimientos', 'Establecimientos'], ...(u.position === 'Vendedor' ? [['catalogo', 'Farmacias'], ['inventario', 'Inventario']] : []), ...(['Vendedor', 'PVC'].includes(u.position) ? [['pedidos', 'Pedidos de farmacias']] : [])]]);
       if (['Vendedor', 'PVC'].includes(u.position)) s.push(['Vouchers', [['voucher', 'Cargar voucher'], ['misVouchers', 'Vouchers cargados']]]);
     }
     return s;
@@ -2307,6 +2430,7 @@ function menuPara(u) {
     ['Territorio', [...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : []), ['establecimientos', 'Establecimientos'], ['hoteles', 'Hoteles'], ['catalogo', 'Catálogo']]],
     ['Ventas y recetas', [['comisiones', 'Comisiones'], ['reportes', 'Reporte de recetas'], ['misRecetas', 'Recetas'], ['alertas', 'Alertas'], ['inventario', 'Inventario']]],
     ['Viáticos', [['perfiles', 'Perfiles de viático'], ['precios', 'Precios de combustible']]],
+    ['Tienda', [['pedidos', 'Pedidos'], ...(['administrador', 'gerencia'].includes(u.role) ? [['tienda', 'Productos en tienda']] : [])]],
     ...(u.role !== 'finanzas' ? [['', [['solicitudes', 'Cuentas y accesos']], 'pie']] : []),
   ];
 }

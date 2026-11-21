@@ -123,11 +123,11 @@ export function createVentas({ data, audit, lector, territorio, hoy }) {
   }
 
   /** Guarda las líneas revisadas, evita duplicados y suma las unidades al inventario de cada farmacia. */
-  async function confirmar(actor, { filas, archivo, fuente } = {}) {
-    permitir(puedeCargar(actor));
+  async function confirmar(actor, { filas, archivo, fuente } = {}, { interno = false } = {}) {
+    if (!interno) permitir(puedeCargar(actor));
     if (!Array.isArray(filas) || !filas.length) throw new HttpError(422, 'No hay líneas para guardar.');
     if (filas.length > MAX_FILAS) throw new HttpError(422, `Máximo ${MAX_FILAS} líneas por carga.`);
-    const enZona = await filtroZona(actor);
+    const enZona = interno ? () => true : await filtroZona(actor);
     const farmacias = new Map((await data.list('farmacias')).map((f) => [f.id, f]));
     const medicamentos = new Map((await data.list('medicamentos')).map((m) => [m.id, m]));
     const errores = {};
@@ -156,7 +156,7 @@ export function createVentas({ data, audit, lector, territorio, hoy }) {
       if (ya.has(llave(v))) { duplicadas++; continue; }
       ya.add(llave(v));
       const m = x.precioUnitario != null ? r2(x.precioUnitario * x.unidades) : null;
-      await data.insert('ventasFarmacia', { ...v, precioUnitario: x.precioUnitario, monto: m, provincia: x.fa.provincia, municipio: x.fa.municipio, lote, fuente: fuente === 'ia' ? 'ia' : 'plantilla', archivo: archivo ?? null, cargadoPor: actor.id });
+      await data.insert('ventasFarmacia', { ...v, precioUnitario: x.precioUnitario, monto: m, provincia: x.fa.provincia, municipio: x.fa.municipio, lote, fuente: ['ia', 'pedido'].includes(fuente) ? fuente : 'plantilla', archivo: archivo ?? null, cargadoPor: actor.id });
       insertadas++; unidadesTot += x.unidades; monto += m ?? 0;
       const k = `${x.fa.id}|${x.me.id}`;
       const acc = porInventario.get(k) ?? { farmaciaId: x.fa.id, medicamentoId: x.me.id, unidades: 0, fecha: x.fecha };
@@ -182,5 +182,7 @@ export function createVentas({ data, audit, lector, territorio, hoy }) {
       .sort((a, b) => b.fecha.localeCompare(a.fecha))
       .map((v) => ({ ...v, farmacia: farmacias.get(v.farmaciaId)?.nombre ?? '', medicamento: medicamentos.get(v.medicamentoId)?.nombre ?? '' }));
   }
-  return { leer, confirmar, listar, iaActiva: () => Boolean(lector?.activo) };
+  /** Lo usa la tienda al entregar un pedido: misma lógica de venta e inventario, sin filtro de zona. */
+  const registrarInterno = (actor, x) => confirmar(actor, x, { interno: true });
+  return { leer, confirmar, registrarInterno, listar, iaActiva: () => Boolean(lector?.activo) };
 }

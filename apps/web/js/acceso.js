@@ -80,7 +80,9 @@ login.addEventListener('submit', async (e) => {
       if (login.recordar.checked) localStorage.setItem('fersuaz.email', login.email.value.trim()); else localStorage.removeItem('fersuaz.email');
     } catch {}
     say('status-entrar', 'ok', `Hola, ${body.user.fullName}. Abriendo tu panel…`);
-    location.href = 'panel.html';
+    // Volver a la página de la tienda de donde vino (solo páginas propias del sitio).
+    const volver = new URLSearchParams(location.search).get('volver') ?? '';
+    location.href = /^(tienda|producto)\.html(\?id=[\w-]+)?$/.test(volver) ? volver : 'panel.html';
   } catch { say('status-entrar', 'error', 'No pudimos conectar con el servidor. Revisa tu conexión e intenta de nuevo.'); }
   finally { btn.disabled = false; btn.textContent = 'Continuar'; }
 });
