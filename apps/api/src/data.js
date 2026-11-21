@@ -13,7 +13,8 @@ export const COLECCIONES = {
   operativos: { tabla: 'operativos', campos: ['promotoraId', 'fecha', 'provincia', 'municipio', 'centro'], json: [] },
   recetas: { tabla: 'recetas', campos: ['promotoraId', 'operativoId', 'medicoId', 'fecha', 'provincia', 'municipio', 'items', 'adjunto', 'pacienteId'], json: ['items', 'adjunto'] },
   pacientes: { tabla: 'pacientes', campos: ['telefono', 'nombre', 'creadoPor'], json: [] },
-  inventario: { tabla: 'inventario', campos: ['farmaciaId', 'medicamentoId', 'unidades', 'fechaCorte', 'registradoPor'], json: [] },
+  inventario: { tabla: 'inventario', campos: ['farmaciaId', 'medicamentoId', 'unidades', 'fechaCorte', 'registradoPor', 'fuente', 'loteVenta'], json: [] },
+  ventasFarmacia: { tabla: 'ventas_farmacia', campos: ['farmaciaId', 'medicamentoId', 'unidades', 'precioUnitario', 'monto', 'fecha', 'factura', 'provincia', 'municipio', 'lote', 'fuente', 'archivo', 'cargadoPor'], json: [] },
   configuracion: { tabla: 'configuracion', campos: ['clave', 'valor', 'actualizadoPor'], json: ['valor'] },
   perfiles: { tabla: 'perfiles_viatico', campos: ['representanteId', 'residencia', 'vehiculo', 'tarifaAlimentacion', 'reembolsoPorKm', 'topeCombustible', 'publico', 'actualizadoPor'], json: ['residencia', 'vehiculo', 'publico'] },
   precios: { tabla: 'precios_combustible', campos: ['combustible', 'precioGalon', 'vigenteDesde', 'fuente', 'enlace', 'registradoPor'], json: [] },
@@ -75,7 +76,7 @@ export class PgData {
     for (const f of c.campos) {
       let v = r[snake(f)];
       if (v instanceof Date) v = v.toISOString().slice(0, 10);
-      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision', 'precioGalon', 'kmEstimados', 'kmReales', 'peajes', 'estacionamiento', 'otros', 'tarifaAlimentacion', 'reembolsoPorKm', 'montoAprobado', 'precio', 'lat', 'lng', 'precioNoche', 'calificacion', 'topeCombustible', 'kmPorGalon', 'kmEstimado'].includes(f)) v = Number(v);
+      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision', 'precioGalon', 'kmEstimados', 'kmReales', 'peajes', 'estacionamiento', 'otros', 'tarifaAlimentacion', 'reembolsoPorKm', 'montoAprobado', 'precio', 'lat', 'lng', 'precioNoche', 'calificacion', 'topeCombustible', 'kmPorGalon', 'kmEstimado', 'precioUnitario', 'monto'].includes(f)) v = Number(v);
       out[f] = v;
     }
     return out;
