@@ -835,7 +835,12 @@ function detalleCalculo(c, partes = false) {
       ? `Comida: ${s.diasComidaDentro} día(s) dentro de su zona × ${RD(s.comidaDentro)} y ${s.diasComidaFuera} día(s) fuera × ${RD(s.comidaFuera)}${s.comidaFuente === 'posicion' ? ` (montos de la posición ${s.posicion})` : s.comidaFuente === 'global' ? ' (monto global)' : ''}.`
       : `Comida: ${s.diasAlimentacion} día(s) de trabajo × ${RD(s.tarifaAlimentacion)} por día.`,
   ];
-  como.push(s.hospedajes ? `Hotel: ${s.hospedajes} noche(s) propuesta(s); solo cuentan las autorizadas por la gerencia.` : 'Hotel: no aplica este mes. Se agrega cuando una jornada necesita dormir fuera y la gerencia lo autoriza (se sugiere el hotel más económico que cumple los requisitos).');
+  const FUENTE_NOCHE = { hotel: 'hotel elegido', verificado: 'hotel verificado', 'referencia-provincia': 'referencia de la provincia', 'referencia-global': 'referencia general' };
+  const plan = (s.porDia ?? []).filter((d) => d.noche);
+  const deJornada = (s.hospedajes ?? 0) - plan.length;
+  if (plan.length) como.push(`Hotel planificado: ${plan.length} noche(s) fuera del cronograma, ${RD(plan.reduce((x, d) => x + d.noche.precio, 0))}. ${plan.map((d) => `${fecha(d.fecha)} en ${d.noche.municipio ?? ''}: ${RD(d.noche.precio)}${d.noche.hotel ? ` (${d.noche.hotel})` : ''}, ${FUENTE_NOCHE[d.noche.fuente]}`).join('; ')}. Cuando crea la jornada de ese día, cuenta el hotel real.`);
+  if (deJornada > 0) como.push(`Hotel en jornadas: ${deJornada} noche(s); solo cuentan las autorizadas por la gerencia.`);
+  if (!plan.length && deJornada <= 0) como.push('Hotel: no aplica este mes. Se agrega cuando un día del cronograma está marcado "duerme fuera" o cuando una jornada necesita dormir fuera y la gerencia lo autoriza.');
   if (s.tope != null) como.push(`Tope mensual de ${pub ? 'transporte' : 'combustible'}: ${RD(s.tope)} (${s.topeFuente === 'representante' ? 'propio del representante' : 'global'}).${s.excedenteTope ? ` Lo calculado pasa el tope por ${RD(s.excedenteTope)}; se presupuesta el tope.` : ''}`);
   como.push(`Origen: ${s.diasCronograma ? `${s.diasCronograma} día(s) del cronograma aprobado` : ''}${s.diasCronograma && s.jornadas ? ' y ' : ''}${s.jornadas ? `${s.jornadas} jornada(s) creada(s)` : ''}. El salario no forma parte de los viáticos.`);
   const semana = h('div', { class: 'tarjeta' }, h('h2', {}, 'Por semana'), tabla(cols, filas, ['', '']));
@@ -902,7 +907,7 @@ V.jornadas = async () => {
       sincronizarRazon();
     });
     sincronizarRazon();
-    const hosp = h('details', { class: 'tarjeta hotel-jornada', style: 'background:var(--canvas)' }, h('summary', {}, rec ? `¿Duermes fuera? Hotel aprobado: ${rec.hotel.nombre}, ${RD(rec.hotel.precioNoche)} por noche` : '¿Necesitas hotel? La gerencia debe autorizarlo'),
+    const hosp = h('details', { class: 'tarjeta hotel-jornada', style: 'background:var(--canvas)', open: c?.duermeFuera === true }, h('summary', {}, c?.duermeFuera ? `La gerencia programó que este día duermes fuera${rec ? `. Hotel aprobado: ${rec.hotel.nombre}, ${RD(rec.hotel.precioNoche)} por noche` : ''}` : rec ? `¿Duermes fuera? Hotel aprobado: ${rec.hotel.nombre}, ${RD(rec.hotel.precioNoche)} por noche` : '¿Necesitas hotel? La gerencia debe autorizarlo'),
       tarjetaRec, modos, bloqueOtro, precioDistinto,
       h('div', { class: 'form-fila' }, campo('hospedaje.noches', 'Noches', { type: 'number', min: 1, step: 1, inputmode: 'numeric', value: 1 }), campo('hospedaje.cargos', 'Impuestos y cargos RD$', { type: 'number', min: 0, step: 0.01, value: 0 })),
       razon);
@@ -968,6 +973,71 @@ function nombresDias(ds = [1, 2, 3, 4, 5]) {
   const ns = orden.map((d) => N[d]);
   return ns.length > 1 ? `${ns.slice(0, -1).join(', ')} y ${ns.at(-1)}` : ns[0] ?? '';
 }
+/**
+ * Revisión de días antes de aprobar (propuesta automática o copia del mes anterior):
+ * quitar días o lugares y marcar las noches que duerme fuera. Aprueba todo junto con el lote.
+ */
+function revisarDias(salida, diasIn, rep, mes, div, intro, avisos = []) {
+  const etiqueta = (l) => (l.refTipo === 'farmacia' ? 'Farmacia' : div.tipos[l.tipo] ?? 'Centro');
+  const quitados = new Set(); const diasFuera = new Set();
+  const noches = new Set(diasIn.filter((d) => d.duermeFuera).map((d) => d.fecha));
+  const aprobar = h('button', { class: 'btn', type: 'button' });
+  const contar = () => {
+    const n = diasIn.filter((d) => !diasFuera.has(d.fecha) && d.lugares.some((l) => !quitados.has(`${d.fecha}|${l.refId}`))).length;
+    const nf = diasIn.filter((d) => !diasFuera.has(d.fecha) && noches.has(d.fecha)).length;
+    aprobar.textContent = `Aprobar ${n} día(s)${nf ? `, ${nf} noche(s) fuera` : ''}`; aprobar.disabled = !n;
+  };
+  const tarjetas = diasIn.map((d) => {
+    const lista = h('ol', { class: 'propuesta-lugares' }, d.lugares.map((l) => {
+      const k = `${d.fecha}|${l.refId}`;
+      const li = h('li', {}, h('span', {}, h('strong', {}, l.lugar), h('small', {}, `${etiqueta(l)} · ${l.municipio}${l.lat == null ? ' · sin ubicación' : ''}`)),
+        h('button', { class: 'btn-enlace', type: 'button', 'aria-label': `Quitar ${l.lugar}`, onclick: (ev) => {
+          const fuera = !quitados.has(k); fuera ? quitados.add(k) : quitados.delete(k);
+          li.classList.toggle('quitado', fuera); ev.target.textContent = fuera ? 'Volver a poner' : 'Quitar'; contar();
+        } }, 'Quitar'));
+      return li;
+    }));
+    const muns = [...new Set(d.lugares.map((l) => l.municipio))].join(', ');
+    const art = h('article', { class: 'propuesta-dia' });
+    const caja = h('input', { type: 'checkbox', checked: true, onchange: (ev) => { ev.target.checked ? diasFuera.delete(d.fecha) : diasFuera.add(d.fecha); art.classList.toggle('quitado', !ev.target.checked); contar(); } });
+    const noche = h('label', { class: 'noche-fuera' }, h('input', { type: 'checkbox', checked: noches.has(d.fecha), onchange: (ev) => { ev.target.checked ? noches.add(d.fecha) : noches.delete(d.fecha); contar(); } }), h('span', {}, `Duerme fuera esta noche${d.lugares.at(-1) ? ` (${d.lugares.at(-1).municipio})` : ''}`));
+    art.append(...[h('label', { class: 'propuesta-cabeza' }, caja, h('span', {}, h('strong', {}, fecha(d.fecha)), h('small', {}, `${d.desde ? `Copia del ${fecha(d.desde)} · ` : ''}${d.lugares.length} lugar(es) · ${muns}`))), lista, noche,
+      d.quitados?.length ? h('small', { class: 'hint' }, `Ya no están activos: ${d.quitados.join(', ')}.`) : null].filter(Boolean));
+    return art;
+  });
+  aprobar.addEventListener('click', async () => {
+    const dias = diasIn.filter((d) => !diasFuera.has(d.fecha))
+      .map((d) => ({ fecha: d.fecha, duermeFuera: noches.has(d.fecha), hotelId: noches.has(d.fecha) ? d.hotelId ?? null : null, lugares: d.lugares.filter((l) => !quitados.has(`${d.fecha}|${l.refId}`)).map(({ refTipo, refId }) => ({ refTipo, refId })) }))
+      .filter((d) => d.lugares.length);
+    const nf = dias.filter((d) => d.duermeFuera).length;
+    if (!(await confirmar('Aprobar cronograma', `Se aprobarán ${dias.length} día(s) con ${dias.reduce((n, d) => n + d.lugares.length, 0)} lugares${nf ? ` y ${nf} noche(s) fuera, que entran al presupuesto con el precio del hotel verificado o el de referencia` : ''}. El representante recibirá un aviso y podrá crear sus jornadas.`, { okTexto: 'Aprobar' }))) return;
+    aprobar.disabled = true; aprobar.textContent = 'Aprobando…';
+    try { await api('POST', '/api/cronogramas/lote', { representanteId: rep, dias }); irA('cronogramas', { mes, rep, sec: 'dias' }); }
+    catch (err) { const a = h('div', { role: 'status' }); estado(a, 'error', err.message); salida.prepend(a); contar(); }
+  });
+  contar();
+  salida.replaceChildren(intro, ...avisos.map((t) => h('div', { class: 'aviso' }, t)), h('div', { class: 'propuesta' }, tarjetas), h('div', { class: 'acciones' }, aprobar));
+}
+
+/** Copiar el cronograma del mes anterior: mismos lugares y noches fuera, en el mismo día de la semana. */
+function copiarMes(rep, mes, div) {
+  const b = h('button', { class: 'btn', type: 'submit' }, 'Copiar del mes anterior');
+  const salida = h('div', { 'aria-live': 'polite' });
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Copiar el mes anterior'),
+    h('p', { class: 'hint' }, 'Como cada representante repite su ruta cada mes, copia los días aprobados del mes anterior al mismo día de la semana (el 2.º martes pasa al 2.º martes), con sus lugares y sus noches fuera. Revisas y apruebas; nada se guarda antes.'),
+    h('div', { class: 'acciones' }, b), salida);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const r = await enviar(f, b, () => api('POST', '/api/cronogramas/copiar-mes-anterior', { representanteId: rep, mes }));
+    if (!r) return;
+    const p = r.item;
+    const avisos = p.omitidos.length ? [`${fmtN.format(p.omitidos.length)} día(s) no se copian: ${p.omitidos.map((o) => `${fecha(o.desde)} (${o.razon.replace(/\.$/, '').toLowerCase()})`).join('; ')}.`] : [];
+    if (!p.dias.length) { salida.replaceChildren(...avisos.map((t) => h('div', { class: 'aviso' }, t)), h('div', { class: 'tarjeta vacio', style: 'margin-top:1rem' }, h('strong', {}, 'No hay días para copiar'), 'Ya están programados o ya pasaron.')); return; }
+    revisarDias(salida, p.dias, rep, mes, div, h('p', { class: 'hint', style: 'margin-top:1rem' }, `${fmtN.format(p.resumen.copiados)} de ${fmtN.format(p.resumen.origen)} día(s) de ${p.anterior} copiados${p.resumen.nochesFuera ? `, ${fmtN.format(p.resumen.nochesFuera)} con noche fuera` : ''}.`), avisos);
+  });
+  return f;
+}
+
 /** Propuesta automática del mes (solo administrador): el sistema reparte los lugares de la zona; el admin ajusta y aprueba. */
 async function propuestaMes(rep, mes, div) {
   const fpd = campo('porDia', 'Lugares por día', { type: 'number', min: 1, max: 15, step: 1, value: 8, inputmode: 'numeric' });
@@ -992,53 +1062,21 @@ async function propuestaMes(rep, mes, div) {
   const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Propuesta automática del mes'),
     h('p', { class: 'hint' }, 'El sistema reparte las farmacias, hospitales, clínicas y UNAP de su zona que aún no tienen día este mes, en los días laborables libres. Empieza por su municipio de residencia y agrupa por cercanía para gastar menos combustible. Nada se guarda hasta que apruebes.'),
     h('div', { class: 'form-fila' }, fpd), sab, fer, h('p', { class: 'error', dataset: { for: 'dias' } }), h('div', { class: 'acciones' }, b), salida);
-  const etiqueta = (l) => (l.refTipo === 'farmacia' ? 'Farmacia' : div.tipos[l.tipo] ?? 'Centro');
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const r = await enviar(f, b, () => api('POST', '/api/cronogramas/propuesta', { representanteId: rep, mes, porDia: Number(f.porDia.value), dias: [...f.querySelectorAll('[name=dia]:checked')].map((x) => Number(x.value)), feriados: [...feriados] }));
     if (!r) return;
-    const p = r.item; const quitados = new Set(); const diasFuera = new Set();
+    const p = r.item;
     if (!p.dias.length) {
       salida.replaceChildren(h('div', { class: 'tarjeta vacio', style: 'margin-top:1rem' }, h('strong', {}, p.resumen.lugares ? 'No quedan días laborables libres este mes' : 'No hay lugares pendientes'),
         p.resumen.lugares ? 'Elige el mes siguiente o anula algún día.' : 'Todos los lugares de su zona ya tienen día este mes, o su zona no tiene lugares registrados.'));
       return;
     }
-    const aprobar = h('button', { class: 'btn', type: 'button' }, `Aprobar ${p.dias.length} día(s)`);
-    const contar = () => {
-      const n = p.dias.filter((d) => !diasFuera.has(d.fecha) && d.lugares.some((l) => !quitados.has(`${d.fecha}|${l.refId}`))).length;
-      aprobar.textContent = `Aprobar ${n} día(s)`; aprobar.disabled = !n;
-    };
-    const tarjetas = p.dias.map((d) => {
-      const lista = h('ol', { class: 'propuesta-lugares' }, d.lugares.map((l) => {
-        const k = `${d.fecha}|${l.refId}`;
-        const li = h('li', {}, h('span', {}, h('strong', {}, l.lugar), h('small', {}, `${etiqueta(l)} · ${l.municipio}${l.lat == null ? ' · sin ubicación' : ''}`)),
-          h('button', { class: 'btn-enlace', type: 'button', 'aria-label': `Quitar ${l.lugar}`, onclick: (ev) => {
-            const fuera = !quitados.has(k); fuera ? quitados.add(k) : quitados.delete(k);
-            li.classList.toggle('quitado', fuera); ev.target.textContent = fuera ? 'Volver a poner' : 'Quitar'; contar();
-          } }, 'Quitar'));
-        return li;
-      }));
-      const muns = [...new Set(d.lugares.map((l) => l.municipio))].join(', ');
-      const art = h('article', { class: 'propuesta-dia' });
-      const caja = h('input', { type: 'checkbox', checked: true, onchange: (ev) => { ev.target.checked ? diasFuera.delete(d.fecha) : diasFuera.add(d.fecha); art.classList.toggle('quitado', !ev.target.checked); contar(); } });
-      art.append(h('label', { class: 'propuesta-cabeza' }, caja, h('span', {}, h('strong', {}, fecha(d.fecha)), h('small', {}, `${d.lugares.length} lugar(es) · ${muns}`))), lista);
-      return art;
-    });
-    aprobar.addEventListener('click', async () => {
-      const dias = p.dias.filter((d) => !diasFuera.has(d.fecha))
-        .map((d) => ({ fecha: d.fecha, lugares: d.lugares.filter((l) => !quitados.has(`${d.fecha}|${l.refId}`)).map(({ refTipo, refId }) => ({ refTipo, refId })) }))
-        .filter((d) => d.lugares.length);
-      if (!(await confirmar('Aprobar cronograma', `Se aprobarán ${dias.length} día(s) con ${dias.reduce((n, d) => n + d.lugares.length, 0)} lugares. El representante recibirá un aviso y podrá crear sus jornadas.`, { okTexto: 'Aprobar' }))) return;
-      aprobar.disabled = true; aprobar.textContent = 'Aprobando…';
-      try { await api('POST', '/api/cronogramas/lote', { representanteId: rep, dias }); irA('cronogramas', { mes, rep, sec: 'dias' }); }
-      catch (err) { const a = h('div', { role: 'status' }); estado(a, 'error', err.message); salida.prepend(a); contar(); }
-    });
     const avisos = [];
     if (p.sinDia.length) avisos.push(`${fmtN.format(p.sinDia.length)} lugar(es) no caben en los días libres de este mes; quedarán para el próximo.`);
     if (p.resumen.sinUbicacion) avisos.push(`${fmtN.format(p.resumen.sinUbicacion)} lugar(es) no tienen ubicación y van al final de su municipio.`);
     if (p.sinResidencia) avisos.push('Este representante no tiene perfil de viático: el recorrido no empieza en su residencia.');
-    salida.replaceChildren(h('p', { class: 'hint', style: 'margin-top:1rem' }, `${fmtN.format(p.resumen.lugares)} lugares pendientes en ${fmtN.format(p.resumen.diasLibres)} día(s) laborable(s) libre(s) (${nombresDias(p.resumen.diasSemana)}, desde ${fecha(p.resumen.desde > `${mes}-01` ? p.resumen.desde : `${mes}-01`)}${p.resumen.feriados?.length ? `, sin ${p.resumen.feriados.length} fecha(s) quitada(s)` : ''}). Quita lo que no quieras antes de aprobar; el orden exacto de cada día lo calcula el mapa cuando el representante crea su jornada.`),
-      ...avisos.map((t) => h('div', { class: 'aviso' }, t)), h('div', { class: 'propuesta' }, tarjetas), h('div', { class: 'acciones' }, aprobar));
+    revisarDias(salida, p.dias, rep, mes, div, h('p', { class: 'hint', style: 'margin-top:1rem' }, `${fmtN.format(p.resumen.lugares)} lugares pendientes en ${fmtN.format(p.resumen.diasLibres)} día(s) laborable(s) libre(s) (${nombresDias(p.resumen.diasSemana)}, desde ${fecha(p.resumen.desde > `${mes}-01` ? p.resumen.desde : `${mes}-01`)}${p.resumen.feriados?.length ? `, sin ${p.resumen.feriados.length} fecha(s) quitada(s)` : ''}). Quita lo que no quieras y marca las noches que duerme fuera antes de aprobar; el orden exacto de cada día lo calcula el mapa cuando el representante crea su jornada.`), avisos);
   });
   return f;
 }
@@ -1055,6 +1093,7 @@ V.cronogramas = async () => {
   if (esAdmin) {
     if (!zona.provincias.length) bloques.push(h('div', { class: 'aviso error' }, 'Este representante no tiene provincias asignadas. ', h('a', { href: `#representantes?rep=${rep}` }, 'Asignar provincias')));
     else {
+      bloques.push(S('copiar', 'Copiar mes anterior', copiarMes(rep, mes, div)));
       bloques.push(S('propuesta', 'Propuesta automática', await propuestaMes(rep, mes, div)));
       const lugares = [...lz.establecimientos.map((x) => ({ ...x, refTipo: 'establecimiento', etiqueta: div.tipos[x.tipo] })), ...lz.farmacias.map((x) => ({ ...x, refTipo: 'farmacia', etiqueta: 'Farmacia' }))]
         .sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
@@ -1076,22 +1115,30 @@ V.cronogramas = async () => {
         h('p', { class: 'hint' }, `Zona: ${zona.provincias.map((p) => (zona.municipios?.[p]?.length ? `${p} (${zona.municipios[p].join(', ')})` : p)).join('; ')}. Elige los días y los lugares; el orden de visita lo calcula el sistema por distancia.`),
         h('p', { class: 'error', dataset: { for: 'fechas' } }), dias,
         lugares.length ? [fmun, h('p', { class: 'error', dataset: { for: 'lugares' } }), lista] : h('div', { class: 'aviso' }, 'No hay lugares registrados en sus provincias. ', h('a', { href: '#establecimientos' }, 'Registrar establecimientos')),
+        h('label', { class: 'noche-fuera' }, h('input', { type: 'checkbox', name: 'duermeFuera' }), h('span', {}, 'Duerme fuera la noche de cada día elegido')),
         campo('nota', 'Nota para el representante', {}, '(opcional)'), h('div', { class: 'acciones' }, b));
       f.addEventListener('submit', async (e) => {
         e.preventDefault();
         const sel = [...f.querySelectorAll('[name=lugar]:checked')].map((x) => { const [refTipo, refId] = x.value.split(':'); return { refTipo, refId }; });
-        if (await enviar(f, b, () => api('POST', '/api/cronogramas', { representanteId: rep, fechas: [...elegidos].sort(), lugares: sel, nota: f.nota.value }))) irA('cronogramas', { mes, rep, sec: 'dias' });
+        if (await enviar(f, b, () => api('POST', '/api/cronogramas', { representanteId: rep, fechas: [...elegidos].sort(), lugares: sel, nota: f.nota.value, duermeFuera: f.duermeFuera.checked }))) irA('cronogramas', { mes, rep, sec: 'dias' });
       });
       bloques.push(S('mano', 'Programar a mano', f));
     }
   }
+  const puedeNoche = ['administrador', 'gerencia'].includes(yo.role);
+  const noche = async (c) => {
+    const poner = !c.duermeFuera;
+    if (!(await confirmar(poner ? 'Marcar noche fuera' : 'Quitar noche fuera', poner ? `El ${fecha(c.fecha)} duerme fuera. La noche entra al presupuesto con el hotel verificado de ${c.lugares.at(-1)?.municipio ?? 'la zona'} o el precio de referencia.` : `El ${fecha(c.fecha)} ya no duerme fuera; la noche sale del presupuesto.`, { okTexto: poner ? 'Marcar noche fuera' : 'Quitar noche fuera' }))) return;
+    try { await api('POST', `/api/cronogramas/${c.id}/hotel`, { duermeFuera: poner }); } catch (e) { alert(e.message); } router();
+  };
   const anular = async (c) => { const m = await confirmar('Anular cronograma', `El representante dejará de ver el día ${fecha(c.fecha)}. Escribe el motivo.`, { okTexto: 'Anular', pedirMotivo: true }); if (m == null) return; try { await api('POST', `/api/cronogramas/${c.id}/anular`, { motivo: m }); } catch (e) { alert(e.message); } router(); };
   bloques.push(S('dias', `Días programados (${fmtN.format(crons.filter((c) => c.estado === 'aprobado').length)})`,
     tabla([{ t: 'Día', v: (c) => fecha(c.fecha) }, { t: 'Lugares', v: (c) => c.lugares.map((l) => l.lugar).join(', ') },
       { t: 'Estado', v: (c) => c.estado === 'anulado' ? [h('span', { class: 'chip anulado' }, 'Anulado'), c.motivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, c.motivo) : null] : c.jornadaId ? h('span', { class: 'chip aprobado' }, 'Jornada creada') : h('span', { class: 'chip pendiente' }, 'Aprobado') },
-      { t: '', v: (c) => esAdmin && c.estado === 'aprobado' && !c.jornadaId ? h('button', { class: 'btn-sec btn-peq', onclick: () => anular(c) }, 'Anular') : '' }],
+      { t: 'Noche', v: (c) => (c.duermeFuera ? h('span', { class: 'chip noche' }, 'Duerme fuera') : '') },
+      { t: '', v: (c) => c.estado === 'aprobado' && !c.jornadaId ? h('div', { class: 'acciones-fila' }, puedeNoche ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => noche(c) }, c.duermeFuera ? 'Quitar noche fuera' : 'Noche fuera') : null, esAdmin ? h('button', { class: 'btn-sec btn-peq', onclick: () => anular(c) }, 'Anular') : null) : '' }],
     crons, ['Sin días programados en este mes', esAdmin ? 'Usa la propuesta automática o programa a mano.' : 'El administrador aún no programa este mes.'])));
-  return vistaS('cronogramas', ['propuesta', 'mano', 'dias'], 'Cronogramas', 'El administrador programa y aprueba los días y lugares de cada representante.', ...bloques);
+  return vistaS('cronogramas', ['copiar', 'propuesta', 'mano', 'dias'], 'Cronogramas', 'El administrador programa y aprueba los días y lugares de cada representante.', ...bloques);
 };
 
 // ---------------------------------------------------------------- campana de notificaciones
@@ -1655,6 +1702,23 @@ V.establecimientos = async () => {
   return vistaS('establecimientos', ['lista', 'nuevo', 'importar', 'google', 'auto'], 'Establecimientos', 'Clínicas, hospitales, UNAP y centros de primer nivel por municipio. Se usan como paradas exactas de las jornadas.', ...bloques);
 };
 
+/** Precio de referencia por noche (por provincia y general), para las noches fuera sin hotel verificado. */
+async function formReferenciaHotel(div) {
+  const { item: ref } = await api('GET', '/api/viaticos/hotel-referencia');
+  const general = campo('global', 'Precio general por noche (RD$)', { type: 'number', min: 1, step: 0.01, inputmode: 'decimal', value: ref.global ?? '' }, '(se usa donde la provincia no tiene precio)');
+  const filas = h('div', { class: 'ref-provincias' }, div.provincias.map((p) => h('label', {}, h('span', {}, p), h('input', { type: 'number', min: 1, step: 0.01, inputmode: 'decimal', name: `prov-${p}`, dataset: { prov: p }, value: ref.porProvincia?.[p] ?? '', placeholder: ref.global ? `General: ${fmtN.format(ref.global)}` : 'Sin precio', 'aria-label': `Precio por noche en ${p}` }))));
+  const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar precios de referencia');
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Precio de referencia por noche'),
+    h('p', { class: 'hint' }, 'Cuando un día del cronograma está marcado "duerme fuera", la noche entra al presupuesto así: primero el hotel verificado más económico del municipio o la provincia; si no hay, el precio de referencia de la provincia; si tampoco, el general. Cuando el representante crea su jornada, usa el hotel real.'),
+    general, h('p', { class: 'error', dataset: { for: 'global' } }), filas, h('div', { class: 'acciones' }, b));
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const porProvincia = Object.fromEntries([...filas.querySelectorAll('input')].filter((x) => x.value !== '').map((x) => [x.dataset.prov, x.value]));
+    if (await enviar(f, b, () => api('POST', '/api/viaticos/hotel-referencia', { global: f.global.value, porProvincia }))) router();
+  });
+  return f;
+}
+
 V.hoteles = async () => {
   const [div, { items: reqs }] = await Promise.all([division(), api('GET', '/api/hoteles/requisitos')]);
   const fprov = param('provincia') || ''; const fmun = param('municipio') || '';
@@ -1691,8 +1755,8 @@ V.hoteles = async () => {
       { t: 'Requisitos', v: (x) => x.estado === 'inactivo' ? h('span', { class: 'chip anulado' }, 'No usar') : x.cumple ? h('span', { class: 'chip validado' }, 'Cumple todo') : h('span', { class: 'chip pendiente', title: x.faltan.map((k) => reqs.find((r) => r.value === k)?.label).join(', ') }, `Faltan ${x.faltan.length}`) },
       { t: '', v: (x) => ES_GER() ? h('button', { class: 'btn-sec btn-peq', onclick: () => editar(x) }, x.precioNoche ? 'Editar' : 'Confirmar') : '' },
     ], items, ['No hay hoteles con estos filtros', ES_GER() ? 'Tráelos de Google Maps en "Registro automático".' : 'La administración los registra y verifica.'], { exportar: { nombre: 'hoteles-fersuaz', titulo: 'Hoteles' } })));
-  if (ES_GER()) bloques.push(S('google', 'Buscar en Google', await buscadorGoogle([['hotel', 'Hoteles']], null)), S('auto', 'Registro automático', await registroAutomatico([['hotel', 'Hoteles']])));
-  return vistaS('hoteles', ['lista', 'google', 'auto'], 'Hoteles', 'Para el hospedaje de los representantes. Google Maps trae los hoteles; la administración confirma precio y requisitos: servicios básicos, aire, agua, cama cómoda, higiene, parqueo y seguridad. Se recomienda el más económico que cumple todo.', ...bloques);
+  if (ES_GER()) bloques.push(S('referencia', 'Precio de referencia', await formReferenciaHotel(div)), S('google', 'Buscar en Google', await buscadorGoogle([['hotel', 'Hoteles']], null)), S('auto', 'Registro automático', await registroAutomatico([['hotel', 'Hoteles']])));
+  return vistaS('hoteles', ['lista', 'referencia', 'google', 'auto'], 'Hoteles', 'Para el hospedaje de los representantes. Google Maps trae los hoteles; la administración confirma precio y requisitos: servicios básicos, aire, agua, cama cómoda, higiene, parqueo y seguridad. Se recomienda el más económico que cumple todo.', ...bloques);
 };
 
 // ---------------------------------------------------------------- vehículo del representante (EPA o a mano) o transporte público

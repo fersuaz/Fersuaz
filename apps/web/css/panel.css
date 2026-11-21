@@ -683,3 +683,11 @@ td .sem-nombre, .td-fecha { white-space: nowrap; }
 .fila-ficha { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: .5rem; }
 .fila-ficha input { font: inherit; padding: .55rem .75rem; border: 1px solid #C7D6E3; border-radius: 10px; }
 @media (max-width: 640px) { .fila-ficha { grid-template-columns: 1fr; } }
+
+/* Noches fuera y precio de referencia de hotel */
+.noche-fuera { display: flex; gap: .55rem; align-items: center; margin-top: .6rem; font-size: .95rem; cursor: pointer; }
+.noche-fuera input { width: 1.1rem; height: 1.1rem; accent-color: #003463; }
+.chip.noche { background: #E2EEF5; color: #003463; }
+.ref-provincias { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .5rem 1.25rem; margin-top: 1rem; }
+.ref-provincias label { display: grid; grid-template-columns: 1fr 8.5rem; align-items: center; gap: .6rem; font-size: .95rem; }
+.ref-provincias input { font: inherit; padding: .45rem .6rem; border: 1px solid #C7D6E3; border-radius: 8px; text-align: right; }

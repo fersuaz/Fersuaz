@@ -87,3 +87,22 @@ export function proponer({ lugares, residencia, fechas, porDia }) {
   }
   return { dias, sinDia: ordenados.slice(i) };
 }
+
+/**
+ * Copia las fechas de un mes al siguiente conservando el día de la semana y su número en el mes
+ * (el 2.º martes pasa al 2.º martes). Si el mes destino no tiene ese día (ej. un 5.º lunes), queda en `sinDia`.
+ */
+export function copiarFechas(mesDestino, fechas) {
+  const [y, m] = mesDestino.split('-').map(Number);
+  const ultimo = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const mapa = []; const sinDia = [];
+  for (const f of fechas) {
+    const d = new Date(`${f}T12:00:00Z`);
+    const dow = d.getUTCDay(); const n = Math.ceil(d.getUTCDate() / 7);
+    const primero = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+    const dia = 1 + ((dow - primero + 7) % 7) + (n - 1) * 7;
+    if (dia > ultimo) { sinDia.push(f); continue; }
+    mapa.push({ desde: f, fecha: `${mesDestino}-${String(dia).padStart(2, '0')}` });
+  }
+  return { mapa, sinDia };
+}
