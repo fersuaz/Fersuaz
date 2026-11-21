@@ -27,7 +27,7 @@ export const COLECCIONES = {
   preciosMedicamento: { tabla: 'precios_medicamento', campos: ['medicamentoId', 'precio', 'vigenteDesde', 'fuente', 'registradoPor'], json: [] },
   cronogramas: { tabla: 'cronogramas', campos: ['representanteId', 'fecha', 'lugares', 'nota', 'estado', 'motivo', 'creadoPor', 'kmEstimado', 'minutosEstimados', 'kmOrigen'], json: ['lugares'] },
   notificaciones: { tabla: 'notificaciones', campos: ['usuarioId', 'tipo', 'titulo', 'texto', 'enlace', 'leida', 'correo'], json: [] },
-  presupuestos: { tabla: 'presupuestos_viatico', campos: ['representanteId', 'mes', 'detalle', 'supuestos', 'total', 'estado', 'montoAprobado', 'aprobadoPor', 'motivo', 'desembolsos', 'gastos', 'liquidacion'], json: ['detalle', 'supuestos', 'desembolsos', 'gastos', 'liquidacion'] },
+  presupuestos: { tabla: 'presupuestos_viatico', campos: ['representanteId', 'mes', 'detalle', 'supuestos', 'total', 'estado', 'montoAprobado', 'aprobadoPor', 'motivo', 'desembolsos', 'gastos', 'liquidacion', 'ajustes', 'origen'], json: ['detalle', 'supuestos', 'desembolsos', 'gastos', 'liquidacion', 'ajustes'] },
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
