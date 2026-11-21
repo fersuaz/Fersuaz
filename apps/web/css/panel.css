@@ -696,3 +696,15 @@ td .sem-nombre, .td-fecha { white-space: nowrap; }
 .redes { display: inline-flex; flex-wrap: wrap; gap: .35rem .75rem; }
 .redes a { color: #246C8E; font-weight: 500; }
 .importador td select { min-width: 13rem; max-width: 22rem; font: inherit; font-size: .92rem; padding: .45rem .6rem; border: 1px solid #C7D6E3; border-radius: 10px; background: #fff; }
+
+/* Metas */
+.meta-celda { display: grid; gap: .3rem; min-width: 9rem; }
+.meta-celda small { color: #52677A; font-size: .82rem; }
+.meta-celda small.atrasado { color: #C0462C; font-weight: 600; }
+.meta-barra { position: relative; height: .5rem; border-radius: 999px; background: #E9F0F6; overflow: visible; }
+.meta-barra span { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: #003463; }
+.meta-barra i { position: absolute; top: -.2rem; bottom: -.2rem; width: 2px; background: #3085AC; }
+.metas-tarjetas { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 1rem; margin-top: 1rem; }
+.meta-tarjeta h2 { font-size: 1.1rem; margin-bottom: .75rem; }
+.meta-tarjeta .meta-celda strong { font: 600 1.6rem var(--serif, 'Poppins'); color: #003463; }
+.meta-tarjeta .meta-barra { height: .7rem; }
