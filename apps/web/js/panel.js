@@ -817,9 +817,13 @@ V.banco = async () => {
     h('div', { class: 'acciones' }, b));
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (await enviar(f, b, () => api('POST', '/api/banco/mia', { banco: f.banco.value, tipo: f.tipo.value, numero: f.numero.value, titular: f.titular.value, correo: f.correo.value }))) router();
+    if (await enviar(f, b, () => api('POST', '/api/banco/mia', { banco: f.banco.value, tipo: f.tipo.value, numero: f.numero.value, titular: f.titular.value, correo: f.correo.value }))) irA('banco', { sec: 'registrada' });
   });
-  return vista('Mi cuenta de banco', 'Aquí se te paga la comisión. Bancos disponibles: BHD, Banco Popular y Banreservas.', c ? h('div', { class: 'tarjeta' }, h('h2', {}, 'Cuenta registrada'), tarjetaCuenta(c)) : null, f);
+  const sub = 'Aquí se te paga la comisión. Bancos disponibles: BHD, Banco Popular y Banreservas.';
+  if (!c) return vista('Mi cuenta de banco', sub, f);
+  return vistaS('banco', ['registrada', 'actualizar'], 'Mi cuenta de banco', sub,
+    S('registrada', 'Cuenta registrada', h('div', { class: 'tarjeta' }, h('h2', {}, 'Cuenta registrada'), tarjetaCuenta(c))),
+    S('actualizar', 'Actualizar tu cuenta', f));
 };
 
 // ---------------------------------------------------------------- vistas: promotora
