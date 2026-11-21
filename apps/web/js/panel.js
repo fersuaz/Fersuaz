@@ -510,7 +510,74 @@ V.inventario = async () => {
     const r = await enviar(f, b, () => api('POST', '/api/inventario', { farmaciaId: f.farmaciaId.value, medicamentoId: f.medicamentoId.value, unidades: Number(f.unidades.value), fechaCorte: f.fechaCorte.value }));
     if (r) { estado(f.querySelector('.aviso:last-of-type') ?? f.appendChild(h('div', { class: 'aviso' })), 'ok', 'Inventario registrado.'); f.unidades.value = ''; }
   });
-  return vista('Inventario en farmacias', 'Las alertas de las promotoras comparan las recetas de la zona con el último conteo de cada farmacia.', f);
+  // Cargar ventas por archivo: plantilla de Excel, o factura en PDF / foto leída con inteligencia artificial.
+  const mes = hoy().slice(0, 7);
+  const [{ ia }, cargadas] = await Promise.all([api('GET', '/api/ventas/estado').catch(() => ({ ia: false })), api('GET', `/api/ventas?mes=${mes}`).then((x) => x.items).catch(() => [])]);
+  const vistaPrevia = h('div', { 'aria-live': 'polite' });
+  const bLeer = h('button', { class: 'btn', type: 'submit' }, 'Leer archivo');
+  const fv = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Cargar lo que se vendió a cada farmacia'),
+    h('p', { class: 'hint' }, ia
+      ? 'Sube la plantilla de Excel, o la factura o el reporte en PDF, Excel o foto: la plataforma lo lee con inteligencia artificial. Antes de guardar verás cada línea para revisarla. Al guardar, el inventario de cada farmacia sube con las unidades vendidas.'
+      : 'Sube la plantilla de Excel con las ventas. Antes de guardar verás cada línea para revisarla. Al guardar, el inventario de cada farmacia sube con las unidades vendidas. La lectura de facturas en PDF o fotos se activa cuando la clave de inteligencia artificial esté configurada en el servidor.'),
+    h('div', { class: 'form-fila' }, campo('archivoVentas', 'Archivo', { type: 'file', accept: ia ? '.xlsx,.csv,application/pdf,image/jpeg,image/png,image/webp' : '.xlsx,.csv' }, ia ? '(Excel, CSV, PDF o foto; hasta 6 MB)' : '(Excel o CSV; hasta 6 MB)')),
+    h('div', { class: 'acciones' }, bLeer, h('a', { class: 'btn-sec', href: 'assets/plantillas/ventas.xlsx', download: 'plantilla-ventas-fersuaz.xlsx' }, 'Descargar plantilla')), vistaPrevia);
+  fv.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const file = fv.archivoVentas.files[0];
+    const r = await enviar(fv, bLeer, async () => {
+      if (!file) throw new ApiError(422, { error: 'Elige el archivo.', fields: { archivoVentas: 'Elige el archivo.' } });
+      if (file.size > 6 * 1024 * 1024) throw new ApiError(413, { error: 'El archivo no puede pasar de 6 MB.', fields: { archivoVentas: 'Archivo demasiado grande.' } });
+      bLeer.textContent = /pdf|image/.test(file.type) ? 'Leyendo con inteligencia artificial…' : 'Leyendo…';
+      return api('POST', '/api/ventas/leer', { archivo: { nombre: file.name, tipo: file.type, base64: await archivoB64(file) } });
+    });
+    bLeer.textContent = 'Leer archivo';
+    if (r) pintarVistaPrevia(r);
+  });
+  function pintarVistaPrevia(r) {
+    const filas = r.filas.map((x) => ({ ...x, incluir: true }));
+    const sel = (x, k, ops, etiqueta) => {
+      const s = h('select', { 'aria-label': `${etiqueta}, línea ${x.n}` }, h('option', { value: '' }, `Elige ${k === 'farmaciaId' ? 'la farmacia' : 'el medicamento'}`),
+        ...ops.map((o) => h('option', { value: o.id, selected: o.id === x[k] }, k === 'farmaciaId' ? `${o.nombre}, ${o.municipio}` : o.nombre)),
+        // Debajo de las sugerencias, toda la lista (se abre con buscador), por si la correcta no salió sugerida.
+        ...(k === 'farmaciaId' ? fs.items.map((o) => ({ id: o.id, txt: `${o.nombre}, ${o.municipio}` })) : ms.map((o) => ({ id: o.id, txt: `${o.nombre}${o.presentacion ? ` ${o.presentacion}` : ''}` })))
+          .filter((o) => !ops.some((p) => p.id === o.id)).map((o) => h('option', { value: o.id }, o.txt)));
+      s.addEventListener('change', () => { x[k] = s.value || null; contar(); });
+      return s;
+    };
+    const num = (x, k, etiqueta, paso) => { const i = h('input', { type: 'number', min: 0, step: paso, value: x[k] ?? '', 'aria-label': `${etiqueta}, línea ${x.n}` }); i.addEventListener('input', () => { x[k] = i.value === '' ? null : Number(i.value); contar(); }); return i; };
+    const fechaIn = (x) => { const i = h('input', { type: 'date', value: x.fecha ?? '', max: hoy(), 'aria-label': `Fecha, línea ${x.n}` }); i.addEventListener('input', () => { x.fecha = i.value || null; contar(); }); return i; };
+    const lista = (x) => x.incluir && x.farmaciaId && x.medicamentoId && Number.isInteger(x.unidades) && x.unidades > 0 && x.fecha;
+    const bGuardar = h('button', { class: 'btn', type: 'button' }, 'Guardar');
+    const resumen = h('p', { class: 'hint' });
+    const contar = () => { const n = filas.filter(lista).length; const fuera = filas.filter((x) => x.incluir && !lista(x)).length; bGuardar.textContent = `Guardar ${fmtN.format(n)} línea(s)`; bGuardar.disabled = !n || fuera > 0; resumen.textContent = fuera ? `${fuera} línea(s) incluidas tienen datos por completar: corrígelas o quítalas.` : `${n} línea(s) listas.`; };
+    const tablaV = h('div', { class: 'tabla-montos ventas-previa' }, h('table', {}, h('thead', {}, h('tr', {}, ...['Incluir', 'En el archivo', 'Farmacia', 'Medicamento', 'Unidades', 'Precio RD$', 'Fecha', 'Factura'].map((t) => h('th', { scope: 'col' }, t)))),
+      h('tbody', {}, filas.map((x) => {
+        const inc = h('input', { type: 'checkbox', checked: true, 'aria-label': `Incluir línea ${x.n}` }); inc.addEventListener('change', () => { x.incluir = inc.checked; tr.classList.toggle('fila-fuera', !inc.checked); contar(); });
+        const tr = h('tr', { class: x.avisos.length ? 'fila-revisar' : null }, h('td', {}, inc),
+          h('td', {}, h('small', {}, `${x.original.farmacia}${x.original.municipio ? `, ${x.original.municipio}` : ''}`), h('small', { style: 'display:block' }, x.original.medicamento), x.avisos.length ? h('small', { class: 'precio-subio' }, x.avisos.join('. ')) : null),
+          h('td', {}, sel(x, 'farmaciaId', x.farmaciaOpciones, 'Farmacia')), h('td', {}, sel(x, 'medicamentoId', x.medicamentoOpciones, 'Medicamento')),
+          h('td', {}, num(x, 'unidades', 'Unidades', 1)), h('td', {}, num(x, 'precioUnitario', 'Precio', 0.01)), h('td', {}, fechaIn(x)), h('td', {}, h('small', {}, x.factura ?? '')));
+        return tr;
+      }))));
+    bGuardar.addEventListener('click', async () => {
+      bGuardar.disabled = true;
+      try {
+        const out = await api('POST', '/api/ventas/confirmar', { filas: filas.filter(lista).map(({ farmaciaId, medicamentoId, unidades, precioUnitario, fecha, factura }) => ({ farmaciaId, medicamentoId, unidades, precioUnitario, fecha, factura })), archivo: r.archivo, fuente: r.fuente });
+        vistaPrevia.replaceChildren(h('div', { class: 'aviso ok' }, `Se guardaron ${fmtN.format(out.insertadas)} línea(s): ${fmtN.format(out.unidades)} unidades por ${RD(out.monto)}. Se actualizó el inventario de ${fmtN.format(out.inventarioActualizado)} producto(s) en farmacias.${out.duplicadas ? ` ${out.duplicadas} línea(s) ya estaban cargadas y no se repitieron.` : ''}`),
+          h('div', { class: 'acciones' }, h('button', { class: 'btn-sec', type: 'button', onclick: () => router() }, 'Ver ventas cargadas')));
+      } catch (e2) { alert(e2.fields ? Object.values(e2.fields).join(' ') : e2.message); bGuardar.disabled = false; }
+    });
+    vistaPrevia.replaceChildren(...[h('h3', { style: 'margin:1.5rem 0 .25rem' }, `Vista previa: ${fmtN.format(filas.length)} línea(s) ${r.fuente === 'ia' ? 'leídas con inteligencia artificial' : 'de la plantilla'}`),
+      r.fuente === 'ia' ? h('p', { class: 'hint' }, 'Revisa cada línea: la inteligencia artificial puede equivocarse con letras poco claras. Las marcadas en rojo necesitan tu ayuda.') : null,
+      r.notas ? h('div', { class: 'aviso' }, `Nota de la lectura: ${r.notas}`) : null, tablaV, resumen, h('div', { class: 'acciones' }, bGuardar)].filter(Boolean));
+    contar();
+  }
+  const tablaCargadas = tabla([
+    { t: 'Fecha', v: (x) => fecha(x.fecha) }, { t: 'Farmacia', v: (x) => [x.farmacia, h('small', { style: 'display:block;color:var(--texto-2)' }, x.municipio)] }, { t: 'Medicamento', v: (x) => x.medicamento },
+    { t: 'Unidades', num: true, v: (x) => fmtN.format(x.unidades) }, { t: 'Monto', num: true, v: (x) => x.monto != null ? RD(x.monto) : '' }, { t: 'Factura', v: (x) => x.factura ?? '' },
+    { t: 'Origen', v: (x) => x.fuente === 'ia' ? 'Leído con IA' : 'Plantilla' }], cargadas, ['Aún no hay ventas cargadas este mes', 'Sube la plantilla o una factura en "Cargar ventas".']);
+  return vistaS('inventario', ['ventas', 'conteo', 'cargadas'], 'Inventario en farmacias', 'Lo vendido a cada farmacia y sus conteos. Las alertas comparan las recetas de la zona con el inventario de cada farmacia.',
+    S('ventas', 'Cargar ventas', fv), S('conteo', 'Conteo manual', f), S('cargadas', `Ventas del mes (${fmtN.format(cargadas.length)})`, tablaCargadas));
 };
 V.solicitudes = async () => {
   const { pending } = await api('GET', '/api/auth/pending');

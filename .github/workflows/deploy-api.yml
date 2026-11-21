@@ -25,6 +25,7 @@ jobs:
         env:   # reemplazan los ${...} de .do/app.yaml; los opcionales pueden no existir
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SPACES_KEY: ${{ secrets.SPACES_KEY }}
           SPACES_SECRET: ${{ secrets.SPACES_SECRET }}
           SES_ACCESS_KEY: ${{ secrets.SES_ACCESS_KEY }}

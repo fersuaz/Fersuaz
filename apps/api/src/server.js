@@ -17,6 +17,9 @@ import { createBarrido } from './barrido-google.js';
 import { createHoteles, REQUISITOS } from './hoteles.js';
 import { createInicio } from './inicio.js';
 import { createVehiculos, createVehiculosAgregados } from './vehiculos.js';
+import { createVentas } from './ventas.js';
+import { hoyRD } from './periodos.js';
+import { createLectorIA } from './lector-ia.js';
 import { createAltaRepresentantes } from './representantes.js';
 import { createBanco, BANCOS, TIPOS_CUENTA } from './banco.js';
 import { signSession, verifySession } from './security.js';
@@ -38,7 +41,7 @@ async function readJson(req, limit = MAX_BODY) {
 
 const publico = ({ passwordHash, ...u }) => u;
 
-export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), correo = new SinCorreo(), sitio = 'https://fersuaz.net', micmFetch = fetch, vehiculosFetch = fetch, barridoPausa, sessionSecret, allowedOrigins = [], now }) {
+export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), correo = new SinCorreo(), sitio = 'https://fersuaz.net', micmFetch = fetch, vehiculosFetch = fetch, barridoPausa, sessionSecret, allowedOrigins = [], now, lectorIA = null }) {
   const n = createNotificaciones({ data, users: store, correo, sitio });
   const avisar = (fn) => fn().catch((e) => console.error('Notificación:', e.message));
   const t = createTerritorio({ data, users: store, audit: (e) => store.addAudit(e), now });
@@ -81,6 +84,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
 
   const vehiculos = createVehiculos({ fetchImpl: vehiculosFetch });
   const agregados = createVehiculosAgregados({ data, audit: (e) => store.addAudit(e) });
+  const ventas = createVentas({ data, audit: (e) => store.addAudit(e), lector: lectorIA, territorio: t, hoy: () => hoyRD(now ? now() : new Date()) });
   const banco = createBanco({ data, users: store, audit: (e) => store.addAudit(e) });
   const altas = createAltaRepresentantes({ store, t, v, data });
   const inicio = createInicio({ data, users: store, v, c, t, now: now ?? (() => new Date()) });
@@ -263,6 +267,10 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/operativos', async ({ me, q }) => ({ items: await c.promotoras.listarOperativos(me, { fecha: q.get('fecha') || undefined }) }));
   ruta('POST', '/api/operativos', async ({ me, body }) => [201, { item: await c.promotoras.crearOperativo(me, body) }]);
   ruta('GET', '/api/recetas', async ({ me, q }) => ({ items: await c.promotoras.listarRecetas(me, { mes: q.get('mes') || undefined }) }));
+  ruta('GET', '/api/ventas/estado', async () => ({ ia: ventas.iaActiva() }));
+  ruta('POST', '/api/ventas/leer', async ({ me, body }) => ventas.leer(me, body?.archivo), { limite: MAX_BODY_ADJUNTO + 1024 * 1024 });
+  ruta('POST', '/api/ventas/confirmar', async ({ me, body }) => [201, await ventas.confirmar(me, body ?? {})], { limite: 4 * 1024 * 1024 });
+  ruta('GET', '/api/ventas', async ({ me, q }) => ({ items: await ventas.listar(me, { mes: q.get('mes') || undefined }) }));
   ruta('GET', '/api/pacientes', async ({ me, q }) => c.promotoras.buscarPaciente(me, q.get('telefono')));
   ruta('POST', '/api/recetas', async ({ me, body }) => [201, await c.promotoras.crearReceta(me, body)], { limite: MAX_BODY_ADJUNTO });
   ruta('POST', '/api/inventario', async ({ me, body }) => [201, { item: await c.promotoras.registrarInventario(me, body) }]);
@@ -422,7 +430,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   else { store = new MemoryStore(); data = new MemoryData(); console.warn('⚠ Sin DATABASE_URL: usando memoria (solo desarrollo, los datos se pierden).'); }
   const secret = SESSION_SECRET ?? (NODE_ENV === 'production' ? null : 'dev-only-secret-change-me-0123456789abcdef');
   if (!secret) { console.error('SESSION_SECRET es obligatorio.'); process.exit(1); }
-  const app = createApp({ store, data, files: crearArchivos(process.env, UPLOAD_DIR), mapas: crearMapas(), lugares: crearLugares(), correo: crearCorreo(), sitio: process.env.SITIO_URL || 'https://fersuaz-web.pages.dev', sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
+  const app = createApp({ store, data, files: crearArchivos(process.env, UPLOAD_DIR), mapas: crearMapas(), lugares: crearLugares(), correo: crearCorreo(), lectorIA: createLectorIA({ apiKey: process.env.ANTHROPIC_API_KEY, modelo: process.env.ANTHROPIC_MODELO || undefined }), sitio: process.env.SITIO_URL || 'https://fersuaz-web.pages.dev', sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
   createServer(app).listen(PORT, () => console.log(`API FERSUAZ en :${PORT}`));
   // Revisión automática del aviso semanal del MICM: al arrancar y cada 6 horas (desactivar con MICM_AUTO=off).
   if (DATABASE_URL && process.env.MICM_AUTO !== 'off') {
