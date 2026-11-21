@@ -789,3 +789,19 @@ input.paciente-conocido { background: #E9F0F6; }
 .tarea p { margin: 0; color: #0F2A44; }
 .tarea-quien { font-size: .92rem; color: #52677A !important; }
 @media (max-width: 640px) { .equipo-cifras { grid-template-columns: 1fr; } }
+.codigo-med { font: 600 .85rem ui-monospace, 'SFMono-Regular', Menlo, monospace; color: #003463; background: #E9F0F6; padding: .1rem .4rem; border-radius: 6px; }
+
+/* Arrastrar y soltar archivos */
+.za-etq { display: block; font-weight: 500; margin-bottom: .4rem; color: #0F2A44; }
+.za { position: relative; display: grid; grid-template-columns: auto 1fr; gap: .2rem 1rem; align-items: center; padding: 1.25rem 1.4rem; border: 2px dashed #C7D6E3; border-radius: 16px; background: #fff; cursor: pointer; color: #52677A; }
+.za:hover, .za.activa { border-color: #3085AC; background: #E9F0F6; }
+.za:focus-within { outline: 3px solid #246C8E; outline-offset: 3px; }
+.za.con-archivo { border-style: solid; border-color: #3085AC; }
+.za-icono { grid-row: span 2; display: grid; place-items: center; width: 2.6rem; height: 2.6rem; border-radius: 12px; background: #E9F0F6; color: #003463; font-size: 1.3rem; }
+.za-texto strong { color: #003463; }
+.za-nombre { font-size: .9rem; color: #246C8E; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rep-grupo { display: grid; gap: .5rem; margin-bottom: .75rem; }
+.rep-opcion { display: flex; gap: .6rem; align-items: center; padding: .55rem .75rem; border: 1px solid #C7D6E3; border-radius: 10px; cursor: pointer; }
+.rep-opcion:has(input:checked) { border-color: #003463; box-shadow: 0 0 0 1px #003463 inset; }
+.rep-opcion small { display: block; color: #52677A; }
+.rep-opcion input { accent-color: #003463; }
