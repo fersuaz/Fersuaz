@@ -25,6 +25,7 @@ import { createBanco, BANCOS, TIPOS_CUENTA } from './banco.js';
 import { createTienda } from './tienda.js';
 import { createMedicos, pareceMedico } from './medicos.js';
 import { createMetas } from './metas.js';
+import { createMovimiento } from './movimiento.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -89,6 +90,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const agregados = createVehiculosAgregados({ data, audit: (e) => store.addAudit(e) });
   const ventas = createVentas({ data, audit: (e) => store.addAudit(e), lector: lectorIA, territorio: t, hoy: () => hoyRD(now ? now() : new Date()) });
   const medicos = createMedicos({ data, audit: (e) => store.addAudit(e), lector: lectorIA });
+  const movimiento = createMovimiento({ data, users: store });
   const metas = createMetas({ data, users: store, audit: (e) => store.addAudit(e), hoy: () => hoyRD(now ? now() : new Date()) });
   const tienda = createTienda({ data, users: store, files, audit: (e) => store.addAudit(e), notificar: (id, m) => n.notificar(id, m), notificarRoles: (r, m) => n.notificarRoles(r, m), ventas, hoy: () => hoyRD(now ? now() : new Date()) });
   const banco = createBanco({ data, users: store, audit: (e) => store.addAudit(e) });
@@ -281,6 +283,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/catalogo/medicos', async () => ({ items: await medicos.listar(), especialidades: medicos.especialidades(), iaActiva: medicos.iaActiva() }));
   ruta('POST', '/api/catalogo/medicos', async ({ me, body }) => { const r = await medicos.registrar(me, body ?? {}); return [r.accion === 'creado' ? 201 : 200, r]; });
   ruta('POST', /^\/api\/catalogo\/medicos\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await medicos.editar(me, p[1], body ?? {}) }));
+  ruta('GET', '/api/reportes/territorio', async ({ me, q }) => movimiento.reporte(me, { mes: q.get('mes'), provincia: q.get('provincia') || undefined }));
   ruta('GET', '/api/metas', async ({ me }) => ({ item: await metas.verConfig(me) }));
   ruta('POST', '/api/metas/posicion', async ({ me, body }) => ({ item: await metas.guardarPosicion(me, body ?? {}) }));
   ruta('POST', /^\/api\/metas\/representante\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await metas.guardarRepresentante(me, p[1], body ?? {}) }));
@@ -293,14 +296,15 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/vouchers', async ({ me, q }) => ({ items: await c.vouchers.listar(me, { estado: q.get('estado') || undefined, dependienteId: q.get('dependienteId') || undefined }) }));
   ruta('POST', '/api/vouchers', async ({ me, body }) => {
     const item = await c.vouchers.crear(me, body ?? {});
-    if (item.dependienteId !== me.id) avisar(() => n.notificar(item.dependienteId, { tipo: 'voucher', titulo: 'Voucher cargado a tu nombre', texto: `${me.fullName} cargó el voucher ${item.referencia} por RD$${item.total.toLocaleString('es-DO', { minimumFractionDigits: 2 })}. Queda en revisión.`, enlace: '#misVouchers' }));
+    if (item.dependienteId !== me.id) avisar(() => n.notificar(item.dependienteId, { tipo: 'voucher', titulo: 'Voucher cargado a tu nombre', texto: `${me.fullName} cargó un voucher${item.referencia ? ` (${item.referencia})` : ''} por RD$${item.total.toLocaleString('es-DO', { minimumFractionDigits: 2 })}. Queda en revisión.`, enlace: '#misVouchers' }));
     return [201, { item }];
-  });
+  }, { limite: 7 * 1024 * 1024 });
+  ruta('POST', '/api/fotos/verificar', async ({ me, body }) => c.verificarFotos(me, body ?? {}), { limite: 512 * 1024 });
   ruta('GET', '/api/vouchers/dependientes', async ({ me }) => ({ items: await c.vouchers.dependientesDeZona(me) }));
   ruta('GET', '/api/vouchers/porcentaje', async ({ me, q }) => ({ item: await c.vouchers.porcentaje(me, q.get('dependienteId')) }));
   ruta('POST', /^\/api\/vouchers\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p, body }) => {
     const item = await c.vouchers.decidir(me, p[1], p[2] === 'aprobar', body.motivo);
-    avisar(() => n.notificar(item.dependienteId, { tipo: 'voucher', titulo: item.estado === 'aprobado' ? 'Voucher aprobado' : 'Voucher rechazado', texto: `Tu voucher ${item.referencia} fue ${item.estado}${item.motivo ? `: ${item.motivo}` : '.'}`, enlace: '#misVouchers' }));
+    avisar(() => n.notificar(item.dependienteId, { tipo: 'voucher', titulo: item.estado === 'aprobado' ? 'Voucher aprobado' : 'Voucher rechazado', texto: `Tu voucher del ${item.fecha}${item.referencia ? ` (${item.referencia})` : ''} por RD$${Number(item.total).toLocaleString('es-DO', { minimumFractionDigits: 2 })} fue ${item.estado}${item.motivo ? `: ${item.motivo}` : '.'}`, enlace: '#misVouchers' }));
     return { item };
   });
   ruta('POST', /^\/api\/vouchers\/([\w-]+)\/anular$/, async ({ me, p }) => ({ item: await c.vouchers.anular(me, p[1]) }));

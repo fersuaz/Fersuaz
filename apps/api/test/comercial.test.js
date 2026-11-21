@@ -89,7 +89,7 @@ test('vouchers: carga, duplicado, fecha futura, permisos y aprobación', async (
   const { server, call, t, tioDex, store } = await setup();
   try {
     const base = { referencia: 'V-001', fecha: '2026-11-05', items: [{ medicamentoId: tioDex.id, cantidad: 1, monto: 500 }] };
-    assert.equal((await call('POST', '/api/vouchers', base, t.promo)).status, 403);
+    assert.equal((await call('POST', '/api/vouchers', base, t.promo)).status, 422, 'la promotora carga vouchers, pero a nombre de una dependiente');
     const v = await call('POST', '/api/vouchers', base, t.dep);
     assert.equal(v.status, 201, JSON.stringify(v.body)); assert.equal(v.body.item.total, 500); assert.equal(v.body.item.farmacia, 'Farmacia Carol');
     assert.equal((await call('POST', '/api/vouchers', { ...base, referencia: ' v-001 ' }, t.dep)).status, 409);
@@ -101,7 +101,8 @@ test('vouchers: carga, duplicado, fecha futura, permisos y aprobación', async (
     // cada dependiente ve solo los suyos
     assert.equal((await call('GET', '/api/vouchers', null, t.dep2)).body.items.length, 0);
     assert.equal((await call('GET', '/api/vouchers', null, t.dep)).body.items.length, 1);
-    assert.equal((await call('GET', '/api/vouchers', null, t.visitador)).status, 403);
+    assert.equal((await call('GET', '/api/vouchers', null, t.visitador)).status, 200, 'el visitador ve los vouchers que cargó');
+    assert.equal((await call('GET', '/api/vouchers', null, t.finanzas)).status, 200);
 
     // revisar
     assert.equal((await call('POST', `/api/vouchers/${v.body.item.id}/aprobar`, {}, t.dep)).status, 403);

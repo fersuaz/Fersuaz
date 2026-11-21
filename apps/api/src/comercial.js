@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 // Módulo comercial: dependientes (vouchers y comisiones) y promotoras (recetas e inventario).
 // Toda regla de permiso vive aquí, en el servidor.
 import { AuthError as HttpError } from './auth.js';
@@ -6,6 +7,7 @@ import { calcularComisionVouchers, evaluarAlertaInventario } from './calculos.js
 import { esFechaISO, hoyRD, periodoDe, rangoDe } from './periodos.js';
 import { normalizeName } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
+import { buscarRepetida, textoRepetida, esHuella, esDhash } from './fotos.js';
 import { provinciaOficial, municipioOficial, dentroDeZona } from './territorio.js';
 
 const GESTION = ['administrador', 'gerencia', 'supervisor', 'finanzas'];
@@ -15,6 +17,8 @@ export const esVendedor = (u) => esActivo(u) && u.role === 'representante' && u.
 export const esDependiente = (u) => esActivo(u) && u.role === 'dependiente';
 /** Vendedor o PVC: también cargan vouchers a nombre de una dependiente de su zona. */
 export const esVendedorPVC = (u) => esActivo(u) && u.role === 'representante' && ['Vendedor', 'PVC'].includes(u.position);
+/** Quienes cargan vouchers a nombre de la dependiente de una farmacia de su zona. */
+const cargaPorDependiente = (u) => esActivo(u) && u.role === 'representante' && ['Vendedor', 'PVC', 'Promotora', 'Visitador'].includes(u.position);
 const tieneRol = (u, roles) => esActivo(u) && roles.includes(u.role);
 
 function permitir(cond, msg = 'No tienes permiso para esta acción.') { if (!cond) throw new HttpError(403, msg); }
@@ -237,17 +241,17 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
   }
 
   const vouchers = {
-    dependientesDeZona: async (actor) => { permitir(esVendedorPVC(actor), 'Solo el Vendedor o el PVC cargan vouchers a nombre de una dependiente.'); return dependientesDeZona(actor); },
+    dependientesDeZona: async (actor) => { permitir(cargaPorDependiente(actor), 'Solo los representantes cargan vouchers a nombre de una dependiente.'); return dependientesDeZona(actor); },
     /** Porcentaje de comisión que aplica a una dependiente (para mostrar la comisión estimada mientras se carga). */
     async porcentaje(actor, dependienteId) {
       const id = String(dependienteId || actor.id);
-      const permitido = (esDependiente(actor) && actor.id === id) || tieneRol(actor, GESTION) || (esVendedorPVC(actor) && (await dependientesDeZona(actor)).some((d) => d.id === id));
+      const permitido = (esDependiente(actor) && actor.id === id) || tieneRol(actor, GESTION) || (cargaPorDependiente(actor) && (await dependientesDeZona(actor)).some((d) => d.id === id));
       permitir(permitido);
       const cfg = await configComision(id);
       return cfg ? { porcentaje: cfg.porcentaje, periodo: cfg.periodo } : { porcentaje: null, periodo: null };
     },
     async crear(actor, input) {
-      permitir(esDependiente(actor) || esVendedorPVC(actor), 'Solo los dependientes de farmacia, el Vendedor o el PVC cargan vouchers.');
+      permitir(esDependiente(actor) || cargaPorDependiente(actor), 'Solo los dependientes de farmacia y los representantes (vendedor, PVC, visitador o promotora) cargan vouchers.');
       let dep = actor;
       if (!esDependiente(actor)) {
         const id = String(input.dependienteId ?? '');
@@ -256,7 +260,15 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
         dep = await users.findUserById(id);
       }
       const e = {};
-      const referencia = texto(e, 'referencia', input.referencia, { etiqueta: 'El número de voucher', min: 1, max: 40 });
+      // El número de voucher es opcional: la foto identifica el voucher.
+      const referencia = String(input.referencia ?? '').trim() ? texto(e, 'referencia', input.referencia, { etiqueta: 'El número de voucher', min: 1, max: 40 }) : null;
+      if (!input.foto && !referencia) e.foto = 'Sube la foto del voucher.';
+      let huella = null;
+      if (input.foto) {
+        const bytes = Buffer.from(String(input.foto.base64 ?? ''), 'base64');
+        huella = esHuella(input.fotoHuella) ? input.fotoHuella : createHash('sha256').update(bytes).digest('hex');
+      }
+      const dhash = input.foto && esDhash(input.fotoDhash) ? input.fotoDhash : null;
       if (!esFechaISO(input.fecha)) e.fecha = 'Elige la fecha del voucher.';
       else if (input.fecha > hoy()) e.fecha = 'La fecha no puede ser futura.';
       const items = Array.isArray(input.items) ? input.items : [];
@@ -276,13 +288,17 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
         if (med) lineas.push({ medicamentoId: med.id, medicamento: med.nombre, presentacion: med.presentacion ?? null, cantidad, ...(precio != null ? { precio: round2(precio) } : {}), monto: round2(monto) });
       }
       if (Object.keys(e).length) invalido(e);
-      const ref = referencia.toLowerCase();
-      if ((await data.list('vouchers', { dependienteId: dep.id })).some((v) => v.referencia.toLowerCase() === ref && v.estado !== 'anulado')) {
+      const previos = (await data.list('vouchers', { dependienteId: dep.id })).filter((v) => v.estado !== 'anulado');
+      if (referencia && previos.some((v) => (v.referencia ?? '').toLowerCase() === referencia.toLowerCase())) {
         throw new HttpError(409, 'Ya hay un voucher con ese número para esta dependiente.', { referencia: 'Ese número de voucher ya está registrado.' });
       }
+      // La misma foto no entra dos veces, la cargue quien la cargue (los rechazados y anulados se pueden volver a subir).
+      const rep = (huella || dhash) && buscarRepetida((await data.list('vouchers')).filter((v) => !['anulado', 'rechazado'].includes(v.estado)), { huella, dhash });
+      if (rep) throw new HttpError(409, textoRepetida(rep, 'voucher'), { foto: 'Foto repetida.' });
       if (await periodoCerrado(dep.id, input.fecha)) throw new HttpError(409, 'Ese período de comisión ya está cerrado.', { fecha: 'El período de esa fecha ya se cerró.' });
+      const foto = input.foto ? await guardarAdjunto(files, actor, input.foto, 'voucher') : null;
       const v = await data.insert('vouchers', {
-        dependienteId: dep.id, farmacia: await nombreFarmacia(dep), referencia, fecha: input.fecha,
+        dependienteId: dep.id, farmacia: await nombreFarmacia(dep), referencia, fecha: input.fecha, foto, fotoHuella: huella, fotoDhash: dhash,
         items: lineas, total: round2(lineas.reduce((s, l) => s + l.monto, 0)), estado: 'pendiente', registradoPor: actor.id,
       });
       await audit({ actorId: actor.id, action: 'voucher_cargado', entity: 'voucher', entityId: v.id, after: { total: v.total, dependienteId: dep.id, ...(dep.id !== actor.id ? { cargadoPor: actor.fullName } : {}) } });
@@ -292,7 +308,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const nombres = async () => Object.fromEntries((await users.listUsers()).map((u) => [u.id, u.fullName]));
       const conNombres = async (vs) => { const n = await nombres(); return vs.map((v) => ({ ...v, dependiente: n[v.dependienteId] ?? '', cargadoPor: v.registradoPor && v.registradoPor !== v.dependienteId ? n[v.registradoPor] ?? '' : null })); };
       if (esDependiente(actor)) return conNombres(await data.list('vouchers', { dependienteId: actor.id, ...(filtro.estado ? { estado: filtro.estado } : {}) }));
-      if (esVendedorPVC(actor)) return conNombres(await data.list('vouchers', { registradoPor: actor.id, ...(filtro.estado ? { estado: filtro.estado } : {}) }));
+      if (cargaPorDependiente(actor)) return conNombres(await data.list('vouchers', { registradoPor: actor.id, ...(filtro.estado ? { estado: filtro.estado } : {}) }));
       permitir(tieneRol(actor, GESTION));
       const where = {}; if (filtro.estado) where.estado = filtro.estado; if (filtro.dependienteId) where.dependienteId = filtro.dependienteId;
       return conNombres(await data.list('vouchers', where));
@@ -313,7 +329,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
     async anular(actor, id) {
       const v = await data.get('vouchers', id);
       if (!v) throw new HttpError(404, 'El voucher no existe.');
-      permitir((esDependiente(actor) && v.dependienteId === actor.id) || (esVendedorPVC(actor) && v.registradoPor === actor.id));
+      permitir((esDependiente(actor) && v.dependienteId === actor.id) || (cargaPorDependiente(actor) && v.registradoPor === actor.id));
       if (v.estado !== 'pendiente') throw new HttpError(409, 'Solo puedes anular un voucher que todavía no se ha revisado.');
       const out = await data.update('vouchers', id, { estado: 'anulado' });
       await audit({ actorId: actor.id, action: 'voucher_anulado', entity: 'voucher', entityId: id, before: { estado: 'pendiente' }, after: { estado: 'anulado' } });
@@ -368,7 +384,12 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
         if (!Number.isInteger(unidades) || unidades < 1 || unidades > 999) e[`items.${i}.unidades`] = 'Escribe las unidades, entre 1 y 999.';
         if (m) { vistos.add(m.id); lineas.push({ medicamentoId: m.id, medicamento: m.nombre, linea: m.linea ?? null, unidades }); }
       }
+      let huella = null;
+      if (input.adjunto) huella = esHuella(input.fotoHuella) ? input.fotoHuella : createHash('sha256').update(Buffer.from(String(input.adjunto.base64 ?? ''), 'base64')).digest('hex');
+      const dhash = input.adjunto && esDhash(input.fotoDhash) ? input.fotoDhash : null;
       if (Object.keys(e).length) invalido(e);
+      const repetida = (huella || dhash) && buscarRepetida(await data.list('recetas'), { huella, dhash });
+      if (repetida) throw new HttpError(409, textoRepetida(repetida, 'receta'), { adjunto: 'Foto repetida.' });
       const adjunto = await guardarAdjunto(files, actor, input.adjunto, 'receta');
       let pacienteNuevo = false;
       if (!paciente) {
@@ -377,7 +398,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       }
       const r = await data.insert('recetas', {
         promotoraId: actor.id, operativoId: op.id, medicoId: med.id, fecha: op.fecha,
-        provincia: op.provincia, municipio: op.municipio, items: lineas, adjunto, pacienteId: paciente.id,
+        provincia: op.provincia, municipio: op.municipio, items: lineas, adjunto, pacienteId: paciente.id, fotoHuella: huella, fotoDhash: dhash,
       });
       await audit({ actorId: actor.id, action: 'receta_registrada', entity: 'receta', entityId: r.id, after: { items: lineas.length, pacienteNuevo } });
       const alertas = await promotoras.alertasZona(op.provincia, op.municipio, op.fecha.slice(0, 7), lineas.map((l) => l.medicamentoId));
@@ -500,5 +521,20 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
     return { mes, agrupar, totalRecetas: rs.length, filas: [...filas.values()].map((f) => ({ clave: f.clave, recetas: f.recetas.size, unidades: f.unidades })).sort((a, b) => b.unidades - a.unidades) };
   }
 
-  return { catalogo, comisiones, vouchers, promotoras, reporteRecetas };
+  /** Antes de enviar: cuáles de estas fotos ya están cargadas (exactas o muy parecidas). */
+  async function verificarFotos(actor, { tipo, fotos } = {}) {
+    if (tipo === 'receta') permitir(esPromotora(actor), 'Solo las promotoras cargan recetas.');
+    else if (tipo === 'voucher') permitir(esDependiente(actor) || cargaPorDependiente(actor), 'No tienes permiso para cargar vouchers.');
+    else invalido({ tipo: 'Tipo no válido.' });
+    if (!Array.isArray(fotos) || fotos.length > 1000) invalido({ fotos: 'Envía hasta 1,000 fotos por vez.' });
+    const registros = tipo === 'receta' ? await data.list('recetas') : (await data.list('vouchers')).filter((v) => !['anulado', 'rechazado'].includes(v.estado));
+    const repetidas = [];
+    fotos.forEach((f, indice) => {
+      const huella = esHuella(f?.huella) ? f.huella : null; const dhash = esDhash(f?.dhash) ? f.dhash : null;
+      const rep = (huella || dhash) && buscarRepetida(registros, { huella, dhash });
+      if (rep) repetidas.push({ indice, motivo: rep.motivo, fecha: rep.registro.fecha, texto: textoRepetida(rep, tipo === 'receta' ? 'receta' : 'voucher') });
+    });
+    return { repetidas };
+  }
+  return { catalogo, comisiones, vouchers, promotoras, reporteRecetas, verificarFotos };
 }

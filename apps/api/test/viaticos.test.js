@@ -492,7 +492,7 @@ test('vouchers: precio por unidad suma el total; el Vendedor carga a nombre de u
     assert.equal((await call('GET', '/api/vouchers/porcentaje', null, t.dep)).body.item.porcentaje, 10);
     // Vendedor (rep2) con Espaillat en su zona
     await call('POST', `/api/territorio/zonas/${id.rep2}`, { provincias: ['Espaillat'] }, t.gerente);
-    assert.equal((await call('GET', '/api/vouchers/dependientes', null, t.rep)).status, 403, 'un Visitador no carga vouchers');
+    assert.equal((await call('GET', '/api/vouchers/dependientes', null, t.rep)).status, 200, 'el Visitador también carga vouchers de su zona');
     const deps = (await call('GET', '/api/vouchers/dependientes', null, t.rep2)).body.items;
     assert.deepEqual(deps.map((d) => d.id), [id.dep]);
     assert.equal((await call('POST', '/api/vouchers', { referencia: 'EJ-002', fecha: '2026-11-19', items: [{ medicamentoId: med.id, cantidad: 2, precio: 300 }] }, t.rep2)).status, 422, 'falta la dependiente');
