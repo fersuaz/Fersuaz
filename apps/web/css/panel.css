@@ -534,3 +534,42 @@ a.btn, a.btn-sec { display: inline-flex; align-items: center; justify-content: c
 .ref-fila:first-child { border-top: 0; }
 .ref-caja .hint { margin: .25rem 0 0; }
 .aviso-ag { margin: .6rem 0 0; color: var(--alerta); font-size: .92rem; }
+
+/* Días laborables y fechas que no trabaja (propuesta del mes) */
+.dias-semana { border: 0; padding: 0; margin: .5rem 0 1rem; }
+.dias-semana legend { font-weight: 500; margin-bottom: .5rem; padding: 0; }
+.dias-chips { display: flex; flex-wrap: wrap; gap: .5rem; }
+.dias-chips label { position: relative; cursor: pointer; }
+.dias-chips input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.dias-chips span { display: grid; place-items: center; min-width: 3.4rem; min-height: 44px; padding: 0 .8rem; border: 1.5px solid var(--linea); border-radius: 999px; background: #fff; color: var(--texto-2); font-weight: 600; transition: background .15s, color .15s, border-color .15s; }
+.dias-chips input:checked + span { background: var(--marino); border-color: var(--marino); color: #fff; }
+.dias-chips input:focus-visible + span { outline: 3px solid var(--celeste); outline-offset: 2px; }
+.feriados { display: grid; gap: .45rem; margin-bottom: 1rem; }
+.feriados > label { font-weight: 500; }
+.feriados > label small { color: var(--texto-2); font-weight: 400; }
+.feriados-fila { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.feriados-fila input { min-height: 48px; padding: 0 .9rem; border: 1.5px solid var(--linea); border-radius: 12px; font: inherit; color: var(--tinta); background: #fff; }
+.feriados-lista { display: flex; flex-wrap: wrap; gap: .4rem; }
+.chip-fecha { display: inline-flex; align-items: center; gap: .3rem; padding: .25rem .35rem .25rem .75rem; border-radius: 999px; background: var(--panel); color: var(--marino); font-size: .9rem; font-weight: 500; }
+.chip-fecha button { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: var(--marino); font-size: 1.1rem; cursor: pointer; }
+.chip-fecha button:hover, .chip-fecha button:focus-visible { background: #fff; outline: none; }
+@media (prefers-reduced-motion: reduce) { .dias-chips span { transition: none; } }
+
+/* Acciones dentro de tablas: grupo alineado a la derecha, mismo alto y espacio entre botones */
+a.btn, a.btn-sec { text-decoration: none; }
+.tabla td.td-acciones { vertical-align: middle; text-align: right; width: 1%; white-space: nowrap; }
+.acciones-celda { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .5rem; }
+.acciones-celda .btn-peq { min-height: 38px; padding: 0 1rem; }
+.acciones-celda .btn-enlace { min-height: 38px; display: inline-flex; align-items: center; padding: 0 .35rem; }
+.btn-suave { border-color: var(--linea); color: var(--celeste-texto); }
+.btn-suave:hover { border-color: var(--celeste-texto); background: var(--canvas); }
+.btn-sec:focus-visible, .btn:focus-visible, .btn-enlace:focus-visible { outline: 3px solid var(--celeste); outline-offset: 2px; }
+@media (max-width: 900px) {
+  .tabla td.td-acciones { width: 100%; white-space: normal; justify-content: flex-end; padding-top: .6rem; padding-bottom: .9rem; }
+  .tabla td.td-acciones::before { content: none; }
+  .acciones-celda { width: 100%; justify-content: stretch; }
+  .acciones-celda > * { flex: 1 1 0; }
+}
+@media (min-width: 901px) { .acciones-celda { flex-wrap: nowrap; } }
+.dias-semana legend { font: 500 .95rem var(--sans); color: var(--tinta); }
+.dias-semana .hint { margin: .5rem 0 0; }

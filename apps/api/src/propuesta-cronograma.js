@@ -13,14 +13,19 @@ export function distanciaKm(a, b) {
 const conUbicacion = (x) => Number.isFinite(x?.lat) && Number.isFinite(x?.lng);
 
 /** Días laborables (lunes a viernes; sábado si se pide) del mes, desde `desde`, sin los excluidos. */
-export function diasLaborables(mes, { desde, excluir = [], sabados = false } = {}) {
+/**
+ * Días de trabajo del mes. `dias` son los días de la semana que trabaja (0 domingo … 6 sábado);
+ * por defecto, de lunes a viernes. `excluir` quita fechas (feriados, vacaciones o días ya programados).
+ */
+export function diasLaborables(mes, { desde, excluir = [], sabados = false, dias } = {}) {
+  const semana = new Set(Array.isArray(dias) && dias.length ? dias.map(Number) : [1, 2, 3, 4, 5, ...(sabados ? [6] : [])]);
   const [y, m] = mes.split('-').map(Number);
   const fin = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const out = [];
   for (let d = 1; d <= fin; d++) {
     const f = `${mes}-${String(d).padStart(2, '0')}`;
     const dow = new Date(`${f}T12:00:00Z`).getUTCDay();
-    if (dow === 0 || (dow === 6 && !sabados)) continue;
+    if (!semana.has(dow)) continue;
     if (desde && f < desde) continue;
     if (excluir.includes(f)) continue;
     out.push(f);

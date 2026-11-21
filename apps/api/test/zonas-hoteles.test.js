@@ -111,6 +111,14 @@ test('versiones de la EPA en palabras claras', async () => {
   assert.equal(traducirVersion('Auto (A1), 4 cyl, 2.0 L, PHEV'), 'Automática de una velocidad, 4 cilindros, motor de 2.0 L, híbrido enchufable');
 });
 
+test('días laborables: lunes a viernes por defecto, días elegidos y fechas quitadas', () => {
+  // Noviembre 2026 desde el viernes 20: quedan 7 días de lunes a viernes (20, 23, 24, 25, 26, 27, 30)
+  assert.deepEqual(diasLaborables('2026-11', { desde: '2026-11-20' }), ['2026-11-20', '2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26', '2026-11-27', '2026-11-30']);
+  assert.deepEqual(diasLaborables('2026-11', { desde: '2026-11-20', dias: [1, 3, 5] }), ['2026-11-20', '2026-11-23', '2026-11-25', '2026-11-27', '2026-11-30']);
+  assert.deepEqual(diasLaborables('2026-11', { desde: '2026-11-20', excluir: ['2026-11-23'], dias: [6] }), ['2026-11-21', '2026-11-28']);
+  assert.equal(diasLaborables('2026-12', { dias: [1, 2, 3, 4, 5] }).length, 23);
+});
+
 test('alta: usuario a partir del nombre y clave temporal con letras y números', async () => {
   const { usuarioBase, claveTemporal } = await import('../src/representantes.js');
   assert.equal(usuarioBase('José Miguel', 'Pérez de la Cruz'), 'jperez');

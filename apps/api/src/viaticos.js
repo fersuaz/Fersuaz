@@ -255,13 +255,20 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
    * Propuesta del mes para un representante: lugares de su zona que aún no están programados ese mes,
    * repartidos en los días laborables libres, por municipio y cercanía. No guarda nada.
    */
-  async function proponerCronograma(actor, { representanteId, mes, porDia = 8, sabados = false }) {
+  async function proponerCronograma(actor, { representanteId, mes, porDia = 8, sabados = false, dias, feriados = [] }) {
     permitir(rol(actor, ['administrador']), 'Solo el administrador crea cronogramas.');
     const rep = await users.findUserById(String(representanteId ?? ''));
     if (!rep || rep.role !== 'representante' || rep.status !== 'activo') throw new HttpError(404, 'El representante no existe o no está activo.');
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(mes)) || mes < hoy().slice(0, 7)) invalido({ mes: 'Elige el mes en curso o uno futuro.' });
     const n = Number(porDia);
     if (!Number.isInteger(n) || n < 1 || n > MAX_LUGARES) invalido({ porDia: `Escribe entre 1 y ${MAX_LUGARES} lugares por día.` });
+    let semana = null;
+    if (dias !== undefined) {
+      semana = [...new Set((Array.isArray(dias) ? dias : []).map(Number))];
+      if (!semana.length || semana.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) invalido({ dias: 'Elige al menos un día de la semana.' });
+    }
+    const libresQuitados = [...new Set((Array.isArray(feriados) ? feriados : []).map(String))];
+    if (libresQuitados.some((f) => !esFechaISO(f) || !f.startsWith(mes))) invalido({ feriados: 'Las fechas a quitar deben ser de este mes.' });
     const zona = (await data.list('zonas', { representanteId: rep.id }))[0] ?? null;
     if (!zona?.provincias?.length) throw new HttpError(409, `${rep.fullName} no tiene provincias asignadas. Asígnalas antes de programar su cronograma.`);
     const crons = (await data.list('cronogramas', { representanteId: rep.id })).filter((c) => c.estado === 'aprobado' && c.fecha.startsWith(mes));
@@ -272,12 +279,12 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
       ...(await data.list('farmacias')).filter((x) => activo(x) && dentroDeZona(zona, x.provincia, x.municipio)).map(aRef('farmacia')),
       ...(await data.list('establecimientos')).filter((x) => activo(x) && dentroDeZona(zona, x.provincia, x.municipio)).map(aRef('establecimiento')),
     ].filter((l) => !programados.has(`${l.refTipo}:${l.refId}`));
-    const fechas = diasLaborables(mes, { desde: hoy(), excluir: crons.map((c) => c.fecha), sabados: sabados === true || sabados === 'true' });
+    const fechas = diasLaborables(mes, { desde: hoy(), excluir: [...crons.map((c) => c.fecha), ...libresQuitados], sabados: sabados === true || sabados === 'true', dias: semana ?? undefined });
     const perfil = await perfilDe(rep.id);
     const r = proponer({ lugares, residencia: perfil?.residencia, fechas, porDia: n });
     return {
       representanteId: rep.id, mes, porDia: n, dias: r.dias, sinDia: r.sinDia,
-      resumen: { lugares: lugares.length, yaProgramados: programados.size, diasLibres: fechas.length, diasPropuestos: r.dias.length, sinUbicacion: lugares.filter((l) => l.lat == null).length },
+      resumen: { lugares: lugares.length, yaProgramados: programados.size, diasLibres: fechas.length, diasSemana: semana ?? [1, 2, 3, 4, 5, ...(sabados === true || sabados === 'true' ? [6] : [])], feriados: libresQuitados, desde: hoy(), diasPropuestos: r.dias.length, sinUbicacion: lugares.filter((l) => l.lat == null).length },
       sinResidencia: !perfil,
     };
   }

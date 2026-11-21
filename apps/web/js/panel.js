@@ -99,7 +99,13 @@ function textoFila(f, cols) {
  */
 function tabla(cols, filas, vacio, { porPagina = 25 } = {}) {
   if (!filas.length) return h('div', { class: 'tarjeta vacio' }, h('strong', {}, vacio[0]), vacio[1]);
-  const fila = (f) => h('tr', {}, cols.map((c) => h('td', { 'data-label': c.t, class: c.num ? 'num' : null }, h('span', { class: 'celda' }, c.v(f)))));
+  // Una celda solo con botones o enlaces de acción se muestra como grupo alineado y espaciado.
+  const esAccion = (x) => x instanceof Element && /\b(btn|btn-sec|btn-enlace)\b/.test(x.className);
+  const celda = (v) => {
+    const xs = (Array.isArray(v) ? v : [v]).flat().filter((x) => x != null && x !== '' && x !== false);
+    return xs.length && xs.every(esAccion) ? h('span', { class: 'celda acciones-celda' }, xs) : h('span', { class: 'celda' }, v);
+  };
+  const fila = (f) => h('tr', {}, cols.map((c) => { const v = c.v(f); const cel = celda(v); return h('td', { 'data-label': c.t, class: [c.num ? 'num' : null, cel.classList.contains('acciones-celda') ? 'td-acciones' : null].filter(Boolean).join(' ') || null }, cel); }));
   const cabeza = h('thead', {}, h('tr', {}, cols.map((c) => h('th', { scope: 'col', class: c.num ? 'num' : null }, c.t))));
   if (filas.length <= porPagina) return h('div', { class: 'tabla-envoltura' }, h('table', { class: 'tabla' }, cabeza, h('tbody', {}, filas.map(fila))));
   let indice = null; let lista = filas; let pagina = 1;
@@ -603,19 +609,43 @@ V.jornadas = async () => {
   return vistaS('jornadas', ['cronograma', 'jornadas'], 'Mis jornadas', 'Tu cronograma lo programa el administrador; desde cada día creas tu jornada y el sistema calcula la ruta y los viáticos.', ...bloques);
 };
 
+/** [1,2,3,4,5] → "lunes a viernes"; [1,3,5] → "lunes, miércoles y viernes". */
+function nombresDias(ds = [1, 2, 3, 4, 5]) {
+  const N = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const orden = [...ds].map(Number).sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+  const pos = orden.map((d) => (d + 6) % 7);
+  if (orden.length > 2 && pos.every((p, i) => i === 0 || p === pos[i - 1] + 1)) return `${N[orden[0]]} a ${N[orden.at(-1)]}`;
+  const ns = orden.map((d) => N[d]);
+  return ns.length > 1 ? `${ns.slice(0, -1).join(', ')} y ${ns.at(-1)}` : ns[0] ?? '';
+}
 /** Propuesta automática del mes (solo administrador): el sistema reparte los lugares de la zona; el admin ajusta y aprueba. */
 async function propuestaMes(rep, mes, div) {
   const fpd = campo('porDia', 'Lugares por día', { type: 'number', min: 1, max: 15, step: 1, value: 8, inputmode: 'numeric' });
-  const sab = h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'sabados' }), h('span', {}, 'Incluir sábados'));
+  // Días de la semana que trabaja (por defecto, lunes a viernes) y fechas que no trabaja
+  const SEMANA = [[1, 'Lun', 'lunes'], [2, 'Mar', 'martes'], [3, 'Mié', 'miércoles'], [4, 'Jue', 'jueves'], [5, 'Vie', 'viernes'], [6, 'Sáb', 'sábado'], [0, 'Dom', 'domingo']];
+  const sab = h('fieldset', { class: 'dias-semana' }, h('legend', {}, 'Días laborables'),
+    h('div', { class: 'dias-chips' }, SEMANA.map(([n, c, l]) => h('label', { title: l }, h('input', { type: 'checkbox', name: 'dia', value: n, checked: n >= 1 && n <= 5 }), h('span', {}, c)))),
+    h('p', { class: 'hint' }, 'Por defecto, de lunes a viernes. Se cuentan desde hoy hasta el fin del mes.'));
+  const [anioM, mesM] = mes.split('-').map(Number);
+  const ultimo = `${mes}-${String(new Date(Date.UTC(anioM, mesM, 0)).getUTCDate()).padStart(2, '0')}`;
+  const feriados = new Set();
+  const listaFer = h('div', { class: 'feriados-lista', 'aria-live': 'polite' });
+  const inFer = h('input', { type: 'date', id: 'feriado', min: mes === hoy().slice(0, 7) ? hoy() : `${mes}-01`, max: ultimo });
+  const pintarFer = () => listaFer.replaceChildren(...[...feriados].sort().map((d) => h('span', { class: 'chip-fecha' }, fecha(d),
+    h('button', { type: 'button', 'aria-label': `Quitar ${fecha(d)}`, onclick: () => { feriados.delete(d); pintarFer(); } }, '×'))));
+  const bFer = h('button', { type: 'button', class: 'btn-sec' }, 'Agregar fecha');
+  bFer.addEventListener('click', () => { if (inFer.value && inFer.value >= inFer.min && inFer.value <= ultimo) { feriados.add(inFer.value); inFer.value = ''; pintarFer(); } });
+  const fer = h('div', { class: 'feriados' }, h('label', { for: 'feriado' }, 'Fechas que no trabaja ', h('small', {}, '(feriados, vacaciones; opcional)')),
+    h('div', { class: 'feriados-fila' }, inFer, bFer), listaFer);
   const b = h('button', { class: 'btn', type: 'submit' }, 'Proponer el mes');
   const salida = h('div', { 'aria-live': 'polite' });
   const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Propuesta automática del mes'),
     h('p', { class: 'hint' }, 'El sistema reparte las farmacias, hospitales, clínicas y UNAP de su zona que aún no tienen día este mes, en los días laborables libres. Empieza por su municipio de residencia y agrupa por cercanía para gastar menos combustible. Nada se guarda hasta que apruebes.'),
-    h('div', { class: 'form-fila' }, fpd), sab, h('div', { class: 'acciones' }, b), salida);
+    h('div', { class: 'form-fila' }, fpd), sab, fer, h('p', { class: 'error', dataset: { for: 'dias' } }), h('div', { class: 'acciones' }, b), salida);
   const etiqueta = (l) => (l.refTipo === 'farmacia' ? 'Farmacia' : div.tipos[l.tipo] ?? 'Centro');
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const r = await enviar(f, b, () => api('POST', '/api/cronogramas/propuesta', { representanteId: rep, mes, porDia: Number(f.porDia.value), sabados: f.sabados.checked }));
+    const r = await enviar(f, b, () => api('POST', '/api/cronogramas/propuesta', { representanteId: rep, mes, porDia: Number(f.porDia.value), dias: [...f.querySelectorAll('[name=dia]:checked')].map((x) => Number(x.value)), feriados: [...feriados] }));
     if (!r) return;
     const p = r.item; const quitados = new Set(); const diasFuera = new Set();
     if (!p.dias.length) {
@@ -657,7 +687,7 @@ async function propuestaMes(rep, mes, div) {
     if (p.sinDia.length) avisos.push(`${fmtN.format(p.sinDia.length)} lugar(es) no caben en los días libres de este mes; quedarán para el próximo.`);
     if (p.resumen.sinUbicacion) avisos.push(`${fmtN.format(p.resumen.sinUbicacion)} lugar(es) no tienen ubicación y van al final de su municipio.`);
     if (p.sinResidencia) avisos.push('Este representante no tiene perfil de viático: el recorrido no empieza en su residencia.');
-    salida.replaceChildren(h('p', { class: 'hint', style: 'margin-top:1rem' }, `${fmtN.format(p.resumen.lugares)} lugares pendientes en ${fmtN.format(p.resumen.diasLibres)} días libres. Quita lo que no quieras antes de aprobar; el orden exacto de cada día lo calcula el mapa cuando el representante crea su jornada.`),
+    salida.replaceChildren(h('p', { class: 'hint', style: 'margin-top:1rem' }, `${fmtN.format(p.resumen.lugares)} lugares pendientes en ${fmtN.format(p.resumen.diasLibres)} día(s) laborable(s) libre(s) (${nombresDias(p.resumen.diasSemana)}, desde ${fecha(p.resumen.desde > `${mes}-01` ? p.resumen.desde : `${mes}-01`)}${p.resumen.feriados?.length ? `, sin ${p.resumen.feriados.length} fecha(s) quitada(s)` : ''}). Quita lo que no quieras antes de aprobar; el orden exacto de cada día lo calcula el mapa cuando el representante crea su jornada.`),
       ...avisos.map((t) => h('div', { class: 'aviso' }, t)), h('div', { class: 'propuesta' }, tarjetas), h('div', { class: 'acciones' }, aprobar));
   });
   return f;
@@ -1613,7 +1643,7 @@ V.representantes = async () => {
   return vista('Representantes', 'Asigna a cada representante su posición y las provincias o municipios que visita.', seg,
     tabla([{ t: 'Representante', v: (r) => [r.fullName, h('small', { style: 'display:block;color:var(--texto-2)' }, r.position ?? '')] },
       { t: 'Zona', v: (r) => texto(zonas[reps.indexOf(r)]) || 'Sin asignar' },
-      { t: '', v: (r) => [GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, 'Editar zona') : null, ES_GER() ? h('button', { class: 'btn-enlace', onclick: () => nuevaClave(r) }, 'Nueva clave') : null] }], reps, ['Aún no hay representantes activos', 'Impórtalos en "Pre-registro por Excel".']));
+      { t: '', v: (r) => [GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, 'Editar zona') : null, ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => nuevaClave(r) }, 'Nueva clave') : null] }], reps, ['Aún no hay representantes activos', 'Impórtalos en "Pre-registro por Excel".']));
 };
 
 
