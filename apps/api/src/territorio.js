@@ -448,6 +448,22 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     return { tipo, total: filas.length, resumen, errores: [], guardado: true };
   }
 
+  /** Poner o cambiar el precio de un medicamento; el anterior queda en su historial. */
+  async function cambiarPrecio(actor, medicamentoId, input = {}) {
+    permitir(rol(actor, ['administrador', 'gerencia']), 'Solo la administración o la gerencia cambian precios.');
+    const m = await data.get('medicamentos', medicamentoId);
+    if (!m) throw new HttpError(404, 'El medicamento no existe.');
+    const precio = Number(String(input.precio ?? '').replace(/,/g, ''));
+    const vigenteDesde = input.vigenteDesde || hoyRD(now());
+    const e = {};
+    if (!Number.isFinite(precio) || precio <= 0) e.precio = 'Escribe el precio en RD$.';
+    if (!esFechaISO(vigenteDesde)) e.vigenteDesde = 'Elige la fecha.';
+    if (Object.keys(e).length) invalido(e);
+    const out = await data.update('medicamentos', m.id, { precio: r2(precio) });
+    await data.insert('preciosMedicamento', { medicamentoId: m.id, precio: r2(precio), vigenteDesde, fuente: 'manual', registradoPor: actor.id });
+    await audit({ actorId: actor.id, action: 'precio_medicamento', entity: 'medicamento', entityId: m.id, before: { precio: m.precio ?? null }, after: { precio: r2(precio), vigenteDesde } });
+    return out;
+  }
   async function historialPrecio(actor, medicamentoId) {
     permitir(activo(actor));
     return (await data.list('preciosMedicamento', { medicamentoId })).sort((a, b) => b.vigenteDesde.localeCompare(a.vigenteDesde));
@@ -458,6 +474,6 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     provinciasDe, zonaActor, asignarZona, verZona, conflictosZona, mensajeConflicto, zonasOcupadas, lugaresDeZona, descartarEstablecimientos, restaurarEstablecimiento,
     crearEstablecimiento, listarEstablecimientos, validarEstablecimiento,
     buscarPreregistro, confirmarPreregistro, listarPreregistros, anularPreregistro,
-    importar, historialPrecio,
+    importar, historialPrecio, cambiarPrecio,
   };
 }

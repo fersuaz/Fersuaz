@@ -54,6 +54,18 @@ async function setup() {
   return { server, call, t: users, store, tioDex, otro };
 }
 
+test('catálogo: poner y cambiar el precio de un medicamento deja historial', async () => {
+  const { server, call, t, tioDex } = await setup();
+  try {
+    assert.equal((await call('POST', `/api/catalogo/medicamentos/${tioDex.id}/precios`, { precio: 450 }, t.promo)).status, 403);
+    assert.equal((await call('POST', `/api/catalogo/medicamentos/${tioDex.id}/precios`, { precio: 0 }, t.gerente)).status, 422);
+    assert.equal((await call('POST', `/api/catalogo/medicamentos/${tioDex.id}/precios`, { precio: '1,250.50', vigenteDesde: '2026-11-01' }, t.gerente)).body.item.precio, 1250.5);
+    await call('POST', `/api/catalogo/medicamentos/${tioDex.id}/precios`, { precio: 1300, vigenteDesde: '2026-11-15' }, t.gerente);
+    const h = (await call('GET', `/api/catalogo/medicamentos/${tioDex.id}/precios`, null, t.gerente)).body.items;
+    assert.deepEqual(h.map((x) => [x.precio, x.fuente]), [[1300, 'manual'], [1250.5, 'manual']]);
+  } finally { server.close(); }
+});
+
 test('períodos quincenal y mensual', () => {
   assert.deepEqual(periodoDe('2026-11-15', 'quincenal'), { clave: '2026-11-Q1', desde: '2026-11-01', hasta: '2026-11-15' });
   assert.deepEqual(periodoDe('2026-02-20', 'quincenal'), { clave: '2026-02-Q2', desde: '2026-02-16', hasta: '2026-02-28' });

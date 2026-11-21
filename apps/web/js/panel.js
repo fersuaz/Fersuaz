@@ -2,6 +2,7 @@
 import { apiBase } from './api.js';
 import { activarDesplegables } from './desplegable.js';
 import { activarNumeros } from './numeros.js';
+import { descargarXlsx, imprimirPdf } from './exportar.js';
 
 // ---------------------------------------------------------------- utilidades
 const $ = (s, r = document) => r.querySelector(s);
@@ -35,6 +36,23 @@ function token() { try { return sessionStorage.getItem('fersuaz.token') || local
 function salir() { try { sessionStorage.removeItem('fersuaz.token'); localStorage.removeItem('fersuaz.token'); } catch {} location.href = 'entrar.html'; }
 
 class ApiError extends Error { constructor(status, body) { super(body?.error || 'Error inesperado.'); this.status = status; this.fields = body?.fields; } }
+// ---------------------------------------------------------------- avisos de confirmación
+// Después de cada acción que guarda, aprueba, cancela o rechaza algo, aparece un aviso que dice qué se hizo.
+let accionPendiente = null;
+const SIN_AVISO = /\/(leer|propuesta|estimar|login|cambiar-clave|leer-todas|ruta)(\?|$)|\/notificaciones\//;
+function textoAccion(etiqueta) {
+  const t = String(etiqueta ?? '').replace(/\s+/g, ' ').replace(/…$/, '').trim();
+  return t ? `Listo. Se completó: ${t}.` : 'Listo. Los cambios se guardaron.';
+}
+function aviso(texto, tipo = 'ok') {
+  let zona = document.getElementById('avisos');
+  if (!zona) { zona = h('div', { id: 'avisos', class: 'avisos', role: 'status', 'aria-live': 'polite' }); document.body.append(zona); }
+  const caja = h('div', { class: `aviso-flotante ${tipo}` },
+    h('span', { class: 'aviso-icono', 'aria-hidden': 'true' }, tipo === 'ok' ? '✓' : tipo === 'error' ? '!' : 'i'), h('span', {}, texto),
+    h('button', { type: 'button', class: 'aviso-cerrar', 'aria-label': 'Cerrar aviso', onclick: () => caja.remove() }, '×'));
+  zona.append(caja);
+  setTimeout(() => caja.remove(), tipo === 'error' ? 9000 : 5000);
+}
 async function api(method, path, body) {
   if (!API) throw new ApiError(0, { error: 'El panel todavía no está conectado al servidor.' });
   let r;
@@ -43,7 +61,8 @@ async function api(method, path, body) {
   } catch { throw new ApiError(0, { error: 'No pudimos conectar con el servidor. Revisa tu conexión.' }); }
   if (r.status === 401) { salir(); throw new ApiError(401, { error: 'Tu sesión terminó.' }); }
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new ApiError(r.status, data);
+  if (!r.ok) { accionPendiente = null; throw new ApiError(r.status, data); }
+  if (method !== 'GET') { if (!SIN_AVISO.test(path)) aviso(textoAccion(accionPendiente)); accionPendiente = null; }
   return data;
 }
 
@@ -69,7 +88,7 @@ function mostrarErrores(form, err) {
 function estado(el, kind, msg) { el.className = `aviso ${kind}`; el.textContent = msg; el.hidden = !msg; }
 async function enviar(form, boton, fn) {
   const st = form.querySelector('.aviso') ?? form.appendChild(h('div', { class: 'aviso', role: 'status', hidden: true }));
-  const txt = boton.textContent; boton.disabled = true; boton.textContent = 'Guardando…';
+  const txt = boton.textContent; boton.disabled = true; boton.textContent = 'Guardando…'; accionPendiente = txt;
   try { mostrarErrores(form); const r = await fn(); return r; }
   catch (e) { mostrarErrores(form, e); estado(st, 'error', e.message); return null; }
   finally { boton.disabled = false; boton.textContent = txt; }
@@ -86,7 +105,14 @@ function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false,
   const entradas = (campos ?? []).map((x) => { const el = h('input', { id: `dlg-${x.name}`, name: x.name, type: x.type ?? 'text', value: x.value ?? '', autocomplete: 'off', ...(x.inputmode ? { inputmode: x.inputmode } : {}) }); c.append(h('div', { class: 'field' }, h('label', { for: `dlg-${x.name}` }, x.label), el)); return el; });
   $('#dialogo-ok').textContent = okTexto;
   d.showModal();
-  return new Promise((res) => d.addEventListener('close', () => res(d.returnValue !== 'ok' ? null : motivo ? motivo.value : caja ? { casilla: caja.checked } : entradas.length ? Object.fromEntries(entradas.map((x) => [x.name, x.value])) : true), { once: true }));
+  const soloVer = ['Cerrar', 'Listo', 'Entendido'].includes(okTexto);
+  return new Promise((res) => d.addEventListener('close', () => {
+    const ok = d.returnValue === 'ok';
+    // Confirmado: la próxima acción guardada se anuncia con este nombre. Cancelado: se avisa que no se hizo nada.
+    if (ok && !soloVer) accionPendiente = okTexto;
+    if (!ok && !soloVer) aviso('Cancelado. No se hizo ningún cambio.', 'info');
+    res(!ok ? null : motivo ? motivo.value : caja ? { casilla: caja.checked } : entradas.length ? Object.fromEntries(entradas.map((x) => [x.name, x.value])) : true);
+  }, { once: true }));
 }
 const sinTilde = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 /** Texto buscable de una fila: sus valores (hasta dos niveles) y las celdas que son texto. */
@@ -101,7 +127,24 @@ function textoFila(f, cols) {
  * Tabla. Con más de 25 filas agrega un buscador (sin importar tildes) y paginación de 25.
  * La búsqueda revisa todas las filas, no solo la página visible.
  */
-function tabla(cols, filas, vacio, { porPagina = 25 } = {}) {
+/** Texto de una celda para exportar (sin botones). */
+function textoCelda(v) {
+  if (v == null || v === false) return '';
+  if (Array.isArray(v)) return v.map(textoCelda).filter(Boolean).join(', ');
+  if (v instanceof Element) return /\b(btn|btn-sec|btn-enlace|enlace)\b/.test(v.className) && v.tagName !== 'SPAN' ? '' : v.textContent.replace(/\s+/g, ' ').trim();
+  if (v instanceof Node) return v.textContent.trim();
+  return String(v);
+}
+/** Botones de exportar (Excel y PDF) para una tabla; exporta las filas que se están viendo. */
+function barraExportar(cols, filasVisibles, { nombre, titulo }) {
+  const usar = cols.filter((c) => c.t);
+  const datos = () => { const fs = filasVisibles(); return [usar.map((c) => c.t), fs.map((f) => usar.map((c) => { try { return textoCelda(c.v(f)); } catch { return ''; } }))]; };
+  const archivo = `${nombre}-${hoy()}`;
+  return h('div', { class: 'exportar' },
+    h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: () => { const [e, f] = datos(); descargarXlsx(archivo, titulo, e, f); aviso(`Exportado a Excel: ${fmtN.format(f.length)} registro(s).`); } }, 'Exportar a Excel'),
+    h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: () => { const [e, f] = datos(); imprimirPdf(titulo, e, f); aviso('Elige "Guardar como PDF" en la ventana de impresión.', 'info'); } }, 'Exportar a PDF'));
+}
+function tabla(cols, filas, vacio, { porPagina = 25, exportar = null } = {}) {
   if (!filas.length) return h('div', { class: 'tarjeta vacio' }, h('strong', {}, vacio[0]), vacio[1]);
   // Una celda solo con botones o enlaces de acción se muestra como grupo alineado y espaciado.
   const esAccion = (x) => x instanceof Element && /\b(btn|btn-sec|btn-enlace)\b/.test(x.className);
@@ -111,7 +154,10 @@ function tabla(cols, filas, vacio, { porPagina = 25 } = {}) {
   };
   const fila = (f) => h('tr', {}, cols.map((c) => { const v = c.v(f); const cel = celda(v); return h('td', { 'data-label': c.t, class: [c.num ? 'num' : null, cel.classList.contains('acciones-celda') ? 'td-acciones' : null].filter(Boolean).join(' ') || null }, cel); }));
   const cabeza = h('thead', {}, h('tr', {}, cols.map((c) => h('th', { scope: 'col', class: c.num ? 'num' : null }, c.t))));
-  if (filas.length <= porPagina) return h('div', { class: 'tabla-envoltura' }, h('table', { class: 'tabla' }, cabeza, h('tbody', {}, filas.map(fila))));
+  if (filas.length <= porPagina) {
+    const t = h('div', { class: 'tabla-envoltura' }, h('table', { class: 'tabla' }, cabeza, h('tbody', {}, filas.map(fila))));
+    return exportar ? h('div', { class: 'tabla-larga' }, h('div', { class: 'tabla-barra' }, h('span', { class: 'tabla-estado' }, `${fmtN.format(filas.length)} registro(s)`), barraExportar(cols, () => filas, exportar)), t) : t;
+  }
   let indice = null; let lista = filas; let pagina = 1;
   const cuerpo = h('tbody');
   const estadoTxt = h('p', { class: 'tabla-estado', 'aria-live': 'polite' });
@@ -145,7 +191,7 @@ function tabla(cols, filas, vacio, { porPagina = 25 } = {}) {
   });
   pintar();
   return h('div', { class: 'tabla-larga' },
-    h('div', { class: 'tabla-barra' }, h('label', { for: id, class: 'sr-only' }, 'Buscar en la tabla'), buscador, estadoTxt), caja, pager);
+    h('div', { class: 'tabla-barra' }, h('label', { for: id, class: 'sr-only' }, 'Buscar en la tabla'), buscador, estadoTxt, exportar ? barraExportar(cols, () => lista, exportar) : null), caja, pager);
 }
 const vista = (titulo, sub, ...contenido) => [h('h1', {}, titulo), sub ? h('p', { class: 'vista-sub' }, sub) : null, ...contenido];
 /** Marca bloques como una sección; `vistaS` las muestra con un control segmentado (una a la vez). */
@@ -1382,13 +1428,19 @@ V.catalogo = async () => {
       f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/medicamentos', { nombre: f.nombre.value, linea: f.linea.value, presentacion: f.presentacion.value, precio: f.precio.value || undefined }))) { cache = {}; irA('catalogo', { ver: 'medicamentos' }); } });
       bloques.push(S('nuevo', 'Nuevo medicamento', f));
     }
+    const ponerPrecio = async (m) => {
+      const v = await confirmar(m.precio != null ? 'Cambiar precio' : 'Poner precio', `${m.nombre}${m.presentacion ? `, ${m.presentacion}` : ''}. ${m.precio != null ? `Precio actual: ${RD(m.precio)}. ` : ''}El precio anterior queda en el historial.`, { okTexto: 'Guardar precio', campos: [{ name: 'precio', label: 'Precio RD$', value: m.precio ?? '', type: 'number', inputmode: 'decimal' }, { name: 'vigenteDesde', label: 'Vigente desde', value: hoy(), type: 'date' }] });
+      if (!v) return;
+      try { await api('POST', `/api/catalogo/medicamentos/${m.id}/precios`, v); router(); } catch (e) { alert(e.fields ? Object.values(e.fields).join(' ') : e.message); }
+    };
     const historial = async (m) => {
       const { items } = await api('GET', `/api/catalogo/medicamentos/${m.id}/precios`);
       await confirmar(`Precios de ${m.nombre}`, items.length ? items.map((p) => `${fecha(p.vigenteDesde)}: ${RD(p.precio)} (${p.fuente})`).join('  ·  ') : 'Sin historial de precios.', { okTexto: 'Cerrar' });
     };
     bloques.push(S('lista', `Medicamentos (${fmtN.format(ms.length)})`, tabla([{ t: 'Nombre', v: (m) => m.nombre }, { t: 'Línea', v: (m) => m.linea ?? '' }, { t: 'Presentación', v: (m) => m.presentacion ?? '' },
-        { t: 'Precio', num: true, v: (m) => m.precio != null ? RD(m.precio) : 'Sin precio' },
-        { t: '', v: (m) => h('button', { class: 'btn-enlace', type: 'button', onclick: () => historial(m) }, 'Historial') }], ms, ['Catálogo vacío', 'Agrega los medicamentos de FERSUAZ o impórtalos desde Excel.'])));
+        { t: 'Precio', num: true, v: (m) => m.precio != null ? h('strong', { class: 'precio-cat' }, RD(m.precio)) : h('span', { class: 'chip pendiente' }, 'Sin precio') },
+        { t: '', v: (m) => [ES_GER() ? h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => ponerPrecio(m) }, m.precio != null ? 'Cambiar precio' : 'Poner precio') : null,
+          h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => historial(m) }, 'Historial')] }], ms, ['Catálogo vacío', 'Agrega los medicamentos de FERSUAZ o impórtalos desde Excel.'], { exportar: { nombre: 'medicamentos-fersuaz', titulo: 'Medicamentos' } })));
     if (ES_GER()) bloques.push(S('importar', 'Importar Excel', importador('medicamentos', 'Importar medicamentos y precios', 'Si el medicamento ya existe con esa presentación, se actualiza el precio y el anterior queda en el historial.', router)));
   } else if (ver === 'farmacias') {
     const [fs, div] = await Promise.all([api('GET', '/api/catalogo/farmacias'), division()]);
@@ -1407,13 +1459,13 @@ V.catalogo = async () => {
     const lista = fs.items.filter((x) => !fprov || x.provincia === fprov).sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
     bloques.push(S('lista', `Farmacias (${fmtN.format(lista.length)})`, h('div', { style: 'max-width:20rem;margin-bottom:1rem' }, filtro),
       tabla([{ t: 'Nombre', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
-        { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('farmacias', x.id) }, 'Validar') : '' }], lista, ['Aún no hay farmacias', 'Agrégalas a mano, impórtalas desde Excel o búscalas en Google Maps.'])));
+        { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('farmacias', x.id) }, 'Validar') : '' }], lista, ['Aún no hay farmacias', 'Agrégalas a mano, impórtalas desde Excel o búscalas en Google Maps.'], { exportar: { nombre: 'farmacias-fersuaz', titulo: 'Farmacias' } })));
     if (GESTION_T()) bloques.push(S('importar', 'Importar Excel', importador('farmacias', 'Importar farmacias', 'Provincia y municipio deben ser oficiales. Las que ya existen en el mismo municipio no se duplican.', router)),
       S('google', 'Buscar en Google', await buscadorGoogle([['farmacia', 'Farmacias']], null)), ES_GER() ? S('auto', 'Registro automático', await registroAutomatico([['farmacia', 'Farmacias']])) : null);
   } else {
     const mds = await api('GET', '/api/catalogo/medicos');
     bloques.push(tabla([{ t: 'Nombre', v: (x) => x.nombre }, { t: 'Especialidad', v: (x) => x.especialidad }, { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
-      { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('medicos', x.id) }, 'Validar') : '' }], mds.items, ['Aún no hay médicos', 'Las promotoras los agregan al cargar recetas.']));
+      { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('medicos', x.id) }, 'Validar') : '' }], mds.items, ['Aún no hay médicos', 'Las promotoras los agregan al cargar recetas.'], { exportar: { nombre: 'medicos-fersuaz', titulo: 'Médicos' } }));
   }
   return vistaS('catalogo', ['lista', 'nuevo', 'nueva', 'importar', 'google', 'auto'], 'Catálogo', 'Lo que agregan las promotoras y los vendedores queda pendiente hasta que la gerencia lo valida.', ...bloques);
 };
@@ -1463,7 +1515,7 @@ V.establecimientos = async () => {
   const bloques = [S('nuevo', 'Nuevo', f), S('lista', `Registrados (${fmtN.format(items.length)})`, h('div', { class: 'form-fila' }, fz.fp, fz.fm, ft, fv),
     fver === 'revisar' ? h('div', { class: 'aviso' }, 'Nombres que parecen una dirección, un negocio ajeno (spa, hotel, colmado…) o que no dicen ser de salud. Revisa y marca los que no son centros de salud; los que sí lo son, déjalos.') : null,
     GESTION_T() && fver !== 'descartados' ? h('div', { class: 'acciones', style: 'margin:0 0 .75rem' }, bDesc) : null,
-    tabla(columnas, items, vacioTxt))];
+    tabla(columnas, items, vacioTxt, { exportar: { nombre: 'establecimientos-fersuaz', titulo: 'Establecimientos de salud' } }))];
   if (GESTION_T()) bloques.push(S('importar', 'Importar Excel', importador('establecimientos', 'Importar clínicas, hospitales, UNAP y centros', 'Tipo, nombre, provincia y municipio son obligatorios. Los que ya existen en el mismo municipio no se duplican.', router)),
     S('google', 'Buscar en Google', await buscadorGoogle(tipos, null)), ES_GER() ? S('auto', 'Registro automático', await registroAutomatico([['salud', 'Hospitales, clínicas, UNAP y centros de primer nivel (todo junto)'], ...tipos])) : null);
   return vistaS('establecimientos', ['lista', 'nuevo', 'importar', 'google', 'auto'], 'Establecimientos', 'Clínicas, hospitales, UNAP y centros de primer nivel por municipio. Se usan como paradas exactas de las jornadas.', ...bloques);
@@ -1504,7 +1556,7 @@ V.hoteles = async () => {
       { t: 'Por noche', num: true, v: (x) => x.precioNoche ? RD(x.precioNoche) : 'Sin confirmar' },
       { t: 'Requisitos', v: (x) => x.estado === 'inactivo' ? h('span', { class: 'chip anulado' }, 'No usar') : x.cumple ? h('span', { class: 'chip validado' }, 'Cumple todo') : h('span', { class: 'chip pendiente', title: x.faltan.map((k) => reqs.find((r) => r.value === k)?.label).join(', ') }, `Faltan ${x.faltan.length}`) },
       { t: '', v: (x) => ES_GER() ? h('button', { class: 'btn-sec btn-peq', onclick: () => editar(x) }, x.precioNoche ? 'Editar' : 'Confirmar') : '' },
-    ], items, ['No hay hoteles con estos filtros', ES_GER() ? 'Tráelos de Google Maps en "Registro automático".' : 'La administración los registra y verifica.'])));
+    ], items, ['No hay hoteles con estos filtros', ES_GER() ? 'Tráelos de Google Maps en "Registro automático".' : 'La administración los registra y verifica.'], { exportar: { nombre: 'hoteles-fersuaz', titulo: 'Hoteles' } })));
   if (ES_GER()) bloques.push(S('google', 'Buscar en Google', await buscadorGoogle([['hotel', 'Hoteles']], null)), S('auto', 'Registro automático', await registroAutomatico([['hotel', 'Hoteles']])));
   return vistaS('hoteles', ['lista', 'google', 'auto'], 'Hoteles', 'Para el hospedaje de los representantes. Google Maps trae los hoteles; la administración confirma precio y requisitos: servicios básicos, aire, agua, cama cómoda, higiene, parqueo y seguridad. Se recomienda el más económico que cumple todo.', ...bloques);
 };
