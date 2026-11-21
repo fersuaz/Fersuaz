@@ -42,7 +42,7 @@ a { color: inherit; }
 .bar nav a { text-decoration: none; color: var(--texto-2); transition: color .2s; }
 .bar nav a:hover { color: var(--marino); }
 .bar nav .bar-cta { color: var(--marino); font-weight: 600; }
-@media (max-width: 640px) { .bar nav a:not(.bar-cta) { display: none; } }
+@media (max-width: 640px) { .bar nav a:not(.bar-cta):not([href="tienda.html"]) { display: none; } }
 
 /* Botón */
 .btn {

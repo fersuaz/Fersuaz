@@ -22,6 +22,7 @@ import { hoyRD } from './periodos.js';
 import { createLectorIA } from './lector-ia.js';
 import { createAltaRepresentantes } from './representantes.js';
 import { createBanco, BANCOS, TIPOS_CUENTA } from './banco.js';
+import { createTienda } from './tienda.js';
 import { signSession, verifySession } from './security.js';
 import { POSITIONS, ROLE_LABELS, SELF_REGISTERABLE } from './roles.js';
 
@@ -85,6 +86,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const vehiculos = createVehiculos({ fetchImpl: vehiculosFetch });
   const agregados = createVehiculosAgregados({ data, audit: (e) => store.addAudit(e) });
   const ventas = createVentas({ data, audit: (e) => store.addAudit(e), lector: lectorIA, territorio: t, hoy: () => hoyRD(now ? now() : new Date()) });
+  const tienda = createTienda({ data, users: store, files, audit: (e) => store.addAudit(e), notificar: (id, m) => n.notificar(id, m), notificarRoles: (r, m) => n.notificarRoles(r, m), ventas, hoy: () => hoyRD(now ? now() : new Date()) });
   const banco = createBanco({ data, users: store, audit: (e) => store.addAudit(e) });
   const altas = createAltaRepresentantes({ store, t, v, data });
   const inicio = createInicio({ data, users: store, v, c, t, now: now ?? (() => new Date()) });
@@ -423,6 +425,18 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', /^\/api\/viaticos\/presupuestos\/([\w-]+)\/liquidar$/, async ({ me, p }) => ({ item: await v.liquidar(me, p[1]) }));
   ruta('GET', '/api/viaticos/consolidado', async ({ me, q }) => v.consolidado(me, q.get('mes')));
 
+  // ---------------------------------------------------------------- tienda para farmacias
+  ruta('GET', '/api/tienda/productos', async ({ me }) => ({ items: await tienda.productos(me), conPrecio: Boolean(me) }), { auth: 'opcional' });
+  ruta('GET', /^\/api\/tienda\/productos\/([\w-]+)$/, async ({ me, p }) => ({ item: await tienda.producto(me, p[1]), conPrecio: Boolean(me) }), { auth: 'opcional' });
+  ruta('GET', /^\/api\/tienda\/imagen\/([\w.-]+)$/, async ({ p }) => ({ raw: await tienda.imagen(p[1]) }), { auth: false });
+  ruta('GET', '/api/tienda/admin', async ({ me }) => ({ items: await tienda.fichaAdmin(me), fotosSitio: tienda.fotosSitio() }));
+  ruta('POST', /^\/api\/tienda\/admin\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await tienda.editarProducto(me, p[1], body ?? {}) }));
+  ruta('POST', /^\/api\/tienda\/admin\/([\w-]+)\/foto$/, async ({ me, p, body }) => ({ item: await tienda.agregarFoto(me, p[1], body?.foto) }), { limite: 8 * 1024 * 1024 });
+  ruta('GET', '/api/pedidos', async ({ me, q }) => ({ items: await tienda.listarPedidos(me, { estado: q.get('estado') || undefined }), pagos: tienda.PAGOS, estados: tienda.ESTADOS }));
+  ruta('POST', '/api/pedidos', async ({ me, body }) => [201, { item: await tienda.crearPedido(me, body ?? {}) }], { limite: 8 * 1024 * 1024 });
+  ruta('POST', /^\/api\/pedidos\/([\w-]+)\/estado$/, async ({ me, p, body }) => ({ item: await tienda.cambiarEstado(me, p[1], body ?? {}) }));
+  ruta('POST', /^\/api\/pedidos\/([\w-]+)\/comprobante$/, async ({ me, p, body }) => ({ item: await tienda.subirComprobante(me, p[1], body?.comprobante) }), { limite: 8 * 1024 * 1024 });
+
   ruta('GET', /^\/api\/adjuntos\/([\w.-]+)$/, async ({ me, p }) => {
     const f = await files.get(p[1]);
     const gestion = ['administrador', 'gerencia', 'supervisor', 'finanzas'].includes(me.role) && me.status === 'activo';
@@ -439,7 +453,11 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
       if (!r) return send(res, 404, { error: 'Ruta no encontrada.' }, origin);
       const [, re, h, o] = r;
       let me = null;
-      if (o.auth) {
+      if (o.auth === 'opcional') {
+        // Público, pero con sesión válida muestra más (ej. precios de la tienda).
+        me = await currentUser(req).catch(() => null);
+        if (me && (me.status !== 'activo' || me.debeCambiarClave)) me = null;
+      } else if (o.auth) {
         me = await currentUser(req);
         if (!me) return send(res, 401, { error: 'Inicia sesión.' }, origin);
         if (me.status !== 'activo') return send(res, 403, { error: 'Tu cuenta no está activa.' }, origin);

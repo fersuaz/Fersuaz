@@ -660,3 +660,26 @@ td .sem-nombre, .td-fecha { white-space: nowrap; }
 .estado-correo { margin: .75rem 0 0; padding: .6rem .8rem; border-radius: 10px; background: var(--panel); color: var(--tinta); font-size: .92rem; }
 .estado-correo.ok { background: rgba(48, 133, 172, .12); color: var(--marino); font-weight: 500; }
 .datos-lista dd { font-family: var(--sans) !important; font-weight: 600; color: var(--marino); }
+
+/* Tienda: pedidos y productos publicados */
+.chip.recibido { background: #FFF4DE; color: #8A5A00; }
+.chip.confirmado, .chip.despachado { background: #E2EEF5; color: #1C5A78; }
+.chip.entregado { background: #DCE7F2; color: #003463; }
+.chip.cancelado { background: #FBE6E1; color: #9A3520; }
+.acciones-fila { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
+.historial { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
+.historial li { padding-left: .9rem; border-left: 2px solid var(--linea, #C7D6E3); }
+.mini-foto { width: 48px; height: 48px; object-fit: contain; border-radius: 10px; border: 1px solid #C7D6E3; background: #fff; display: block; }
+.mini-foto.vacia { background: repeating-linear-gradient(135deg, #E9F0F6 0 6px, #fff 6px 12px); }
+.fotos-admin { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: 1rem; margin: .75rem 0 1.25rem; }
+.fotos-admin figure { margin: 0; border: 1px solid #C7D6E3; border-radius: 14px; background: #fff; overflow: hidden; }
+.fotos-admin img { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; }
+.fotos-admin figcaption { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; justify-content: space-between; padding: .55rem; border-top: 1px solid #E9F0F6; font-size: .88rem; }
+.fotos-sitio { border: 0; padding: 0; margin: 1rem 0 0; display: grid; gap: .5rem; }
+.fotos-sitio legend { font-weight: 600; margin-bottom: .4rem; }
+.fotos-sitio img { width: 56px; height: 56px; object-fit: contain; border-radius: 8px; border: 1px solid #C7D6E3; background: #fff; }
+.fotos-sitio .check { align-items: center; }
+.ficha-filas { display: grid; gap: .5rem; margin-top: .5rem; }
+.fila-ficha { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: .5rem; }
+.fila-ficha input { font: inherit; padding: .55rem .75rem; border: 1px solid #C7D6E3; border-radius: 10px; }
+@media (max-width: 640px) { .fila-ficha { grid-template-columns: 1fr; } }

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tienda para farmacias, FERSUAZ</title>
+  <meta name="description" content="Productos de Laboratorio FERSUAZ para farmacias: pide en línea y paga por transferencia, a crédito o al recibir.">
+  <meta name="theme-color" content="#003463">
+  <meta name="fersuaz-api" content="">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/site.css">
+  <link rel="stylesheet" href="css/tienda.css">
+</head>
+<body>
+  <a class="skip" href="#contenido">Saltar al contenido</a>
+  <header class="bar">
+    <a class="brand" href="./" aria-label="FERSUAZ, inicio"><img src="assets/brand/fersuaz-logo-color.svg" alt="FERSUAZ Laboratorio Farmacéutico" width="180" height="51"></a>
+    <nav aria-label="Principal">
+      <a href="./">Inicio</a>
+      <a href="tienda.html" aria-current="page">Tienda</a>
+      <a href="nosotros.html">Nosotros</a>
+      <a class="bar-cta" href="entrar.html" data-sesion>Iniciar sesión</a>
+    </nav>
+  </header>
+  <main id="contenido" class="tienda">
+    <section class="tienda-cabeza" aria-labelledby="tienda-titulo">
+      <h1 id="tienda-titulo">Tienda para farmacias</h1>
+      <p>Pide los productos de FERSUAZ para tu farmacia. No se cobra en línea: eliges pagar por transferencia, a crédito o al recibir, y tu vendedor de zona confirma el pedido.</p>
+      <p class="tienda-sesion" id="aviso-sesion" hidden></p>
+    </section>
+    <div class="tienda-filtro" id="filtro" hidden>
+      <label for="buscar">Buscar producto</label>
+      <input id="buscar" type="search" placeholder="Nombre o presentación" autocomplete="off">
+    </div>
+    <section aria-label="Productos" class="grid-productos" id="productos" aria-busy="true">
+      <p class="estado">Cargando productos…</p>
+    </section>
+  </main>
+  <button class="carrito-boton" type="button" id="abrir-carrito" hidden aria-controls="carrito"><span>Pedido</span> <strong id="carrito-n">0</strong></button>
+  <aside class="carrito" id="carrito" aria-labelledby="carrito-titulo" hidden>
+    <div class="carrito-caja" role="dialog" aria-modal="true" aria-labelledby="carrito-titulo">
+      <div class="carrito-cabeza"><h2 id="carrito-titulo">Tu pedido</h2><button class="cerrar" type="button" id="cerrar-carrito" aria-label="Cerrar">×</button></div>
+      <div id="carrito-cuerpo"></div>
+    </div>
+  </aside>
+  <footer class="pie" aria-labelledby="pie-titulo">
+    <h2 id="pie-titulo" class="sr-only">Pie de página</h2>
+    <div class="pie-grid">
+      <div class="pie-marca">
+        <a href="./" class="pie-logo" aria-label="FERSUAZ, inicio"><img src="assets/brand/fersuaz-logo-blanco.svg" alt="FERSUAZ Laboratorio Farmacéutico" width="200" height="56" loading="lazy"></a>
+        <p>Laboratorio farmacéutico dominicano. Esta plataforma conecta a visitadores, vendedores, promotoras y dependientes con la gerencia, del consultorio a la farmacia.</p>
+        <ul class="pie-chips">
+          <li>RNC 1-03-03243-5</li>
+          <li>Reg. Ind. 18704</li>
+          <li>La Vega, República Dominicana</li>
+        </ul>
+      </div>
+      <nav class="pie-col" aria-label="Plataforma">
+        <h3>Plataforma</h3>
+        <ul>
+          <li><a href="./">Inicio</a></li>
+          <li><a href="./#jornada">La jornada</a></li>
+          <li><a href="./#cuentas">Tipos de cuenta</a></li>
+          <li><a href="./#tio-dex">Tio-Dex</a></li>
+          <li><a href="tienda.html">Tienda para farmacias</a></li>
+          <li><a href="nosotros.html">Nosotros</a></li>
+        </ul>
+      </nav>
+      <nav class="pie-col" aria-label="Equipo comercial">
+        <h3>Equipo comercial</h3>
+        <ul>
+          <li><a href="registro.html?rol=representante">Representantes</a></li>
+          <li><a href="registro.html?rol=dependiente">Dependientes de farmacia</a></li>
+          <li><a href="registro.html?rol=supervisor">Supervisores</a></li>
+          <li><a href="registro.html?rol=gerencia">Gerencia y finanzas</a></li>
+        </ul>
+      </nav>
+      <nav class="pie-col" aria-label="Cuenta">
+        <h3>Tu cuenta</h3>
+        <ul>
+          <li><a href="registro.html">Crear cuenta</a></li>
+          <li><a href="entrar.html">Iniciar sesión</a></li>
+          <li><a href="entrar.html#recuperar">Recuperar acceso</a></li>
+        </ul>
+      </nav>
+      <nav class="pie-col" aria-label="Legal del sitio">
+        <h3>Legal y contacto</h3>
+        <ul>
+          <li><a href="terminos.html">Términos y condiciones</a></li>
+          <li><a href="privacidad.html">Política de privacidad</a></li>
+          <li><a href="seguridad.html">Seguridad y trazabilidad</a></li>
+          <li><a href="mailto:lfersuaz@gmail.com">lfersuaz@gmail.com</a></li>
+        </ul>
+      </nav>
+    </div>
+
+    <div class="pie-final">
+      <p>© 2026 FERSUAZ Farmacéutica S.R.L. Todos los derechos reservados. La Vega, República Dominicana.</p>
+    </div>
+  </footer>
+  <script type="module" src="js/tienda.js"></script>
+</body>
+</html>
