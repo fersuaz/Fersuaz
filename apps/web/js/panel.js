@@ -2,7 +2,7 @@
 import { apiBase } from './api.js';
 import { activarDesplegables } from './desplegable.js';
 import { activarNumeros } from './numeros.js';
-import { verImagen } from './visor.js';
+import { verImagen, verGaleria } from './visor.js';
 import { descargarXlsx, imprimirPdf } from './exportar.js';
 
 // ---------------------------------------------------------------- utilidades
@@ -353,6 +353,62 @@ async function prepararFoto(file) {
 /**
  * cfg: { meds, conPrecio, etiquetaCant, porcentaje?, extras?(fila) → { nodos, valores(), valido() }, enviar(fila) → Promise, nombre: 'voucher' | 'receta', arriba? }
  */
+// Médico de una foto (voucher o receta): se elige de la lista; si no está, se escribe nombre, apellido y
+// especialidad, y queda registrado para todos. La próxima vez solo se elige.
+const NUEVO_MED = '__nuevo';
+function selectorMedico(catalogo, { requerido = false, ubicacion = () => ({}), preferir = null } = {}) {
+  const etiq = (m) => `${m.nombre}${m.especialidad ? `, ${m.especialidad}` : ''}${m.municipio ? ` (${m.municipio})` : ''}`;
+  const ordenados = () => {
+    const p = preferir?.() ?? {};
+    const peso = (m) => (p.municipio && m.municipio === p.municipio ? 0 : p.provincia && m.provincia === p.provincia ? 1 : 2);
+    return catalogo.items.slice().sort((a, b) => peso(a) - peso(b) || a.nombre.localeCompare(b.nombre, 'es'));
+  };
+  const sel = h('select', { 'aria-label': 'Médico que prescribió', 'data-medicos': '1' });
+  const llenar = () => {
+    const v = sel.value;
+    sel.replaceChildren(h('option', { value: '' }, requerido ? 'Elige el médico' : 'Elige el médico (opcional)'), h('option', { value: NUEVO_MED }, '+ No está en la lista: agregar médico'), ...ordenados().map((m) => h('option', { value: m.id }, etiq(m))));
+    sel.value = v;
+  };
+  llenar();
+  sel.addEventListener('medicos-cambio', llenar);
+  const nom = h('input', { autocomplete: 'off', placeholder: 'Nombre', 'aria-label': 'Nombre del médico' });
+  const ape = h('input', { autocomplete: 'off', placeholder: 'Apellido', 'aria-label': 'Apellido del médico' });
+  const esp = h('select', { 'aria-label': 'Especialidad del médico' }, h('option', { value: '' }, 'Elige la especialidad'), ...(catalogo.especialidades ?? []).map((x) => h('option', { value: x }, x)));
+  const caja = h('div', { class: 'med-nuevo', hidden: true },
+    h('label', {}, h('span', {}, 'Nombre'), nom), h('label', {}, h('span', {}, 'Apellido'), ape), h('label', {}, h('span', {}, 'Especialidad'), esp),
+    h('small', { class: 'hint' }, 'Se guarda en la lista de médicos: la próxima vez solo lo eliges.'));
+  sel.addEventListener('change', () => { caja.hidden = sel.value !== NUEVO_MED; if (!caja.hidden) nom.focus(); });
+  const nodos = [h('label', { class: 'med-elegir' }, h('span', {}, 'Médico'), sel), caja];
+  return {
+    nodos,
+    valido() {
+      if (sel.value === NUEVO_MED) {
+        if (nom.value.trim().length < 2) return 'Escribe el nombre del médico.';
+        if (ape.value.trim().length < 2) return 'Escribe el apellido del médico.';
+        if (!esp.value) return 'Elige la especialidad del médico.';
+        return null;
+      }
+      return requerido && !sel.value ? 'Elige el médico que prescribió.' : null;
+    },
+    /** Id del médico; si es nuevo, lo registra (una sola vez aunque se repita en varias fotos). */
+    async valor() {
+      if (sel.value !== NUEVO_MED) return sel.value || null;
+      const clave = `${nom.value} ${ape.value}`.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+      catalogo.pendientes ??= new Map();
+      if (!catalogo.pendientes.has(clave)) {
+        catalogo.pendientes.set(clave, api('POST', '/api/catalogo/medicos', { nombre: nom.value.trim(), apellido: ape.value.trim(), especialidad: esp.value, ...ubicacion() }).then((r) => {
+          if (!catalogo.items.some((m) => m.id === r.item.id)) catalogo.items.push(r.item);
+          document.querySelectorAll('select[data-medicos]').forEach((s) => s.dispatchEvent(new Event('medicos-cambio')));
+          return r.item.id;
+        }).catch((e) => { catalogo.pendientes.delete(clave); throw e; }));
+      }
+      const id = await catalogo.pendientes.get(clave);
+      sel.value = id; caja.hidden = true;
+      return id;
+    },
+  };
+}
+
 function cargaMasiva(cfg) {
   const filas = []; let n = 0;
   const etiqueta = (m) => (m.presentacion ? `${m.nombre}, ${m.presentacion}` : m.nombre);
@@ -431,7 +487,8 @@ function cargaMasiva(cfg) {
       f.totalEl = cfg.conPrecio ? h('strong', {}, RD(0)) : null;
       f.extras = cfg.extras ? cfg.extras(f) : null;
       const vista = file.type === 'application/pdf' ? h('span', { class: 'cm-pdf' }, 'PDF') : h('img', { src: f.url, alt: `Foto ${file.name}`, loading: 'lazy' });
-      const ver = h('button', { type: 'button', class: 'cm-foto', 'aria-label': 'Ver la foto en grande', onclick: () => verImagen(f.url, { nombre: file.name, tipo: file.type }) }, vista);
+      const ver = h('button', { type: 'button', class: 'cm-foto', 'aria-label': 'Ver la foto en grande', onclick: () => verGaleria(filas.filter((x) => x.estado !== 'ok').map((x, i) => ({ url: x.url, tipo: x.file.type, nombre: `${x.num.textContent}: ${x.file.name}`,
+        detalle: () => { const ms = x.lineas.filter((l) => l.sel.value).map((l) => `${l.sel.selectedOptions[0].textContent} ×${l.cant.value}`); return ms.length ? ms.join(', ') : 'Falta elegir el medicamento'; } })), filas.filter((x) => x.estado !== 'ok').indexOf(f)) }, vista);
       f.el = h('article', { class: 'cm-fila' }, ver,
         h('div', { class: 'cm-datos' },
           h('div', { class: 'cm-cabeza' }, h('div', {}, f.num, h('small', {}, file.name)), f.fecha ? h('label', { class: 'cm-fecha' }, h('span', {}, 'Fecha'), f.fecha) : null,
@@ -505,7 +562,8 @@ function cargaMasiva(cfg) {
 
 V.voucher = async () => {
   const carga = yo.role === 'representante';
-  const [meds, deps, pct0] = await Promise.all([medicamentos(), carga ? api('GET', '/api/vouchers/dependientes').then((x) => x.items) : null, carga ? null : api('GET', '/api/vouchers/porcentaje').then((x) => x.item.porcentaje)]);
+  const [meds, deps, pct0, cat] = await Promise.all([medicamentos(), carga ? api('GET', '/api/vouchers/dependientes').then((x) => x.items) : null, carga ? null : api('GET', '/api/vouchers/porcentaje').then((x) => x.item.porcentaje), api('GET', '/api/catalogo/medicos').catch(() => ({ items: [], especialidades: [] }))]);
+  const catMed = { items: cat.items.filter((m) => m.estado !== 'inactivo' && m.estado !== 'rechazado'), especialidades: cat.especialidades ?? [] };
   if (!meds.length) return vista('Cargar vouchers', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Todavía no hay medicamentos en el catálogo'), 'La gerencia debe agregarlos antes de cargar vouchers.'));
   if (carga && !deps.length) return vista('Cargar vouchers', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay dependientes en farmacias de tu zona'), 'Aparecen aquí cuando una dependiente se registra con una farmacia de tus provincias.'));
   let pct = pct0 ?? null;
@@ -514,23 +572,93 @@ V.voucher = async () => {
   selDep?.querySelector('select').addEventListener('change', async (e) => { pct = null; if (e.target.value) { try { pct = (await api('GET', `/api/vouchers/porcentaje?dependienteId=${e.target.value}`)).item.porcentaje; } catch { /* sin porcentaje */ } } cm.recalcular(); });
   cm = cargaMasiva({
     nombre: 'voucher', meds, conPrecio: true, etiquetaCant: 'Cantidad', porcentaje: () => pct,
+    extras: () => {
+      const depElegida = () => deps?.find((d) => d.id === selDep?.querySelector('select').value) ?? (yo.farmacia ?? {});
+      const med = selectorMedico(catMed, { ubicacion: () => (selDep ? { dependienteId: selDep.querySelector('select').value } : {}), preferir: depElegida });
+      return { nodos: h('div', { class: 'cm-extras cm-extras-med' }, ...med.nodos), valores: () => ({ medico: med }), valido: () => med.valido() };
+    },
     arriba: selDep ? h('div', { class: 'form-fila' }, selDep) : null,
     antes: async (n) => { if (selDep && !selDep.querySelector('select').value) { aviso('Elige la dependiente de la farmacia.', 'error'); selDep.querySelector('select').focus(); return false; } return true; },
-    enviar: ({ items, foto, huella, dhash, fecha: f }) => api('POST', '/api/vouchers', { ...(selDep ? { dependienteId: selDep.querySelector('select').value } : {}), fecha: f, items, foto, fotoHuella: huella, fotoDhash: dhash }),
+    enviar: async ({ items, foto, huella, dhash, fecha: f, extras }) => api('POST', '/api/vouchers', { ...(selDep ? { dependienteId: selDep.querySelector('select').value } : {}), fecha: f, items, foto, fotoHuella: huella, fotoDhash: dhash, medicoId: await extras.medico.valor() }),
   });
   return vista('Cargar vouchers', `${carga ? 'Carga los vouchers a nombre de la dependiente de la farmacia: la comisión es de ella y queda constancia de que los cargaste tú. ' : ''}Sube todas las fotos de una vez. En cada foto elige los medicamentos de FERSUAZ que tiene; si un voucher tiene varios, usa "Agregar medicamento". La cantidad solo cambia si hay varias unidades del mismo medicamento. Quedan en revisión hasta que la supervisión o finanzas los aprueben.`, cm.el);
 };
+// Filtros de una lista ya cargada: se aplican en el momento y la tabla vuelve a la página 1.
+// campos: [{ id, etiqueta, tipo: 'buscar' | 'opciones' | 'desde' | 'hasta' | 'minimo', opciones, valor(fila) }]
+const estadoFiltros = {};
+function listaFiltrada(clave, filas, campos, pintarTabla, resumen) {
+  const st = (estadoFiltros[clave] ??= {});
+  const sinTildes = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const caja = h('div', { class: 'lf-tabla' });
+  const cuenta = h('p', { class: 'lf-cuenta', 'aria-live': 'polite' });
+  const ctrls = campos.map((c) => {
+    let el;
+    if (c.tipo === 'opciones') el = h('select', { 'data-sin-buscador': c.opciones.length < 9 ? '1' : null }, h('option', { value: '' }, 'Todos'), ...c.opciones.map((o) => h('option', { value: o.value ?? o }, o.label ?? o)));
+    else if (c.tipo === 'desde' || c.tipo === 'hasta') el = h('input', { type: 'date' });
+    else if (c.tipo === 'minimo') el = h('input', { inputmode: 'decimal', placeholder: '0.00' });
+    else el = h('input', { type: 'search', placeholder: c.placeholder ?? 'Buscar', autocomplete: 'off' });
+    el.value = st[c.id] ?? '';
+    el.addEventListener(c.tipo === 'buscar' || c.tipo === 'minimo' ? 'input' : 'change', () => { st[c.id] = el.value; aplicar(); });
+    return { c, el, nodo: h('label', { class: `lf-campo lf-${c.tipo}` }, h('span', {}, c.etiqueta), el) };
+  });
+  const limpiar = h('button', { type: 'button', class: 'btn-enlace' }, 'Limpiar filtros');
+  limpiar.addEventListener('click', () => { for (const k of Object.keys(st)) delete st[k]; ctrls.forEach(({ el }) => { el.value = ''; }); aplicar(); });
+  function pasa(f) {
+    for (const { c } of ctrls) {
+      const v = st[c.id]; if (!v) continue;
+      const x = c.valor(f);
+      if (c.tipo === 'buscar') { if (!sinTildes(x).includes(sinTildes(v.trim()))) return false; }
+      else if (c.tipo === 'opciones') { if (!(Array.isArray(x) ? x.includes(v) : String(x ?? '') === v)) return false; }
+      else if (c.tipo === 'desde') { if (String(x) < v) return false; }
+      else if (c.tipo === 'hasta') { if (String(x) > v) return false; }
+      else if (c.tipo === 'minimo') { const n = Number(String(v).replace(/,/g, '')); if (Number.isFinite(n) && Number(x) < n) return false; }
+    }
+    return true;
+  }
+  function aplicar() {
+    const vis = filas.filter(pasa);
+    const activos = ctrls.filter(({ c }) => st[c.id]).length;
+    cuenta.textContent = `${activos ? `${fmtN.format(vis.length)} de ${fmtN.format(filas.length)}` : fmtN.format(filas.length)}${resumen ? ` · ${resumen(vis)}` : ''}`;
+    limpiar.hidden = !activos;
+    caja.replaceChildren(pintarTabla(vis, activos));
+  }
+  aplicar();
+  return h('div', { class: 'lf' }, filas.length ? h('div', { class: 'lf-barra' }, ...ctrls.map((x) => x.nodo), h('div', { class: 'lf-pie' }, cuenta, limpiar)) : null, caja);
+}
+
 V.misVouchers = async () => {
   const { items } = await api('GET', '/api/vouchers');
   const pintar = async () => router();
   const vendedor = yo.role === 'representante';
-  return vista(vendedor ? 'Vouchers cargados' : 'Mis vouchers', 'Puedes anular un voucher mientras siga pendiente de revisión.', tabla([
-    { t: 'Foto', v: (v) => (v.foto ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => verAdjunto(v.foto.clave) }, 'Ver foto') : v.referencia ?? '') }, { t: 'Fecha', v: (v) => fecha(v.fecha) },
+  const ESTADOS_V = { pendiente: 'Pendiente', aprobado: 'Aprobado', rechazado: 'Rechazado', anulado: 'Anulado' };
+  const unicos = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  const filas = items.slice().reverse();
+  const campos = [
+    { id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Medicamento, médico, farmacia…', valor: (v) => [v.items.map((i) => i.medicamento).join(' '), v.medico, v.farmacia, v.dependiente, v.referencia].join(' ') },
+    { id: 'estado', etiqueta: 'Estado', tipo: 'opciones', opciones: Object.entries(ESTADOS_V).filter(([k]) => items.some((v) => v.estado === k)).map(([value, label]) => ({ value, label })), valor: (v) => v.estado },
+    { id: 'desde', etiqueta: 'Desde', tipo: 'desde', valor: (v) => v.fecha },
+    { id: 'hasta', etiqueta: 'Hasta', tipo: 'hasta', valor: (v) => v.fecha },
+    { id: 'med', etiqueta: 'Medicamento', tipo: 'opciones', opciones: unicos(items.flatMap((v) => v.items.map((i) => i.medicamento))), valor: (v) => v.items.map((i) => i.medicamento) },
+    { id: 'medico', etiqueta: 'Médico', tipo: 'opciones', opciones: [...unicos(items.map((v) => v.medico)), ...(items.some((v) => !v.medico) ? [{ value: '—', label: 'Sin médico' }] : [])], valor: (v) => v.medico ?? '—' },
+    vendedor
+      ? { id: 'dep', etiqueta: 'Farmacia', tipo: 'opciones', opciones: unicos(items.map((v) => v.farmacia)), valor: (v) => v.farmacia }
+      : { id: 'por', etiqueta: 'Cargado por', tipo: 'opciones', opciones: unicos(items.map((v) => v.cargadoPor ?? 'Tú')), valor: (v) => v.cargadoPor ?? 'Tú' },
+    { id: 'min', etiqueta: 'Total desde RD$', tipo: 'minimo', valor: (v) => v.total },
+  ];
+  let vistos = filas;
+  const detV = (v) => `${fecha(v.fecha)} · ${v.items.map((i) => `${i.medicamento}${i.cantidad ? ` ×${i.cantidad}` : ""}`).join(', ')} · ${RD(v.total)}${v.medico ? ` · ${v.medico}` : ''}`;
+  const galeriaV = (v) => verAdjunto(v.foto.clave, vistos.filter((x) => x.foto).map((x) => ({ clave: x.foto.clave, nombre: `Voucher del ${fecha(x.fecha)}`, detalle: `${detV(x)} · ${ESTADOS_V[x.estado] ?? x.estado}` })));
+  const cols = [
+    { t: 'Foto', v: (v) => (v.foto ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => galeriaV(v) }, 'Ver foto') : v.referencia ?? '') }, { t: 'Fecha', v: (v) => fecha(v.fecha) },
     ...(vendedor ? [{ t: 'Dependiente', v: (v) => [v.dependiente, v.farmacia ? h('small', { style: 'display:block;color:var(--texto-2)' }, v.farmacia) : null] }] : [{ t: 'Cargado por', v: (v) => v.cargadoPor ?? 'Tú' }]),
-    { t: 'Medicamentos', v: (v) => v.items.map((i) => `${i.medicamento} ×${i.cantidad}`).join(', ') },
+    { t: 'Medicamentos', v: (v) => v.items.map((i) => `${i.medicamento}${i.cantidad ? ` ×${i.cantidad}` : ""}`).join(', ') },
+    { t: 'Médico', v: (v) => v.medico ?? h('span', { style: 'color:var(--texto-2)' }, 'Sin médico') },
     { t: 'Total', num: true, v: (v) => RD(v.total) }, { t: 'Estado', v: (v) => [chip(v.estado), v.motivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, v.motivo) : null] },
     { t: '', v: (v) => v.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await confirmar('Anular voucher', `¿Anular el voucher del ${fecha(v.fecha)} por ${RD(v.total)}? No contará para la comisión.`, { okTexto: 'Anular voucher' })) { await api('POST', `/api/vouchers/${v.id}/anular`).catch((e) => alert(e.message)); pintar(); } } }, 'Anular') : '' },
-  ], items.slice().reverse(), ['Aún no has cargado vouchers', 'Cuando cargues uno, aparecerá aquí con su estado.']));
+  ];
+  const resumen = (vs) => { const vivos = vs.filter((v) => v.estado !== 'anulado' && v.estado !== 'rechazado'); return `Total ${RD(vivos.reduce((n, v) => n + v.total, 0))} (sin anulados ni rechazados)`; };
+  return vista(vendedor ? 'Vouchers cargados' : 'Mis vouchers', 'Puedes anular un voucher mientras siga pendiente de revisión.',
+    listaFiltrada('misVouchers', filas, campos, (vs, activos) => (vistos = vs, tabla(cols, vs, activos ? ['Ningún voucher con estos filtros', 'Cambia o limpia los filtros.'] : ['Aún no has cargado vouchers', 'Cuando cargues uno, aparecerá aquí con su estado.'], { porPagina: 15 })), resumen));
 };
 function resumenComision(r) {
   if (!r.configurado) return h('div', { class: 'aviso' }, r.mensaje);
@@ -600,7 +728,7 @@ V.pedidos = async () => {
   const cuenta = (e) => items.filter((p) => p.estado === e).length;
   const seg = segmentos('Estado del pedido', [['', `Todos (${fmtN.format(items.length)})`], ...['recibido', 'confirmado', 'despachado', 'entregado', 'cancelado'].map((e) => [e, `${ESTADOS[e]} (${fmtN.format(cuenta(e))})`])], estado, (e) => irA('pedidos', e ? { estado: e } : {}));
   return vista(esDep ? 'Mis pedidos' : 'Pedidos de farmacias', esDep ? 'Los pedidos que haces en la tienda. Te avisamos cada vez que cambian de estado.' : 'Pedidos que las farmacias hacen en la tienda. Confírmalos, despáchalos y márcalos entregados: al entregarlos quedan como venta y suben el inventario de la farmacia.',
-    irTienda ? h('div', { class: 'acciones' }, irTienda) : null, seg,
+    irTienda ? h('div', { class: 'acciones acciones-arriba' }, irTienda) : null, seg,
     tabla([{ t: 'Pedido', v: (p) => [p.numero, h('small', { style: 'display:block;color:var(--texto-2)' }, fecha(String(p.createdAt).slice(0, 10)))] },
       ...(esDep ? [] : [{ t: 'Farmacia', v: (p) => [p.farmacia?.nombre ?? '', h('small', { style: 'display:block;color:var(--texto-2)' }, p.farmacia ? `${p.farmacia.municipio}, ${p.farmacia.provincia}` : '')] }]),
       { t: 'Productos', v: productos }, { t: 'Total', num: true, v: (p) => RD(p.total) }, { t: 'Pago', v: (p) => PAGO_N[p.pago] }, { t: 'Estado', v: (p) => chip(p.estado) }, { t: '', v: (p) => acciones(p) }],
@@ -679,6 +807,30 @@ V.tareas = async () => {
 };
 
 // ---------------------------------------------------------------- movimiento por territorio
+/** Ranking que se puede ordenar por volumen de ventas o por unidades: cambia en el momento, sin recargar. */
+const ordenRanking = {};
+function rankingOrdenable(clave, lista, opciones, pintar) {
+  const caja = h('div', {});
+  const botones = opciones.map((o) => h('button', { type: 'button', role: 'radio', class: 'orden-op', onclick: () => elegir(o.id) }, o.etiqueta));
+  const barra = h('div', { class: 'orden-barra' }, h('span', { class: 'orden-tit', id: `orden-${clave}` }, 'Ordenar por'), h('div', { class: 'orden-seg', role: 'radiogroup', 'aria-labelledby': `orden-${clave}` }, ...botones));
+  function elegir(id) {
+    ordenRanking[clave] = id;
+    const o = opciones.find((x) => x.id === id);
+    botones.forEach((b, i) => { const si = opciones[i].id === id; b.setAttribute('aria-checked', String(si)); b.tabIndex = si ? 0 : -1; });
+    const orden = lista.slice().sort((a, b) => (Number(o.valor(b)) || 0) - (Number(o.valor(a)) || 0));
+    caja.replaceChildren(pintar(orden, o));
+  }
+  barra.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    e.preventDefault();
+    const i = opciones.findIndex((x) => x.id === ordenRanking[clave]);
+    const j = (i + (e.key === 'ArrowRight' ? 1 : -1) + opciones.length) % opciones.length;
+    elegir(opciones[j].id); botones[j].focus();
+  });
+  elegir(ordenRanking[clave] ?? opciones[0].id);
+  return h('div', {}, lista.length > 1 ? barra : null, caja);
+}
+
 V.territorio = async () => {
   const mes = mesDe(); const prov = param('provincia') || '';
   const [r, div] = await Promise.all([api('GET', `/api/reportes/territorio?mes=${mes}${prov ? `&provincia=${encodeURIComponent(prov)}` : ''}`), division()]);
@@ -708,20 +860,21 @@ V.territorio = async () => {
     { t: 'Laboratorio', num: true, v: (x) => [fmtN.format(x.vendidasLaboratorio), sub(RD(x.montoLaboratorio))] },
     { t: 'Estado', v: (x) => (x.alerta ? h('span', { class: 'chip alerta' }, 'Recetado sin venta') : h('span', { class: 'chip ok' }, 'Cubierto')) },
   ], r.filas, ['Sin movimiento', 'Elige otro mes o provincia.'], { exportar: { nombre: `movimiento-${prov || 'pais'}-${mes}`, titulo: `Movimiento ${prov || 'todo el país'} ${mes}` } })));
-  bloques.push(S('farmacias', 'Farmacias que más venden', h('p', { class: 'hint' }, 'Según los vouchers que suben sus dependientes (aprobados y por revisar).'), tabla([
-    { t: '#', num: true, v: (x) => r.farmaciasTop.indexOf(x) + 1 }, { t: 'Farmacia', v: (x) => [x.farmacia, sub(`${x.municipio}, ${x.provincia}`)] },
+  bloques.push(S('farmacias', 'Farmacias que más venden', h('p', { class: 'hint' }, 'Según los vouchers que suben sus dependientes (aprobados y por revisar).'), rankingOrdenable('farmacias', r.farmaciasTop, [{ id: 'monto', etiqueta: 'Volumen de ventas (RD$)', valor: (x) => x.monto }, { id: 'unidades', etiqueta: 'Unidades vendidas', valor: (x) => x.unidades }, { id: 'vouchers', etiqueta: 'Vouchers', valor: (x) => x.vouchers }], (lista, o) => tabla([
+    { t: '#', num: true, v: (x) => lista.indexOf(x) + 1 }, { t: 'Farmacia', v: (x) => [x.farmacia, sub(`${x.municipio}, ${x.provincia}`)] },
     { t: 'Vendido', num: true, v: (x) => RD(x.monto) }, { t: 'Unidades', num: true, v: (x) => fmtN.format(x.unidades) }, { t: 'Vouchers', num: true, v: (x) => fmtN.format(x.vouchers) },
     { t: 'Dependientes', num: true, v: (x) => fmtN.format(x.dependientes) }, { t: 'Más vendido', v: (x) => x.masVendido ?? '' },
-  ], r.farmaciasTop, ['Sin vouchers este mes', 'Aparecen cuando las dependientes suben sus vouchers.'], { exportar: { nombre: `farmacias-top-${mes}`, titulo: `Farmacias que más venden ${mes}` } })));
-  bloques.push(S('medicamentos', 'Medicamentos más vendidos', tabla([
-    { t: '#', num: true, v: (x) => r.medicamentosTop.indexOf(x) + 1 }, { t: 'Medicamento', v: (x) => x.medicamento },
+  ], lista, ['Sin vouchers este mes', 'Aparecen cuando las dependientes suben sus vouchers.'], { porPagina: 15, exportar: { nombre: `farmacias-top-${mes}-${o.id}`, titulo: `Farmacias que más venden ${mes}, por ${o.etiqueta.toLowerCase()}` } }))));
+  const OPC_VENTA = [{ id: 'monto', etiqueta: 'Volumen de ventas (RD$)', valor: (x) => x.monto }, { id: 'unidades', etiqueta: 'Unidades vendidas', valor: (x) => x.unidades }];
+  bloques.push(S('medicamentos', 'Medicamentos más vendidos', rankingOrdenable('medicamentos', r.medicamentosTop, [...OPC_VENTA, { id: 'recetadas', etiqueta: 'Unidades recetadas', valor: (x) => x.recetadas }], (lista, o) => tabla([
+    { t: '#', num: true, v: (x) => lista.indexOf(x) + 1 }, { t: 'Medicamento', v: (x) => x.medicamento },
     { t: 'Vendido', num: true, v: (x) => RD(x.monto) }, { t: 'Unidades vendidas', num: true, v: (x) => fmtN.format(x.unidades) },
     { t: 'Unidades recetadas', num: true, v: (x) => fmtN.format(x.recetadas) }, { t: 'Municipios', num: true, v: (x) => fmtN.format(x.municipios) },
-  ], r.medicamentosTop, ['Sin ventas este mes', ''], { exportar: { nombre: `medicamentos-top-${mes}`, titulo: `Medicamentos más vendidos ${mes}` } })));
-  bloques.push(S('municipios', 'Municipios que más venden', tabla([
-    { t: '#', num: true, v: (x) => r.municipiosTop.indexOf(x) + 1 }, { t: 'Municipio', v: (x) => [x.municipio, sub(x.provincia)] },
+  ], lista, ['Sin ventas este mes', ''], { porPagina: 15, exportar: { nombre: `medicamentos-top-${mes}-${o.id}`, titulo: `Medicamentos más vendidos ${mes}, por ${o.etiqueta.toLowerCase()}` } }))));
+  bloques.push(S('municipios', 'Municipios que más venden', rankingOrdenable('municipios', r.municipiosTop, [...OPC_VENTA, { id: 'recetado', etiqueta: 'Volumen recetado', valor: (x) => x.recetado }], (lista, o) => tabla([
+    { t: '#', num: true, v: (x) => lista.indexOf(x) + 1 }, { t: 'Municipio', v: (x) => [x.municipio, sub(x.provincia)] },
     { t: 'Vendido', num: true, v: (x) => RD(x.monto) }, { t: 'Unidades', num: true, v: (x) => fmtN.format(x.unidades) }, { t: 'Recetado', num: true, v: (x) => RD(x.recetado) },
-  ], r.municipiosTop, ['Sin ventas este mes', ''], { exportar: { nombre: `municipios-top-${mes}`, titulo: `Municipios que más venden ${mes}` } })));
+  ], lista, ['Sin ventas este mes', ''], { porPagina: 15, exportar: { nombre: `municipios-top-${mes}-${o.id}`, titulo: `Municipios que más venden ${mes}, por ${o.etiqueta.toLowerCase()}` } }))));
   bloques.push(S('medicos', 'Médicos que más recetan', tabla([
     { t: '#', num: true, v: (x) => r.ranking.indexOf(x) + 1 }, { t: 'Médico', v: (x) => [x.medico, x.especialidad ? sub(x.especialidad) : null] },
     { t: 'Centro', v: (x) => [x.centro ?? '', sub(x.zona)] }, { t: 'Recetas', num: true, v: (x) => fmtN.format(x.recetas) }, { t: 'Unidades', num: true, v: (x) => fmtN.format(x.unidades) },
@@ -992,24 +1145,26 @@ V.receta = async () => {
   // Varias por foto: cada foto es una fila con su médico, su paciente y sus medicamentos.
   const selOp = campo('opMasivo', 'Operativo de estas recetas', { options: recientes.map((o) => ({ value: o.id, label: `${o.centro}, ${o.municipio} (${fecha(o.fecha)})` })), value: recientes[0].id });
   const listaMed = meds.items.filter((m) => m.estado !== 'inactivo').sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  const catMed = { items: meds.items.filter((m) => m.estado !== 'inactivo'), especialidades: meds.especialidades ?? [] };
+  const opElegido = () => recientes.find((o) => o.id === selOp.querySelector('select').value) ?? {};
   const extrasReceta = () => {
-    const sel = h('select', { 'aria-label': 'Médico que prescribió' }, h('option', { value: '' }, 'Elige el médico'), ...listaMed.map((m) => h('option', { value: m.id }, `${m.nombre}, ${m.especialidad} (${m.municipio})`)));
+    const med = selectorMedico(catMed, { requerido: true, ubicacion: () => ({ operativoId: opElegido().id }), preferir: opElegido });
     const tel = h('input', { type: 'tel', inputmode: 'tel', autocomplete: 'off', placeholder: '809-000-0000', 'aria-label': 'Teléfono del paciente' });
     const nom = h('input', { autocomplete: 'off', placeholder: 'Nombre del paciente', 'aria-label': 'Nombre del paciente' });
     const nota = h('small', { class: 'hint pac-nota' });
     const lNom = h('label', {}, h('span', {}, 'Nombre del paciente'), nom);
-    const nodos = h('div', { class: 'cm-extras' }, h('label', {}, h('span', {}, 'Médico'), sel), h('label', {}, h('span', {}, 'Teléfono del paciente'), tel), lNom, nota);
+    const nodos = h('div', { class: 'cm-extras' }, ...med.nodos, h('label', {}, h('span', {}, 'Teléfono del paciente'), tel), lNom, nota);
     const pac = buscadorPaciente(tel, nom, nota);
     return {
       nodos,
-      valores: () => ({ medicoId: sel.value, paciente: pac.valor() }),
-      valido: () => (!sel.value ? 'Elige el médico que prescribió.' : pac.valor().id ? null : String(tel.value).replace(/\D/g, '').length < 10 ? 'Escribe el teléfono del paciente o elige un paciente ya registrado por su nombre.' : !pac.conocido() && nom.value.trim().length < 3 ? 'Escribe el nombre del paciente.' : null),
+      valores: () => ({ medico: med, paciente: pac.valor() }),
+      valido: () => med.valido() ?? (pac.valor().id ? null : String(tel.value).replace(/\D/g, '').length < 10 ? 'Escribe el teléfono del paciente o elige un paciente ya registrado por su nombre.' : !pac.conocido() && nom.value.trim().length < 3 ? 'Escribe el nombre del paciente.' : null),
     };
   };
   const cmR = cargaMasiva({
     nombre: 'receta', meds: await medicamentos(), conPrecio: false, etiquetaCant: 'Unidades', extras: extrasReceta,
-    arriba: h('div', {}, h('div', { class: 'form-fila' }, selOp), h('p', { class: 'hint' }, '¿Falta un médico en la lista? Agrégalo en "Una por una" o en Catálogo → Médicos.')),
-    enviar: ({ items, foto, huella, dhash, extras }) => api('POST', '/api/recetas', { operativoId: selOp.querySelector('select').value, medicoId: extras.medicoId, paciente: extras.paciente, items, adjunto: foto, fotoHuella: huella, fotoDhash: dhash }),
+    arriba: h('div', {}, h('div', { class: 'form-fila' }, selOp), h('p', { class: 'hint' }, '¿El médico no está en la lista? Elige "No está en la lista" y escribe su nombre, apellido y especialidad. Queda guardado para la próxima vez.')),
+    enviar: async ({ items, foto, huella, dhash, extras }) => api('POST', '/api/recetas', { operativoId: selOp.querySelector('select').value, medicoId: await extras.medico.valor(), paciente: extras.paciente, items, adjunto: foto, fotoHuella: huella, fotoDhash: dhash }),
   });
   return vistaS('receta', ['fotos', 'una'], 'Cargar recetas', 'Sube todas las fotos de las prescripciones de una vez, o regístralas una por una. Cada receta lleva su médico, su paciente y los medicamentos de FERSUAZ que se recetaron.',
     S('fotos', 'Varias por foto', cmR.el), S('una', 'Una por una', alertas, form));
@@ -1021,17 +1176,24 @@ V.misRecetas = async () => {
     { t: 'Fecha', v: (r) => fecha(r.fecha) }, { t: 'Paciente', v: (r) => r.paciente ? [r.paciente.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, r.paciente.telefono)] : h('span', { style: 'color:var(--texto-2)' }, 'Sin registrar') },
     { t: 'Médico', v: (r) => `${r.medico}, ${r.especialidad}` }, { t: 'Zona', v: (r) => `${r.municipio}, ${r.provincia}` },
     { t: 'Medicamentos', v: (r) => r.items.map((i) => `${i.medicamento} ×${i.unidades}`).join(', ') },
-    { t: 'Foto', v: (r) => r.adjunto ? h('button', { class: 'btn-sec btn-peq', onclick: () => verAdjunto(r.adjunto.clave) }, 'Ver') : 'Sin foto' },
+    { t: 'Foto', v: (r) => r.adjunto ? h('button', { class: 'btn-sec btn-peq', onclick: () => verAdjunto(r.adjunto.clave, items.filter((x) => x.adjunto).reverse().map((x) => ({ clave: x.adjunto.clave, nombre: `Receta del ${fecha(x.fecha)}`, detalle: `${x.medico}, ${x.especialidad} · ${x.items.map((i) => `${i.medicamento} ×${i.unidades}`).join(', ')}` }))) }, 'Ver') : 'Sin foto' },
   ], items.slice().reverse(), ['No hay recetas en este mes', 'Las recetas que registres aparecerán aquí.']));
 };
-let ultimoAdjunto = null;
-async function verAdjunto(clave) {
-  const r = await fetch(`${API}/api/adjuntos/${encodeURIComponent(clave)}`, { headers: { authorization: `Bearer ${token()}` } });
-  if (!r.ok) return alert('No se pudo abrir la foto.');
-  const b = await r.blob();
-  if (ultimoAdjunto) URL.revokeObjectURL(ultimoAdjunto);
-  ultimoAdjunto = URL.createObjectURL(b);
-  verImagen(ultimoAdjunto, { nombre: 'Foto adjunta', tipo: b.type });
+const adjuntosCache = new Map();
+/** Descarga un adjunto con la sesión y lo deja listo para el visor (se guarda mientras la página esté abierta). */
+function cargarAdjunto(clave) {
+  if (!adjuntosCache.has(clave)) {
+    adjuntosCache.set(clave, fetch(`${API}/api/adjuntos/${encodeURIComponent(clave)}`, { headers: { authorization: `Bearer ${token()}` } })
+      .then(async (r) => { if (!r.ok) throw new Error('No se pudo abrir la foto.'); const b = await r.blob(); return { url: URL.createObjectURL(b), tipo: b.type }; })
+      .catch((e) => { adjuntosCache.delete(clave); throw e; }));
+    if (adjuntosCache.size > 60) { const [k, p] = adjuntosCache.entries().next().value; adjuntosCache.delete(k); p.then((x) => URL.revokeObjectURL(x.url)).catch(() => {}); }
+  }
+  return adjuntosCache.get(clave);
+}
+/** Una foto sola, o varias: `lista` = [{ clave, nombre, detalle }] para pasar de una a otra sin cerrar. */
+async function verAdjunto(clave, lista = null, opciones = {}) {
+  const items = (lista ?? [{ clave, nombre: 'Foto adjunta' }]).map((x) => ({ ...x, nombre: x.nombre ?? 'Foto adjunta', cargar: () => cargarAdjunto(x.clave) }));
+  verGaleria(items, Math.max(0, (lista ?? []).findIndex((x) => x.clave === clave)), opciones);
 }
 function filtroMes(mes, ruta, extra, { futuro = false } = {}) {
   const inp = h('input', { type: 'month', value: mes, id: 'filtro-mes', max: futuro ? null : mesActual() });
@@ -1049,20 +1211,62 @@ V.alertas = async () => {
 
 // ---------------------------------------------------------------- vistas: gestión
 V.revisar = async () => {
+  // Por defecto: todos los pendientes, de cualquier usuario, provincia o municipio. Los filtros son opcionales.
   const { items } = await api('GET', '/api/vouchers?estado=pendiente');
-  const decidir = async (v, aprobar) => {
-    const r = aprobar ? await confirmar('Aprobar voucher', `Aprobar el voucher del ${fecha(v.fecha)} de ${v.dependiente} por ${RD(v.total)}.`, { okTexto: 'Aprobar' })
-      : await confirmar('Rechazar voucher', `Rechazar el voucher del ${fecha(v.fecha)} de ${v.dependiente} por ${RD(v.total)}.`, { okTexto: 'Rechazar', pedirMotivo: true });
-    if (r == null) return;
-    try { await api('POST', `/api/vouchers/${v.id}/${aprobar ? 'aprobar' : 'rechazar'}`, aprobar ? {} : { motivo: r }); } catch (e) { alert(e.message); }
+  const sub = (x) => h('small', { style: 'display:block;color:var(--texto-2)' }, x);
+  const medsDe = (v) => v.items.map((i) => `${i.medicamento}${i.cantidad ? ` ×${i.cantidad}` : ''}`).join(', ');
+  const unicos = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  const filas = items.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || String(a.createdAt).localeCompare(String(b.createdAt)));
+  let vistos = filas; let cambios = false;
+  const pedirAprobar = (v) => confirmar('Aprobar voucher', `¿Aprobar el voucher del ${fecha(v.fecha)} de ${v.dependiente} por ${RD(v.total)}? Contará para su comisión.`, { okTexto: 'Sí, aprobar' });
+  const pedirRechazo = (v) => confirmar('Rechazar voucher', `¿Rechazar el voucher del ${fecha(v.fecha)} de ${v.dependiente} por ${RD(v.total)}? Escribe el motivo: la dependiente lo verá.`, { okTexto: 'Sí, rechazar', pedirMotivo: true });
+  async function decidir(v, aprobar) {
+    const r = aprobar ? await pedirAprobar(v) : await pedirRechazo(v);
+    if (r == null || r === false) return null;
+    try { await api('POST', `/api/vouchers/${v.id}/${aprobar ? 'aprobar' : 'rechazar'}`, aprobar ? {} : { motivo: r }); cambios = true; return aprobar ? 'Aprobado' : 'Rechazado'; } catch (e) { alert(e.message); return null; }
+  }
+  const etiquetasDe = (v) => ({ titulo: 'Lo que cargó', lineas: v.items.map((i) => ({ texto: `${i.medicamento}${i.presentacion ? `, ${i.presentacion}` : ''}`, extra: `${i.cantidad ?? 1} × ${RD(i.precio ?? (i.monto / (i.cantidad || 1)))} = ${RD(i.monto)}` })),
+    notas: [`Fecha del voucher: ${fecha(v.fecha)}`, v.medico ? `Médico: ${v.medico}` : 'Sin médico', v.cargadoPor ? `Cargado por ${v.cargadoPor}` : null].filter(Boolean), total: `Total ${RD(v.total)}` });
+  const abrirFoto = (v) => verAdjunto(v.foto.clave, vistos.filter((x) => x.foto).map((x) => ({
+    clave: x.foto.clave, nombre: `${x.dependiente} · ${x.farmacia ?? ''}`, detalle: `${x.municipio ? `${x.municipio}, ${x.provincia} · ` : ''}${medsDe(x)} · ${RD(x.total)}`,
+    etiquetas: () => etiquetasDe(x),
+    acciones: [{ texto: 'Aprobar', clase: 'ok', accion: () => decidir(x, true) }, { texto: 'Rechazar', clase: 'no', accion: () => decidir(x, false) }],
+  })), { onClose: () => { if (cambios) router(); } });
+  const campos = [
+    { id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Dependiente, farmacia, medicamento, médico…', valor: (v) => [v.dependiente, v.farmacia, medsDe(v), v.medico, v.cargadoPor, v.referencia].join(' ') },
+    { id: 'prov', etiqueta: 'Provincia', tipo: 'opciones', opciones: unicos(items.map((v) => v.provincia)), valor: (v) => v.provincia },
+    { id: 'mun', etiqueta: 'Municipio', tipo: 'opciones', opciones: unicos(items.map((v) => v.municipio)), valor: (v) => v.municipio },
+    { id: 'farm', etiqueta: 'Farmacia', tipo: 'opciones', opciones: unicos(items.map((v) => v.farmacia)), valor: (v) => v.farmacia },
+    { id: 'dep', etiqueta: 'Dependiente', tipo: 'opciones', opciones: unicos(items.map((v) => v.dependiente)), valor: (v) => v.dependiente },
+    { id: 'med', etiqueta: 'Medicamento', tipo: 'opciones', opciones: unicos(items.flatMap((v) => v.items.map((i) => i.medicamento))), valor: (v) => v.items.map((i) => i.medicamento) },
+    { id: 'medico', etiqueta: 'Médico', tipo: 'opciones', opciones: [...unicos(items.map((v) => v.medico)), ...(items.some((v) => !v.medico) ? [{ value: '—', label: 'Sin médico' }] : [])], valor: (v) => v.medico ?? '—' },
+    { id: 'por', etiqueta: 'Cargado por', tipo: 'opciones', opciones: unicos(items.map((v) => v.cargadoPor ?? 'La dependiente')), valor: (v) => v.cargadoPor ?? 'La dependiente' },
+    { id: 'desde', etiqueta: 'Desde', tipo: 'desde', valor: (v) => v.fecha },
+    { id: 'hasta', etiqueta: 'Hasta', tipo: 'hasta', valor: (v) => v.fecha },
+    { id: 'min', etiqueta: 'Total desde RD$', tipo: 'minimo', valor: (v) => v.total },
+  ];
+  async function todos(aprobar) {
+    const vs = vistos; if (!vs.length) return;
+    const total = RD(vs.reduce((n, v) => n + v.total, 0));
+    const r = aprobar
+      ? await confirmar(`Aprobar ${fmtN.format(vs.length)} voucher(s)`, `¿Seguro que quieres aprobar ${fmtN.format(vs.length)} voucher(s) por ${total} en total? Son los que se ven con los filtros de ahora. Contarán para la comisión de cada dependiente.`, { okTexto: `Sí, aprobar ${fmtN.format(vs.length)}` })
+      : await confirmar(`Rechazar ${fmtN.format(vs.length)} voucher(s)`, `¿Seguro que quieres rechazar ${fmtN.format(vs.length)} voucher(s) por ${total} en total? Son los que se ven con los filtros de ahora. Escribe el motivo: cada dependiente lo verá.`, { okTexto: `Sí, rechazar ${fmtN.format(vs.length)}`, pedirMotivo: true });
+    if (r == null || r === false) return;
+    try {
+      const out = await api('POST', '/api/vouchers/decidir', { ids: vs.map((v) => v.id), aprobar, ...(aprobar ? {} : { motivo: r }) });
+      aviso(out.errores.length ? `${fmtN.format(out.hechos)} ${aprobar ? 'aprobado(s)' : 'rechazado(s)'}; ${out.errores.length} no se pudieron: ${out.errores[0].error}` : `Listo: ${fmtN.format(out.hechos)} voucher(s) ${aprobar ? 'aprobado(s)' : 'rechazado(s)'}.`, out.errores.length ? 'error' : 'ok');
+    } catch (e) { alert(e.message); }
     router();
-  };
-  return vista('Vouchers por revisar', 'Solo los vouchers aprobados cuentan para la comisión.', tabla([
-    { t: 'Dependiente', v: (v) => [v.dependiente, h('small', { style: 'display:block;color:var(--texto-2)' }, v.farmacia ?? '')] },
-    { t: 'Foto', v: (v) => (v.foto ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => verAdjunto(v.foto.clave) }, 'Ver foto') : v.referencia ?? '') }, { t: 'Fecha', v: (v) => fecha(v.fecha) },
-    { t: 'Medicamentos', v: (v) => v.items.map((i) => `${i.medicamento} ×${i.cantidad}`).join(', ') }, { t: 'Total', num: true, v: (v) => RD(v.total) },
-    { t: '', v: (v) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' }, h('button', { class: 'btn btn-peq', onclick: () => decidir(v, true) }, 'Aprobar'), h('button', { class: 'btn-sec btn-peq', onclick: () => decidir(v, false) }, 'Rechazar')) },
-  ], items, ['No hay vouchers pendientes', 'Cuando un dependiente cargue uno, aparecerá aquí.']));
+  }
+  const cols = [
+    { t: 'Dependiente', v: (v) => [v.dependiente, sub(v.farmacia ?? ''), v.municipio ? sub(`${v.municipio}, ${v.provincia}`) : null] },
+    { t: 'Foto', v: (v) => (v.foto ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => abrirFoto(v) }, 'Ver foto') : v.referencia ?? '') }, { t: 'Fecha', v: (v) => fecha(v.fecha) },
+    { t: 'Medicamentos', v: (v) => [medsDe(v), v.medico ? sub(v.medico) : null] }, { t: 'Total', num: true, v: (v) => RD(v.total) },
+    { t: '', v: (v) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' }, h('button', { class: 'btn btn-peq', onclick: async () => { if (await decidir(v, true)) router(); } }, 'Aprobar'), h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await decidir(v, false)) router(); } }, 'Rechazar')) },
+  ];
+  const lote = (vs) => (vs.length > 1 ? h('div', { class: 'acciones lote' }, h('button', { class: 'btn', type: 'button', onclick: () => todos(true) }, `Aprobar todos (${fmtN.format(vs.length)})`), h('button', { class: 'btn-sec btn-peligro', type: 'button', onclick: () => todos(false) }, `Rechazar todos (${fmtN.format(vs.length)})`)) : null);
+  return vista('Vouchers por revisar', 'Todos los pendientes, de cualquier dependiente, provincia o municipio. Solo los aprobados cuentan para la comisión. En la foto puedes comparar lo cargado y aprobar o rechazar sin cerrarla.',
+    listaFiltrada('revisar', filas, campos, (vs, activos) => { vistos = vs; return h('div', {}, lote(vs), tabla(cols, vs, activos ? ['Ningún voucher pendiente con estos filtros', 'Cambia o limpia los filtros.'] : ['No hay vouchers pendientes', 'Cuando un dependiente cargue uno, aparecerá aquí.'], { porPagina: 25 })); }, (vs) => `Total ${RD(vs.reduce((n, v) => n + v.total, 0))}`));
 };
 V.comisiones = async () => {
   const puedeConfig = ['administrador', 'gerencia', 'finanzas'].includes(yo.role);
@@ -1079,25 +1283,47 @@ V.comisiones = async () => {
   }
   if (!cfg.global) bloques.push(h('div', { class: 'aviso' }, 'Todavía no hay porcentaje ni período configurados. Hasta entonces no se calculan comisiones.'));
   const sel = campo('dep', 'Dependiente', { options: deps.items.map((d) => ({ value: d.id, label: `${d.fullName}${d.pharmacy ? `, ${d.pharmacy}` : ''}` })), placeholder: 'Elige un dependiente' });
-  const per = campo('per', 'Período', {}, '(ej. 2026-11-Q1 o 2026-11)');
+  // Período: una lista con el actual y los anteriores, según la configuración (mensual o quincenal).
+  const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  const periodos = (tipo) => {
+    const [y0, m0] = hoy().split('-').map(Number); const d0 = Number(hoy().slice(8, 10)); const out = [];
+    for (let k = 0; k < 13; k++) {
+      const d = new Date(Date.UTC(y0, m0 - 1 - k, 1)); const y = d.getUTCFullYear(); const m = d.getUTCMonth() + 1; const mm = String(m).padStart(2, '0');
+      const ult = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      if (tipo === 'quincenal') {
+        if (!(k === 0 && d0 <= 15)) out.push({ value: `${y}-${mm}-Q2`, label: `16 al ${ult} de ${MESES[m - 1]} ${y}` });
+        out.push({ value: `${y}-${mm}-Q1`, label: `1 al 15 de ${MESES[m - 1]} ${y}` });
+      } else out.push({ value: `${y}-${mm}`, label: `${MESES[m - 1][0].toUpperCase()}${MESES[m - 1].slice(1)} ${y}` });
+    }
+    out[0].label += ' (actual)';
+    return out;
+  };
+  const per = h('div', { class: 'field' }, h('label', { for: 'per' }, 'Período'), h('select', { id: 'per', 'data-sin-buscador': '1', disabled: true }, h('option', { value: '' }, 'Elige primero el dependiente')));
+  const selPer = per.querySelector('select'); let tipoPer = null;
   const detalle = h('div', {});
   const ver = async () => {
     const id = sel.querySelector('select').value; if (!id) return;
-    const p = per.querySelector('input').value.trim();
+    const p = selPer.value;
     try {
       const r = await api('GET', `/api/comisiones/resumen?dependienteId=${id}${p ? `&periodo=${encodeURIComponent(p)}` : ''}`);
+      if (r.configurado && r.tipo !== tipoPer) {
+        tipoPer = r.tipo;
+        selPer.replaceChildren(...periodos(r.tipo).map((o) => h('option', { value: o.value }, o.label)));
+        selPer.value = r.periodo.clave; selPer.disabled = false;
+      }
       const kids = [resumenComision(r)];
       try { const cb = await api('GET', `/api/banco/${id}`); kids.push(h('div', { class: 'tarjeta', style: 'margin-top:1rem' }, h('h2', {}, 'Cuenta para el pago'), tarjetaCuenta(cb.cuenta, deps.items.find((d) => d.id === id)?.fullName))); } catch { /* sin permiso */ }
-      if (r.configurado && !r.cierre && puedeConfig) kids.push(h('div', { class: 'acciones' }, h('button', { class: 'btn', onclick: async () => {
+      if (r.configurado && !r.cierre && puedeConfig && r.periodo.hasta < hoy()) kids.push(h('div', { class: 'acciones' }, h('button', { class: 'btn', onclick: async () => {
         if (!(await confirmar('Cerrar período', `Cerrar ${r.periodo.clave} con una comisión de ${RD(r.comision)}. Después no se pueden aprobar ni cargar vouchers de ese período.`, { okTexto: 'Cerrar período' }))) return;
         try { await api('POST', '/api/comisiones/cierres', { dependienteId: id, periodo: r.periodo.clave }); ver(); } catch (e) { alert(e.message); }
       } }, 'Cerrar período')));
       if (r.cierre) kids.push(h('div', { class: 'aviso ok' }, `Período cerrado el ${fecha(r.cierre.createdAt)}.`));
+      else if (r.configurado && puedeConfig && r.periodo.hasta >= hoy()) kids.push(h('p', { class: 'hint' }, `Este período termina el ${fecha(r.periodo.hasta)}. Se podrá cerrar desde el día siguiente.`));
       detalle.replaceChildren(...kids);
     } catch (e) { detalle.replaceChildren(h('div', { class: 'aviso error' }, e.message)); }
   };
   sel.querySelector('select').addEventListener('change', ver);
-  per.querySelector('input').addEventListener('change', ver);
+  selPer.addEventListener('change', ver);
   bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Comisión por dependiente'), deps.items.length ? h('div', { class: 'form-fila' }, sel, per) : h('p', { class: 'vacio' }, 'Aún no hay dependientes con cuenta activa.'), detalle));
   return vista('Comisiones', 'Configura el porcentaje, revisa lo acumulado y cierra cada período para pagarlo.', ...bloques);
 };

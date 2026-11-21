@@ -72,12 +72,28 @@ const distanciaM = (a, b) => {
   return 2 * R * Math.asin(Math.sqrt(Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLng / 2) ** 2));
 };
 
-export function createMedicos({ data, audit, lector }) {
+export function createMedicos({ data, audit, lector, users }) {
   const activo = (u) => u?.status === 'activo';
   const GESTION = ['administrador', 'gerencia'];
   const permitir = (ok, msg = 'No tienes permiso para esto.') => { if (!ok) throw new HttpError(403, msg); };
   const invalido = (f) => { throw new HttpError(422, 'Revisa los campos marcados.', f); };
-  const puedeRegistrar = (u) => activo(u) && (GESTION.includes(u.role) || u.role === 'supervisor' || (u.role === 'representante' && ['Promotora', 'Visitador'].includes(u.position)));
+  // Las dependientes y todos los representantes también registran: así el médico de un voucher o una receta
+// se agrega una vez y después solo se elige.
+  const puedeRegistrar = (u) => activo(u) && (GESTION.includes(u.role) || ['supervisor', 'representante', 'dependiente'].includes(u.role));
+  /** Provincia y municipio cuando no se dicen: los de la farmacia de la dependiente o los del operativo. */
+  async function ubicacionPorDefecto(actor, input) {
+    if (input.operativoId) {
+      const o = await data.get('operativos', String(input.operativoId));
+      if (o && (o.promotoraId === actor.id || GESTION.includes(actor.role) || actor.role === 'supervisor')) return { provincia: o.provincia, municipio: o.municipio };
+    }
+    const depId = actor.role === 'dependiente' ? actor.id : input.dependienteId ? String(input.dependienteId) : null;
+    if (depId && users) {
+      const d = actor.id === depId ? actor : await users.findUserById(depId);
+      const f = d?.farmaciaId ? await data.get('farmacias', d.farmaciaId) : null;
+      if (f) return { provincia: f.provincia, municipio: f.municipio };
+    }
+    return null;
+  }
 
   /** Establecimiento donde labora: por id, o por cercanía (≤ 150 m) / nombre en la dirección cuando viene de Google. */
   function centroDe(establecimientos, { establecimientoId, lat, lng, direccion, municipio, nombreCentro }) {
@@ -100,6 +116,11 @@ export function createMedicos({ data, audit, lector }) {
   async function registrar(actor, input = {}, { fuente = 'manual', google = null, establecimientos: ests } = {}) {
     permitir(puedeRegistrar(actor), 'No tienes permiso para registrar médicos.');
     const e = {};
+    if (!input.provincia && !input.establecimientoId && !google) {
+      const u = await ubicacionPorDefecto(actor, input);
+      if (u) input = { ...input, ...u };
+    }
+    if (input.apellido) input = { ...input, nombre: `${normalizeName(input.nombre)} ${normalizeName(input.apellido)}` };
     const establecimientos = ests ?? await data.list('establecimientos');
     const limpio = limpiarNombre(input.nombre ?? google?.nombre);
     const nombre = limpio.nombre;

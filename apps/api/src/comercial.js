@@ -376,6 +376,9 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
         else if (!Number.isFinite(monto) || monto <= 0) e[`items.${i}.${precio != null ? 'precio' : 'monto'}`] = 'Escribe el precio en RD$, mayor que cero.';
         if (med) lineas.push({ medicamentoId: med.id, medicamento: med.nombre, presentacion: med.presentacion ?? null, cantidad, ...(precio != null ? { precio: round2(precio) } : {}), monto: round2(monto) });
       }
+      // Médico que prescribió (opcional): uno ya registrado.
+      let medico = null;
+      if (input.medicoId) { medico = await data.get('medicos', String(input.medicoId)); if (!medico || medico.estado === 'rechazado') e.medicoId = 'Ese médico no está registrado. Elígelo de la lista o agrégalo.'; }
       if (Object.keys(e).length) invalido(e);
       const previos = (await data.list('vouchers', { dependienteId: dep.id })).filter((v) => v.estado !== 'anulado');
       if (referencia && previos.some((v) => (v.referencia ?? '').toLowerCase() === referencia.toLowerCase())) {
@@ -383,19 +386,26 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       }
       // La misma foto no entra dos veces, la cargue quien la cargue (los rechazados y anulados se pueden volver a subir).
       const rep = (huella || dhash) && buscarRepetida((await data.list('vouchers')).filter((v) => !['anulado', 'rechazado'].includes(v.estado)), { huella, dhash });
-      if (rep) throw new HttpError(409, textoRepetida(rep, 'voucher'), { foto: 'Foto repetida.' });
+      if (rep) throw new HttpError(409, textoRepetida(rep, 'voucher', actor.id), { foto: 'Foto repetida.' });
       if (await periodoCerrado(dep.id, input.fecha)) throw new HttpError(409, 'Ese período de comisión ya está cerrado.', { fecha: 'El período de esa fecha ya se cerró.' });
       const foto = input.foto ? await guardarAdjunto(files, actor, input.foto, 'voucher') : null;
       const v = await data.insert('vouchers', {
         dependienteId: dep.id, farmacia: await nombreFarmacia(dep), referencia, fecha: input.fecha, foto, fotoHuella: huella, fotoDhash: dhash,
         items: lineas, total: round2(lineas.reduce((s, l) => s + l.monto, 0)), estado: 'pendiente', registradoPor: actor.id,
+        medicoId: medico?.id ?? null, medico: medico ? `${medico.nombre}${medico.especialidad ? `, ${medico.especialidad}` : ''}` : null,
       });
       await audit({ actorId: actor.id, action: 'voucher_cargado', entity: 'voucher', entityId: v.id, after: { total: v.total, dependienteId: dep.id, ...(dep.id !== actor.id ? { cargadoPor: actor.fullName } : {}) } });
       return v;
     },
     async listar(actor, filtro = {}) {
       const nombres = async () => Object.fromEntries((await users.listUsers()).map((u) => [u.id, u.fullName]));
-      const conNombres = async (vs) => { const n = await nombres(); return vs.map((v) => ({ ...v, dependiente: n[v.dependienteId] ?? '', cargadoPor: v.registradoPor && v.registradoPor !== v.dependienteId ? n[v.registradoPor] ?? '' : null })); };
+      const conNombres = async (vs) => {
+        const us = await users.listUsers(); const n = Object.fromEntries(us.map((u) => [u.id, u.fullName]));
+        // provincia y municipio de la farmacia de cada dependiente, para filtrar por zona
+        const farmaciaDe = Object.fromEntries(us.filter((u) => u.farmaciaId).map((u) => [u.id, u.farmaciaId]));
+        const fs = Object.fromEntries((await data.list('farmacias')).map((f) => [f.id, f]));
+        return vs.map((v) => { const f = fs[farmaciaDe[v.dependienteId]]; return { ...v, dependiente: n[v.dependienteId] ?? '', cargadoPor: v.registradoPor && v.registradoPor !== v.dependienteId ? n[v.registradoPor] ?? '' : null, provincia: f?.provincia ?? null, municipio: f?.municipio ?? null }; });
+      };
       if (esDependiente(actor)) return conNombres(await data.list('vouchers', { dependienteId: actor.id, ...(filtro.estado ? { estado: filtro.estado } : {}) }));
       if (cargaPorDependiente(actor)) return conNombres(await data.list('vouchers', { registradoPor: actor.id, ...(filtro.estado ? { estado: filtro.estado } : {}) }));
       permitir(tieneRol(actor, GESTION));
@@ -414,6 +424,17 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const out = await data.update('vouchers', id, { estado, decididoPor: actor.id, motivo: aprobar ? null : m });
       await audit({ actorId: actor.id, action: `voucher_${estado}`, entity: 'voucher', entityId: id, before: { estado: v.estado }, after: { estado } });
       return out;
+    },
+    /** Aprobar o rechazar varios a la vez. Cada uno pasa por las mismas reglas que uno solo. */
+    async decidirLote(actor, { ids, aprobar, motivo } = {}) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor', 'finanzas']), 'No tienes permiso para revisar vouchers.');
+      if (!Array.isArray(ids) || !ids.length || ids.length > 1000) invalido({ ids: 'Elige de 1 a 1,000 vouchers.' });
+      if (!aprobar && normalizeName(motivo).length < 3) throw new HttpError(422, 'Explica por qué se rechazan.', { motivo: 'Escribe el motivo del rechazo.' });
+      let hechos = 0; const errores = [];
+      for (const id of [...new Set(ids.map(String))]) {
+        try { await this.decidir(actor, id, Boolean(aprobar), motivo); hechos++; } catch (e) { errores.push({ id, error: e.message }); }
+      }
+      return { hechos, errores };
     },
     async anular(actor, id) {
       const v = await data.get('vouchers', id);
@@ -485,7 +506,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const dhash = input.adjunto && esDhash(input.fotoDhash) ? input.fotoDhash : null;
       if (Object.keys(e).length) invalido(e);
       const repetida = (huella || dhash) && buscarRepetida(await data.list('recetas'), { huella, dhash });
-      if (repetida) throw new HttpError(409, textoRepetida(repetida, 'receta'), { adjunto: 'Foto repetida.' });
+      if (repetida) throw new HttpError(409, textoRepetida(repetida, 'receta', actor.id), { adjunto: 'Foto repetida.' });
       const adjunto = await guardarAdjunto(files, actor, input.adjunto, 'receta');
       let pacienteNuevo = false;
       if (!paciente) {
@@ -651,7 +672,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
     fotos.forEach((f, indice) => {
       const huella = esHuella(f?.huella) ? f.huella : null; const dhash = esDhash(f?.dhash) ? f.dhash : null;
       const rep = (huella || dhash) && buscarRepetida(registros, { huella, dhash });
-      if (rep) repetidas.push({ indice, motivo: rep.motivo, fecha: rep.registro.fecha, texto: textoRepetida(rep, tipo === 'receta' ? 'receta' : 'voucher') });
+      if (rep) repetidas.push({ indice, motivo: rep.motivo, fecha: rep.registro.fecha, cargado: rep.registro.createdAt, texto: textoRepetida(rep, tipo === 'receta' ? 'receta' : 'voucher', actor.id) });
     });
     return { repetidas };
   }

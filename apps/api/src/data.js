@@ -9,7 +9,7 @@ export const COLECCIONES = {
   pedidos: { tabla: 'pedidos', campos: ['numero', 'farmaciaId', 'creadoPor', 'items', 'total', 'unidades', 'pago', 'comprobante', 'nota', 'estado', 'historial', 'vendedorId', 'provincia', 'municipio'], json: ['items', 'comprobante', 'historial'] },
   farmacias: { tabla: 'farmacias', campos: ['nombre', 'provincia', 'municipio', 'sector', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'fuente', 'estado', 'creadoPor'], json: [] },
   medicos: { tabla: 'medicos', campos: ['nombre', 'especialidad', 'centro', 'provincia', 'municipio', 'estado', 'creadoPor', 'telefono', 'direccion', 'redes', 'establecimientoId', 'lat', 'lng', 'placeId', 'fuente'], json: ['redes'] },
-  vouchers: { tabla: 'vouchers', campos: ['dependienteId', 'farmacia', 'referencia', 'fecha', 'periodo', 'items', 'total', 'estado', 'decididoPor', 'motivo', 'registradoPor', 'foto', 'fotoHuella', 'fotoDhash'], json: ['items', 'foto'] },
+  vouchers: { tabla: 'vouchers', campos: ['dependienteId', 'farmacia', 'referencia', 'fecha', 'periodo', 'items', 'total', 'estado', 'decididoPor', 'motivo', 'registradoPor', 'foto', 'fotoHuella', 'fotoDhash', 'medicoId', 'medico'], json: ['items', 'foto'] },
   cierres: { tabla: 'cierres_comision', campos: ['dependienteId', 'periodo', 'desde', 'hasta', 'ventas', 'porcentaje', 'comision', 'voucherIds', 'cerradoPor'], json: ['voucherIds'] },
   operativos: { tabla: 'operativos', campos: ['promotoraId', 'fecha', 'provincia', 'municipio', 'centro'], json: [] },
   recetas: { tabla: 'recetas', campos: ['promotoraId', 'operativoId', 'medicoId', 'fecha', 'provincia', 'municipio', 'items', 'adjunto', 'pacienteId', 'fotoHuella', 'fotoDhash'], json: ['items', 'adjunto'] },

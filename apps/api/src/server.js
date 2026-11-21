@@ -106,7 +106,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const vehiculos = createVehiculos({ fetchImpl: vehiculosFetch });
   const agregados = createVehiculosAgregados({ data, audit: (e) => store.addAudit(e) });
   const ventas = createVentas({ data, audit: (e) => store.addAudit(e), lector: lectorIA, territorio: t, hoy: () => hoyRD(now ? now() : new Date()) });
-  const medicos = createMedicos({ data, audit: (e) => store.addAudit(e), lector: lectorIA });
+  const medicos = createMedicos({ data, audit: (e) => store.addAudit(e), lector: lectorIA, users: store });
   const movimiento = createMovimiento({ data, users: store });
   const metas = createMetas({ data, users: store, audit: (e) => store.addAudit(e), hoy: () => hoyRD(now ? now() : new Date()) });
   const sugerencias = createSugerencias({ data, users: store, movimiento, metas, hoy: () => hoyRD(now ? now() : new Date()) });
@@ -325,6 +325,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     return [201, { item }];
   }, { limite: 7 * 1024 * 1024 });
   ruta('POST', '/api/fotos/verificar', async ({ me, body }) => c.verificarFotos(me, body ?? {}), { limite: 512 * 1024 });
+  ruta('POST', '/api/vouchers/decidir', async ({ me, body }) => c.vouchers.decidirLote(me, body ?? {}), { limite: 512 * 1024 });
   ruta('GET', '/api/vouchers/dependientes', async ({ me }) => ({ items: await c.vouchers.dependientesDeZona(me) }));
   ruta('GET', '/api/vouchers/porcentaje', async ({ me, q }) => ({ item: await c.vouchers.porcentaje(me, q.get('dependienteId')) }));
   ruta('POST', /^\/api\/vouchers\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p, body }) => {
