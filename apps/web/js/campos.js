@@ -9,7 +9,8 @@ export function formatoTelefono(valor) {
   return [d.slice(0, 3), d.slice(3, 6), d.slice(6, 10)].filter(Boolean).join('-');
 }
 export function activarTelefono(input) {
-  if (!input) return;
+  if (!input || input.dataset.telefonoActivo) return;
+  input.dataset.telefonoActivo = '1'; input.dataset.formato = 'telefono';
   input.setAttribute('maxlength', '12'); input.setAttribute('placeholder', '809-555-0000');
   input.addEventListener('input', () => {
     const antes = input.value; const pos = input.selectionStart ?? antes.length;

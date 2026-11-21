@@ -2,6 +2,7 @@
 // El registro (pestaña "Crear cuenta") lo maneja registro.js.
 import { apiBase } from './api.js';
 import { activarDesplegables } from './desplegable.js';
+import { activarNumeros } from './numeros.js';
 import './registro.js';
 
 const tabs = [...document.querySelectorAll('[role="tab"]')];
@@ -85,3 +86,4 @@ login.addEventListener('submit', async (e) => {
 });
 
 activarDesplegables();
+activarNumeros();

@@ -1,6 +1,7 @@
 // Panel de trabajo FERSUAZ. Muestra a cada rol solo lo suyo; el servidor vuelve a comprobar cada permiso.
 import { apiBase } from './api.js';
 import { activarDesplegables } from './desplegable.js';
+import { activarNumeros } from './numeros.js';
 
 // ---------------------------------------------------------------- utilidades
 const $ = (s, r = document) => r.querySelector(s);
@@ -1287,20 +1288,30 @@ function formularioVehiculo(pf, combs, globales, posicion) {
   const sAnio = h('select', { id: 'epa-anio' }, h('option', { value: '' }, 'Año'));
   const sMarca = h('select', { id: 'epa-marca', disabled: true }, h('option', { value: '' }, 'Marca'));
   const sModelo = h('select', { id: 'epa-modelo', disabled: true }, h('option', { value: '' }, 'Modelo'));
-  const sVersion = h('select', { id: 'epa-version', disabled: true }, h('option', { value: '' }, 'Versión (motor y transmisión)'));
+  const VACIA_VER = 'Elige motor y caja de cambios';
+  const sVersion = h('select', { id: 'epa-version', disabled: true }, h('option', { value: '' }, VACIA_VER));
   const lab = (id, t) => h('label', { for: id }, t);
   const epaNota = h('p', { class: 'hint', 'aria-live': 'polite' });
   const manualCaja = h('input', { type: 'checkbox', id: 'veh-manual', checked: Boolean(v.marca) && !v.epaId });
   const fMarca = campo('vehiculo.marca', 'Marca', { value: v.marca ?? '' }); const fModelo = campo('vehiculo.modelo', 'Modelo', { value: v.modelo ?? '' });
   const fAnio = campo('vehiculo.anio', 'Año', { type: 'number', min: 1980, max: Number(hoy().slice(0, 4)) + 1, value: v.anio ?? '', inputmode: 'numeric' });
-  const manual = h('div', { class: 'form-fila', hidden: !manualCaja.checked }, fMarca, fModelo, fAnio);
+  const manualRef = h('div'); const agHueco = h('div');
+  const manual = h('div', { hidden: !manualCaja.checked }, h('div', { class: 'form-fila' }, fMarca, fModelo, fAnio), manualRef);
   const fComb = campo('vehiculo.combustible', 'Combustible', { options: combs, value: v.combustible });
   const fRend = campo('vehiculo.rendimiento', 'Kilómetros por galón', { type: 'number', min: 1, step: 0.1, value: v.rendimiento ?? '', inputmode: 'decimal' });
-  const fPlaca = campo('vehiculo.placa', 'Placa', { value: v.placa ?? '' }, '(restringida)');
+  const fPlaca = campo('vehiculo.placa', 'Placa', { value: v.placa ?? '' }, '(opcional)');
   fRend.querySelector('input').addEventListener('input', () => { fuente = 'manual'; epaNota.textContent = 'Rendimiento escrito a mano.'; });
+  // Referencia automática de km por galón para lo escrito a mano (marca, modelo y año)
+  const refCaja = h('div', { class: 'referencia', 'aria-live': 'polite' });
+  const bRef = h('button', { type: 'button', class: 'btn-sec' }, 'Buscar referencia de km por galón');
+  bRef.addEventListener('click', () => buscarReferencia({ marca: fMarca.querySelector('input').value, modelo: fModelo.querySelector('input').value, anio: fAnio.querySelector('input').value }, bRef, refCaja,
+    (km, texto) => { fRend.querySelector('input').value = km; fuente = 'manual'; epaNota.textContent = `Rendimiento tomado de la referencia: ${texto}. Ajústalo si conoces el real.`; }));
+  manualRef.append(h('div', { class: 'acciones', style: 'margin-top:0' }, bRef), refCaja);
   const epa = h('div', { class: 'epa', hidden: manualCaja.checked },
     h('p', { class: 'hint' }, 'Elige año, marca, modelo y versión: el sistema completa los kilómetros por galón con el dato oficial de FuelEconomy.gov (EPA). Puedes ajustarlo al rendimiento real.'),
-    h('div', { class: 'epa-fila' }, h('div', { class: 'field' }, lab('epa-anio', 'Año'), sAnio), h('div', { class: 'field' }, lab('epa-marca', 'Marca'), sMarca), h('div', { class: 'field' }, lab('epa-modelo', 'Modelo'), sModelo), h('div', { class: 'field epa-version' }, lab('epa-version', 'Versión'), sVersion)));
+    h('div', { class: 'epa-fila' }, h('div', { class: 'field' }, lab('epa-anio', 'Año'), sAnio), h('div', { class: 'field' }, lab('epa-marca', 'Marca'), sMarca), h('div', { class: 'field' }, lab('epa-modelo', 'Modelo'), sModelo), h('div', { class: 'field epa-version' }, lab('epa-version', 'Versión'), sVersion)),
+    h('p', { class: 'hint epa-ayuda' }, '¿Qué es la versión? Es el motor y la caja de cambios de ese modelo (por ejemplo, "Automática de 6 velocidades, 4 cilindros, motor de 2.4 L"). Lo dice la matrícula o el manual. Si no lo sabes, elige la más común: la diferencia en km por galón suele ser pequeña.'),
+    agHueco);
   const llenar = (sel, items, vacio) => { sel.replaceChildren(h('option', { value: '' }, vacio), ...items.map((x) => (typeof x === 'string' ? h('option', { value: x }, x) : h('option', { value: x.id }, x.texto)))); sel.disabled = !items.length; };
   const fallo = (e) => { epaNota.textContent = `${e.message} Marca "No está en la lista" para escribirlo a mano.`; };
   let cargado = false;
@@ -1308,11 +1319,57 @@ function formularioVehiculo(pf, combs, globales, posicion) {
     if (cargado) return; cargado = true;
     try { llenar(sAnio, (await api('GET', '/api/vehiculos/anios')).items, 'Año'); if (v.anio && !manualCaja.checked) sAnio.value = String(v.anio); } catch (e) { fallo(e); }
   }
-  sAnio.addEventListener('change', async () => { llenar(sMarca, [], 'Marca'); llenar(sModelo, [], 'Modelo'); llenar(sVersion, [], 'Versión (motor y transmisión)'); if (!sAnio.value) return; try { llenar(sMarca, (await api('GET', `/api/vehiculos/marcas?anio=${sAnio.value}`)).items, 'Marca'); } catch (e) { fallo(e); } });
-  sMarca.addEventListener('change', async () => { llenar(sModelo, [], 'Modelo'); llenar(sVersion, [], 'Versión (motor y transmisión)'); if (!sMarca.value) return; try { llenar(sModelo, (await api('GET', `/api/vehiculos/modelos?anio=${sAnio.value}&marca=${encodeURIComponent(sMarca.value)}`)).items, 'Modelo'); } catch (e) { fallo(e); } });
+  sAnio.addEventListener('change', async () => { llenar(sMarca, [], 'Marca'); llenar(sModelo, [], 'Modelo'); llenar(sVersion, [], VACIA_VER); if (!sAnio.value) return; try { llenar(sMarca, (await api('GET', `/api/vehiculos/marcas?anio=${sAnio.value}`)).items, 'Marca'); } catch (e) { fallo(e); } });
+  let agregadosModelo = [];
+  async function cargarModelos(elegir) {
+    llenar(sModelo, [], 'Modelo'); llenar(sVersion, [], VACIA_VER); agregarCaja.hidden = true; if (!sMarca.value) return;
+    try {
+      const r = await api('GET', `/api/vehiculos/modelos?anio=${sAnio.value}&marca=${encodeURIComponent(sMarca.value)}`);
+      agregadosModelo = r.agregados ?? [];
+      llenar(sModelo, r.items, 'Modelo');
+      for (const a of agregadosModelo) sModelo.append(h('option', { value: `agregado:${a.id}` }, `${a.modelo}${a.version ? ` ${a.version}` : ''} (agregado)`));
+      sModelo.append(h('option', { value: '__agregar' }, '+ Agregar un modelo que no aparece'));
+      sModelo.disabled = false;
+      if (elegir) { sModelo.value = elegir; sModelo.dispatchEvent(new Event('change')); }
+    } catch (e) { fallo(e); }
+  }
+  sMarca.addEventListener('change', () => cargarModelos());
+  // Formulario para agregar un modelo (queda guardado para todos)
+  const agModelo = campo('ag-modelo', 'Modelo', { autocomplete: 'off', placeholder: 'Ejemplo: K5' });
+  const agVersion = campo('ag-version', 'Motor (opcional)', { autocomplete: 'off', placeholder: 'Ejemplo: 2.0 L automática' });
+  const agKm = campo('ag-km', 'Kilómetros por galón', { type: 'number', min: 1, step: 0.1, inputmode: 'decimal' });
+  const agRef = h('div', { class: 'referencia', 'aria-live': 'polite' });
+  const bAgRef = h('button', { type: 'button', class: 'btn-sec' }, 'Buscar referencia');
+  const bAg = h('button', { type: 'button', class: 'btn' }, 'Guardar modelo');
+  const agAviso = h('p', { class: 'aviso-ag', role: 'alert', hidden: true });
+  bAgRef.addEventListener('click', () => buscarReferencia({ marca: sMarca.value, modelo: agModelo.querySelector('input').value, anio: sAnio.value }, bAgRef, agRef, (km) => { agKm.querySelector('input').value = km; }));
+  bAg.addEventListener('click', async () => {
+    bAg.disabled = true; agAviso.hidden = true;
+    try {
+      const { item } = await api('POST', '/api/vehiculos/agregados', { anio: sAnio.value, marca: sMarca.value, modelo: agModelo.querySelector('input').value, version: agVersion.querySelector('input').value, kmPorGalon: agKm.querySelector('input').value, combustible: fComb.querySelector('select').value });
+      agModelo.querySelector('input').value = ''; agVersion.querySelector('input').value = ''; agKm.querySelector('input').value = ''; agRef.replaceChildren();
+      await cargarModelos(`agregado:${item.id}`);
+    } catch (e) { agAviso.hidden = false; agAviso.textContent = e.fields ? Object.values(e.fields).join(' ') : e.message; }
+    bAg.disabled = false;
+  });
+  const agregarCaja = h('div', { class: 'agregar-modelo', hidden: true },
+    h('h4', {}, 'Agregar un modelo que no aparece'),
+    h('p', { class: 'hint' }, 'Queda guardado para este año y marca, y lo verán todos al registrar otro vehículo igual.'),
+    h('div', { class: 'form-fila' }, agModelo, agVersion, agKm), h('div', { class: 'acciones' }, bAgRef, bAg), agRef, agAviso);
+  agHueco.append(agregarCaja);
   sModelo.addEventListener('change', async () => {
-    llenar(sVersion, [], 'Versión (motor y transmisión)'); if (!sModelo.value) return;
-    try { const vs = (await api('GET', `/api/vehiculos/versiones?anio=${sAnio.value}&marca=${encodeURIComponent(sMarca.value)}&modelo=${encodeURIComponent(sModelo.value)}`)).items; llenar(sVersion, vs, 'Versión (motor y transmisión)'); if (vs.length === 1) { sVersion.value = vs[0].id; sVersion.dispatchEvent(new Event('change')); } } catch (e) { fallo(e); }
+    llenar(sVersion, [], VACIA_VER); agregarCaja.hidden = sModelo.value !== '__agregar'; if (!sModelo.value) return;
+    if (sModelo.value === '__agregar') { sVersion.disabled = true; agModelo.querySelector('input').focus(); return; }
+    if (sModelo.value.startsWith('agregado:')) {
+      const a = agregadosModelo.find((x) => `agregado:${x.id}` === sModelo.value); if (!a) return;
+      sVersion.disabled = true; epaId = null; fuente = 'manual';
+      fRend.querySelector('input').value = a.kmPorGalon;
+      if (a.combustible && combs.some((c) => c.value === a.combustible)) fComb.querySelector('select').value = a.combustible;
+      fMarca.querySelector('input').value = a.marca; fModelo.querySelector('input').value = a.modelo; fAnio.querySelector('input').value = a.anio;
+      epaNota.textContent = `${a.marca} ${a.modelo} ${a.anio}: ${fmtN.format(a.kmPorGalon)} km por galón (modelo agregado por la gestión). Puedes ajustarlo.`;
+      return;
+    }
+    try { const vs = (await api('GET', `/api/vehiculos/versiones?anio=${sAnio.value}&marca=${encodeURIComponent(sMarca.value)}&modelo=${encodeURIComponent(sModelo.value)}`)).items; llenar(sVersion, vs, VACIA_VER); if (vs.length === 1) { sVersion.value = vs[0].id; sVersion.dispatchEvent(new Event('change')); } } catch (e) { fallo(e); }
   });
   sVersion.addEventListener('change', async () => {
     if (!sVersion.value) return;
@@ -1355,6 +1412,36 @@ function residenciaCampos(div, valor) {
   z.fp.querySelector('label').textContent = 'Provincia donde vive'; z.fm.querySelector('label').textContent = 'Municipio donde vive';
   z.sp.name = 'residencia.provincia'; z.sm.name = 'residencia.municipio';
   return z;
+}
+
+/**
+ * Busca una referencia oficial de km por galón (EPA, año más cercano) o un modelo ya agregado.
+ * Nunca inventa cifras: si no hay dato, lo dice. usar(km, texto) aplica el valor elegido.
+ */
+async function buscarReferencia({ marca, modelo, anio }, boton, caja, usar) {
+  if (!marca?.trim() || !modelo?.trim() || !/^\d{4}$/.test(String(anio).trim())) { caja.replaceChildren(h('p', { class: 'hint' }, 'Escribe la marca, el modelo y el año para buscar la referencia.')); return; }
+  const texto0 = boton.textContent; boton.disabled = true; boton.textContent = 'Buscando…';
+  caja.replaceChildren(h('p', { class: 'hint' }, 'Buscando el dato oficial del mismo modelo en años cercanos. Puede tardar unos segundos.'));
+  try {
+    const r = await api('GET', `/api/vehiculos/referencia?marca=${encodeURIComponent(marca.trim())}&modelo=${encodeURIComponent(modelo.trim())}&anio=${encodeURIComponent(String(anio).trim())}`);
+    const usarBtn = (km, txt) => h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: () => usar(km, txt) }, `Usar ${fmtN.format(km)}`);
+    const partes = [];
+    if (r.agregado) {
+      const txt = `${r.agregado.marca} ${r.agregado.modelo} ${r.agregado.anio}, agregado por la gestión`;
+      partes.push(h('div', { class: 'ref-fila' }, h('span', {}, `${txt}: `, h('strong', {}, `${fmtN.format(r.agregado.kmPorGalon)} km por galón`)), usarBtn(r.agregado.kmPorGalon, txt)));
+    }
+    if (r.epa) {
+      partes.push(h('p', { class: 'ref-titulo' }, `${r.epa.marca} ${r.epa.modelo} ${r.epa.anio}, dato oficial de FuelEconomy.gov${r.epa.mismoAnio ? '' : ` (el año más cercano con datos; tú buscaste ${anio})`}:`));
+      for (const v of r.epa.versiones) {
+        const txt = `${r.epa.marca} ${r.epa.modelo} ${r.epa.anio}, ${v.version}`;
+        partes.push(h('div', { class: 'ref-fila' }, h('span', {}, `${v.version}: `, h('strong', {}, `${fmtN.format(v.kmPorGalon)} km por galón`)), usarBtn(v.kmPorGalon, txt)));
+      }
+    }
+    if (!partes.length) partes.push(h('p', { class: 'hint' }, r.epaError ? `No pudimos consultar FuelEconomy.gov ahora (${r.epaError}). Escribe el rendimiento que conozcas.` : `No encontramos datos oficiales de ${marca} ${modelo} cerca de ${anio}. Escribe el rendimiento que conozcas (por ejemplo, el que marca el tablero o el manual).`));
+    else partes.push(h('p', { class: 'hint' }, 'Es una referencia: el rendimiento real cambia con el estado del vehículo y las vías. Con GLP suele rendir menos que con gasolina; ajústalo si conoces el real.'));
+    caja.replaceChildren(h('div', { class: 'ref-caja' }, ...partes));
+  } catch (e) { caja.replaceChildren(h('p', { class: 'hint' }, e.message)); }
+  boton.disabled = false; boton.textContent = texto0;
 }
 
 /** Provincias (y municipios opcionales) de una zona, como casillas. */
@@ -1891,3 +1978,4 @@ $('#salir').addEventListener('click', salir);
 })();
 
 activarDesplegables();
+activarNumeros();

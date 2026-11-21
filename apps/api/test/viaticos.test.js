@@ -13,14 +13,27 @@ const PG = process.env.TEST_DATABASE_URL;
 let pg;
 test.after(async () => { if (pg) await pg.pool.end(); });
 
+/** FuelEconomy.gov simulado (Ejemplo): el K5 solo existe desde 2021; en 2015 Kia tiene Optima y K900. */
+async function epaEjemplo(url) {
+  const u = new URL(url); const r = (o) => ({ ok: true, text: async () => JSON.stringify(o) });
+  const menu = (xs) => r({ menuItem: xs.map((x) => (typeof x === 'string' ? { text: x, value: x } : x)) });
+  const y = Number(u.searchParams.get('year'));
+  if (u.pathname.endsWith('/menu/year')) return menu(['2022', '2021', '2020', '2019', '2018', '2017', '2016', '2015']);
+  if (u.pathname.endsWith('/menu/make')) return menu(['Kia', 'Toyota']);
+  if (u.pathname.endsWith('/menu/model')) return menu(u.searchParams.get('make') === 'Kia' ? (y >= 2021 ? ['K5', 'K5 GT', 'Soul'] : ['K900', 'Optima', 'Soul']) : ['Corolla']);
+  if (u.pathname.endsWith('/menu/options')) return menu(u.searchParams.get('model') === 'K5' ? [{ text: 'Auto 8-spd, 4 cyl, 1.6 L, Turbo', value: '43000' }, { text: 'Auto (AV-S8), 4 cyl, 2.0 L, SIDI', value: '43001' }] : [{ text: 'Auto 6-spd, 4 cyl, 2.4 L', value: '35000' }]);
+  const id = u.pathname.split('/').pop();
+  return r({ id, year: '2021', make: 'Kia', model: 'K5', comb08: id === '43000' ? '31' : id === '43001' ? '34' : '28', fuelType1: 'Regular Gasoline' });
+}
+
 async function setup() {
   let store, data;
   if (PG) {
     pg ??= await PostgresStore.connect(PG);
-    await pg.pool.query('TRUNCATE cuentas_banco, hoteles, notificaciones, cronogramas, zonas_representante, establecimientos, presupuestos_viatico, jornadas, precios_combustible, perfiles_viatico, configuracion, inventario, recetas, operativos, cierres_comision, vouchers, medicos, farmacias, medicamentos, audit_logs, users CASCADE');
+    await pg.pool.query('TRUNCATE vehiculos_agregados, cuentas_banco, hoteles, notificaciones, cronogramas, zonas_representante, establecimientos, presupuestos_viatico, jornadas, precios_combustible, perfiles_viatico, configuracion, inventario, recetas, operativos, cierres_comision, vouchers, medicos, farmacias, medicamentos, audit_logs, users CASCADE');
     store = pg; data = new PgData(pg.pool);
   } else { store = new MemoryStore(); data = new MemoryData(); }
-  const server = createServer(createApp({ store, data, files: new MemoryFiles(), sessionSecret: SECRET, now: NOW })).listen(0);
+  const server = createServer(createApp({ store, data, files: new MemoryFiles(), sessionSecret: SECRET, now: NOW, vehiculosFetch: epaEjemplo })).listen(0);
   setup.data = data;
   const url = `http://127.0.0.1:${server.address().port}`;
   const call = async (method, path, body, token) => {
@@ -537,6 +550,33 @@ test('zonas: la misma posición no comparte territorio; posiciones distintas sí
     assert.equal(r.status, 422); assert.match(JSON.stringify(r.body), /ya cubre Espaillat \(Moca\)/);
     r = await call('POST', '/api/representantes', { ...base, posicion: 'Promotora' }, t.admin);
     assert.equal(r.status, 201, JSON.stringify(r.body));
+  } finally { server.close(); }
+});
+
+test('vehículos: modelo agregado (K5 2015) queda guardado y referencia oficial del año más cercano', async () => {
+  const { server, call, t } = await setup();
+  try {
+    let m = (await call('GET', '/api/vehiculos/modelos?anio=2015&marca=Kia', null, t.admin)).body;
+    assert.ok(!m.items.includes('K5')); assert.deepEqual(m.agregados, []);
+    // Referencia: no hay K5 en 2015; el más cercano con datos es 2021
+    const ref = (await call('GET', '/api/vehiculos/referencia?marca=kia&modelo=k-5&anio=2015', null, t.admin)).body;
+    assert.equal(ref.epa.anio, 2021); assert.equal(ref.epa.modelo, 'K5'); assert.equal(ref.epa.mismoAnio, false);
+    assert.deepEqual(ref.epa.versiones.map((v) => v.kmPorGalon), [49.9, 54.7]);
+    assert.equal(ref.epa.versiones[0].version, 'Automática de 8 velocidades, 4 cilindros, motor de 1.6 L, turbo');
+    assert.equal((await call('GET', '/api/vehiculos/referencia?marca=Kia&modelo=Inexistente&anio=2015', null, t.admin)).body.epa, null, 'sin datos, no inventa');
+    assert.equal((await call('GET', '/api/vehiculos/referencia?marca=Kia&modelo=K5&anio=2015', null, t.rep)).status, 403);
+    // Agregar el K5 2015: validación, guardado, sin duplicados
+    assert.equal((await call('POST', '/api/vehiculos/agregados', { anio: 2015, marca: 'Kia', modelo: '', kmPorGalon: '' }, t.admin)).status, 422);
+    const a = await call('POST', '/api/vehiculos/agregados', { anio: 2015, marca: 'Kia', modelo: 'K5', version: '2.0 L automática', kmPorGalon: '45.25', combustible: 'glp' }, t.admin);
+    assert.equal(a.status, 201, JSON.stringify(a.body)); assert.equal(a.body.item.kmPorGalon, 45.3);
+    assert.equal((await call('POST', '/api/vehiculos/agregados', { anio: 2015, marca: 'kia', modelo: 'k5', version: '2.0 L Automática', kmPorGalon: 40 }, t.gerente)).status, 409);
+    m = (await call('GET', '/api/vehiculos/modelos?anio=2015&marca=Kia', null, t.admin)).body;
+    assert.equal(m.agregados[0].modelo, 'K5'); assert.equal(m.agregados[0].kmPorGalon, 45.3); assert.equal(m.agregados[0].combustible, 'glp');
+    // La próxima referencia también encuentra el agregado
+    assert.equal((await call('GET', '/api/vehiculos/referencia?marca=Kia&modelo=K5&anio=2016', null, t.admin)).body.agregado.kmPorGalon, 45.3);
+    // Versiones traducidas
+    const vs = (await call('GET', '/api/vehiculos/versiones?anio=2021&marca=Kia&modelo=K5', null, t.admin)).body.items;
+    assert.equal(vs[1].texto, 'Automática CVT (sin cambios fijos), 4 cilindros, motor de 2.0 L'); assert.equal(vs[1].original, 'Auto (AV-S8), 4 cyl, 2.0 L, SIDI');
   } finally { server.close(); }
 });
 

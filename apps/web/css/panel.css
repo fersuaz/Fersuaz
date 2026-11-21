@@ -523,3 +523,14 @@ a.btn, a.btn-sec { display: inline-flex; align-items: center; justify-content: c
 .prov-muns-lista label:has(input:disabled) { color: var(--texto-2); }
 .mun-ocupado { margin-left: auto; padding-left: .5rem; font-size: .78rem; color: var(--alerta); }
 .prov-muns-lista label { display: flex; align-items: center; gap: .45rem; }
+
+/* Vehículo: modelo agregado y referencia de km por galón */
+.agregar-modelo { margin-top: 1rem; padding: 1rem 1.1rem; border: 1.5px dashed var(--linea); border-radius: 14px; background: #fff; }
+.agregar-modelo h4 { margin: 0 0 .25rem; font: 600 1rem var(--serif); color: var(--marino); }
+.epa-ayuda { margin-top: .5rem; }
+.ref-caja { display: grid; gap: .45rem; margin-top: .75rem; padding: .9rem 1rem; border-radius: 12px; background: var(--panel); }
+.ref-titulo { margin: 0; font-weight: 600; color: var(--tinta); }
+.ref-fila { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; padding: .4rem 0; border-top: 1px solid var(--linea); }
+.ref-fila:first-child { border-top: 0; }
+.ref-caja .hint { margin: .25rem 0 0; }
+.aviso-ag { margin: .6rem 0 0; color: var(--alerta); font-size: .92rem; }
