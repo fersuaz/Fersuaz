@@ -321,6 +321,10 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/cronogramas', async ({ me, q }) => ({ items: await v.listarCronogramas(me, { representanteId: q.get('representanteId') || undefined, mes: q.get('mes') || undefined }) }));
   ruta('POST', '/api/cronogramas', async ({ me, body }) => [201, { items: await v.crearCronograma(me, body) }]);
   ruta('POST', '/api/cronogramas/propuesta', async ({ me, body }) => ({ item: await v.proponerCronograma(me, body ?? {}) }));
+  ruta('POST', '/api/cronogramas/copiar-mes-anterior', async ({ me, body }) => ({ item: await v.copiarMesAnterior(me, body ?? {}) }));
+  ruta('POST', /^\/api\/cronogramas\/([\w-]+)\/hotel$/, async ({ me, p, body }) => ({ item: await v.hotelDeCronograma(me, p[1], body ?? {}) }));
+  ruta('GET', '/api/viaticos/hotel-referencia', async ({ me }) => ({ item: await v.verReferenciaHotel(me) }));
+  ruta('POST', '/api/viaticos/hotel-referencia', async ({ me, body }) => ({ item: await v.guardarReferenciaHotel(me, body ?? {}) }));
   ruta('POST', '/api/cronogramas/lote', async ({ me, body }) => [201, { items: await v.crearCronogramaLote(me, body ?? {}) }]);
   // Hoteles (hospedaje): Google aporta los datos; la administración confirma precio y requisitos
   ruta('GET', '/api/hoteles/requisitos', () => ({ items: Object.entries(REQUISITOS).map(([value, label]) => ({ value, label })) }));

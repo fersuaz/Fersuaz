@@ -8,7 +8,8 @@ import { esFechaISO, hoyRD } from './periodos.js';
 import { normalizeName } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
 import { dentroDeZona } from './territorio.js';
-import { proponer, diasLaborables } from './propuesta-cronograma.js';
+import { proponer, diasLaborables, copiarFechas } from './propuesta-cronograma.js';
+import { elegirHotel } from './hoteles.js';
 
 const COMBUSTIBLES = ['gasolina_premium', 'gasolina_regular', 'gasoil_optimo', 'gasoil_regular', 'glp', 'hibrido', 'electrico'];
 export const COMBUSTIBLE_LABEL = {
@@ -26,6 +27,23 @@ const permitir = (c, m = 'No tienes permiso para esta acción.') => { if (!c) th
 const invalido = (f) => { throw new HttpError(422, 'Revisa los campos marcados.', f); };
 const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const num = (v) => (v === '' || v == null ? null : Number(v));
+
+/**
+ * Precio de una noche para un día del cronograma marcado "duerme fuera":
+ * 1) el hotel elegido por la gerencia; 2) el hotel verificado más económico del municipio o provincia;
+ * 3) el precio de referencia de la provincia; 4) el precio de referencia general. Si no hay ninguno, `precio` es null.
+ */
+export function precioHotelPlan({ hoteles = [], referencia = {}, provincia, municipio, hotelId }) {
+  const h = hotelId ? hoteles.find((x) => x.id === hotelId && x.estado !== 'inactivo' && Number(x.precioNoche) > 0) : null;
+  if (h) return { precio: r2(Number(h.precioNoche)), hotel: h.nombre, hotelId: h.id, fuente: 'hotel' };
+  const r = provincia ? elegirHotel(hoteles, provincia, municipio) : null;
+  if (r) return { precio: r2(Number(r.hotel.precioNoche)), hotel: r.hotel.nombre, hotelId: r.hotel.id, fuente: 'verificado' };
+  const p = Number(referencia?.porProvincia?.[provincia]);
+  if (p > 0) return { precio: r2(p), hotel: null, hotelId: null, fuente: 'referencia-provincia' };
+  const g = Number(referencia?.global);
+  if (g > 0) return { precio: r2(g), hotel: null, hotelId: null, fuente: 'referencia-global' };
+  return { precio: null, hotel: null, hotelId: null, fuente: null };
+}
 
 export function createViaticos({ data, users, files, audit, mapas, notificar, notificarRoles, hoteles, now = () => new Date() }) {
   const hoy = () => hoyRD(now());
@@ -230,12 +248,19 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     }
     const ya = (await data.list('cronogramas', { representanteId: rep.id })).filter((c) => c.estado === 'aprobado' && fechas.includes(c.fecha)).map((c) => c.fecha);
     if (ya.length) throw new HttpError(409, `Ya hay cronograma aprobado para: ${ya.join(', ')}. Anúlalo primero si quieres cambiarlo.`, { fechas: 'Hay fechas ya programadas.' });
-    return { rep, fechas, lugares, nota: normalizeName(input.nota) || null };
+    const duermeFuera = input.duermeFuera === true;
+    let hotelId = null;
+    if (duermeFuera && input.hotelId) {
+      const h = await data.get('hoteles', String(input.hotelId));
+      if (!h || h.estado === 'inactivo' || !(Number(h.precioNoche) > 0)) invalido({ hotelId: 'Ese hotel no está disponible o no tiene precio.' });
+      hotelId = h.id;
+    }
+    return { rep, fechas, lugares, nota: normalizeName(input.nota) || null, duermeFuera, hotelId };
   }
   async function crearCronograma(actor, input) {
-    const { rep, fechas, lugares, nota } = await prepararCronograma(actor, input);
+    const { rep, fechas, lugares, nota, duermeFuera, hotelId } = await prepararCronograma(actor, input);
     const creados = [];
-    for (const fecha of fechas) creados.push(await data.insert('cronogramas', { representanteId: rep.id, fecha, lugares, nota, estado: 'aprobado', creadoPor: actor.id }));
+    for (const fecha of fechas) creados.push(await data.insert('cronogramas', { representanteId: rep.id, fecha, lugares, nota, estado: 'aprobado', creadoPor: actor.id, duermeFuera, hotelId }));
     await audit({ actorId: actor.id, action: 'cronograma_aprobado', entity: 'user', entityId: rep.id, after: { fechas, lugares: lugares.map((l) => l.lugar) } });
     await notificar?.(rep.id, { tipo: 'cronograma', titulo: 'Nuevo cronograma', texto: `Tienes ${fechas.length} día(s) programado(s) desde el ${fechas[0]}.`, enlace: '#jornadas' });
     return creados;
@@ -247,9 +272,9 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     const fechas = dias.map((d) => String(d.fecha));
     if (new Set(fechas).size !== fechas.length) invalido({ dias: 'Hay días repetidos.' });
     const listos = [];
-    for (const d of dias) listos.push(await prepararCronograma(actor, { representanteId, fechas: [d.fecha], lugares: d.lugares, nota }));
+    for (const d of dias) listos.push(await prepararCronograma(actor, { representanteId, fechas: [d.fecha], lugares: d.lugares, nota, duermeFuera: d.duermeFuera === true, hotelId: d.hotelId }));
     const rep = listos[0].rep; const creados = [];
-    for (const x of listos) creados.push(await data.insert('cronogramas', { representanteId: rep.id, fecha: x.fechas[0], lugares: x.lugares, nota: x.nota, estado: 'aprobado', creadoPor: actor.id }));
+    for (const x of listos) creados.push(await data.insert('cronogramas', { representanteId: rep.id, fecha: x.fechas[0], lugares: x.lugares, nota: x.nota, estado: 'aprobado', creadoPor: actor.id, duermeFuera: x.duermeFuera, hotelId: x.hotelId }));
     await audit({ actorId: actor.id, action: 'cronograma_aprobado', entity: 'user', entityId: rep.id, after: { fechas: fechas.sort(), lugares: listos.reduce((n, x) => n + x.lugares.length, 0), origen: 'propuesta' } });
     await notificar?.(rep.id, { tipo: 'cronograma', titulo: 'Nuevo cronograma', texto: `Tienes ${creados.length} día(s) programado(s) desde el ${fechas.sort()[0]}.`, enlace: '#jornadas' });
     return creados;
@@ -290,6 +315,69 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       resumen: { lugares: lugares.length, yaProgramados: programados.size, diasLibres: fechas.length, diasSemana: semana ?? [1, 2, 3, 4, 5, ...(sabados === true || sabados === 'true' ? [6] : [])], feriados: libresQuitados, desde: hoy(), diasPropuestos: r.dias.length, sinUbicacion: lugares.filter((l) => l.lat == null).length },
       sinResidencia: !perfil,
     };
+  }
+  /**
+   * Propuesta copiada del mes anterior: mismos lugares y mismas noches fuera, en el mismo día de la semana
+   * (2.º martes → 2.º martes). No guarda nada: se revisa y se aprueba con el lote, igual que la propuesta.
+   */
+  async function copiarMesAnterior(actor, { representanteId, mes }) {
+    permitir(rol(actor, ['administrador']), 'Solo el administrador crea cronogramas.');
+    const rep = await users.findUserById(String(representanteId ?? ''));
+    if (!rep || rep.role !== 'representante' || rep.status !== 'activo') throw new HttpError(404, 'El representante no existe o no está activo.');
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(mes)) || mes < hoy().slice(0, 7)) invalido({ mes: 'Elige el mes en curso o uno futuro.' });
+    const [y, m] = mes.split('-').map(Number);
+    const anterior = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+    const todos = (await data.list('cronogramas', { representanteId: rep.id })).filter((c) => c.estado === 'aprobado');
+    const origen = todos.filter((c) => c.fecha.startsWith(anterior)).sort((a, b) => a.fecha.localeCompare(b.fecha));
+    if (!origen.length) throw new HttpError(409, `${rep.fullName} no tiene cronograma aprobado en ${anterior}. Usa la propuesta automática.`);
+    const ocupadas = new Set(todos.filter((c) => c.fecha.startsWith(mes)).map((c) => c.fecha));
+    const { mapa, sinDia } = copiarFechas(mes, origen.map((c) => c.fecha));
+    const desde = hoy(); const dias = []; const omitidos = sinDia.map((f) => ({ desde: f, razon: 'Ese día no existe en el mes (ej. un 5.º lunes).' }));
+    for (const { desde: f, fecha } of mapa) {
+      const c = origen.find((x) => x.fecha === f);
+      if (fecha < desde) { omitidos.push({ desde: f, fecha, razon: 'La fecha ya pasó.' }); continue; }
+      if (ocupadas.has(fecha)) { omitidos.push({ desde: f, fecha, razon: 'Ya tiene cronograma ese día.' }); continue; }
+      const lugares = []; const quitados = [];
+      for (const l of c.lugares) { const x = await lugarDe(l); if (x) lugares.push(x); else quitados.push(l.lugar); }
+      if (!lugares.length) { omitidos.push({ desde: f, fecha, razon: 'Sus lugares ya no están activos.' }); continue; }
+      dias.push({ fecha, desde: f, lugares, duermeFuera: c.duermeFuera === true, hotelId: c.hotelId ?? null, quitados });
+    }
+    return { representanteId: rep.id, mes, anterior, dias, omitidos, resumen: { origen: origen.length, copiados: dias.length, nochesFuera: dias.filter((d) => d.duermeFuera).length } };
+  }
+  /** Marca o desmarca la noche fuera de un día ya aprobado (y opcionalmente el hotel). */
+  async function hotelDeCronograma(actor, id, { duermeFuera, hotelId } = {}) {
+    permitir(rol(actor, ['administrador', 'gerencia']), 'Solo la gerencia programa las noches fuera.');
+    const c = await data.get('cronogramas', id);
+    if (!c || c.estado !== 'aprobado') throw new HttpError(404, 'Ese día del cronograma no existe.');
+    const fuera = duermeFuera === true; let hid = null;
+    if (fuera && hotelId) {
+      const h = await data.get('hoteles', String(hotelId));
+      if (!h || h.estado === 'inactivo' || !(Number(h.precioNoche) > 0)) invalido({ hotelId: 'Ese hotel no está disponible o no tiene precio.' });
+      hid = h.id;
+    }
+    const out = await data.update('cronogramas', id, { duermeFuera: fuera, hotelId: hid });
+    await audit({ actorId: actor.id, action: 'cronograma_noche_fuera', entity: 'cronograma', entityId: id, before: { duermeFuera: c.duermeFuera ?? false, hotelId: c.hotelId ?? null }, after: { duermeFuera: fuera, hotelId: hid } });
+    return out;
+  }
+  async function referenciaHotel() { return (await data.list('configuracion', { clave: 'hotel_referencia' }))[0]?.valor ?? { global: null, porProvincia: {} }; }
+  async function verReferenciaHotel(actor) { permitir(rol(actor, ['administrador', 'gerencia', 'finanzas'])); return referenciaHotel(); }
+  async function guardarReferenciaHotel(actor, input = {}) {
+    permitir(rol(actor, ['administrador', 'gerencia']), 'Solo la gerencia fija el precio de referencia de hotel.');
+    const e = {}; const porProvincia = {};
+    const g = input.global === '' || input.global == null ? null : num(input.global);
+    if (g != null && (!Number.isFinite(g) || g <= 0 || g > 100000)) e.global = 'Escribe un precio por noche válido.';
+    for (const [p, v] of Object.entries(input.porProvincia ?? {})) {
+      if (v === '' || v == null) continue;
+      const n = num(v);
+      if (!Number.isFinite(n) || n <= 0 || n > 100000) { e[`porProvincia.${p}`] = `Precio no válido para ${p}.`; continue; }
+      porProvincia[p] = r2(n);
+    }
+    if (Object.keys(e).length) invalido(e);
+    const valor = { global: g == null ? null : r2(g), porProvincia };
+    const [c] = await data.list('configuracion', { clave: 'hotel_referencia' });
+    if (c) await data.update('configuracion', c.id, { valor, actualizadoPor: actor.id }); else await data.insert('configuracion', { clave: 'hotel_referencia', valor, actualizadoPor: actor.id });
+    await audit({ actorId: actor.id, action: 'hotel_referencia', entity: 'configuracion', entityId: 'hotel_referencia', before: c?.valor ?? null, after: valor });
+    return valor;
   }
   async function listarCronogramas(actor, { representanteId, mes } = {}) {
     const id = esRep(actor) ? actor.id : representanteId;
@@ -522,16 +610,26 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       peajes: j.peajes || 0, estacionamiento: j.estacionamiento || 0, otros: j.otros || 0, paradas: j.paradas ?? [], lugares: (j.paradas ?? []).length }));
     const errores = new Set();
     const necesitaKm = perfil.vehiculo?.propiedad !== 'ninguno';
+    const fuera = crons.filter((c) => c.duermeFuera === true); const sinHotel = new Set();
+    const hotelesTodos = fuera.length ? await data.list('hoteles') : [];
+    const referencia = fuera.length ? await referenciaHotel() : null;
+    const hotelPlan = (c) => {
+      if (c.duermeFuera !== true) return null;
+      const fin = c.lugares?.at(-1) ?? {};
+      const p = precioHotelPlan({ hoteles: hotelesTodos, referencia, provincia: fin.provincia, municipio: fin.municipio, hotelId: c.hotelId });
+      if (p.precio == null) { sinHotel.add(`Noche fuera del ${c.fecha} en ${fin.municipio ?? fin.provincia}: no hay hotel verificado ni precio de referencia. Ponlo en Hoteles → Precio de referencia.`); return null; }
+      return { estado: 'aprobado', plan: true, noches: 1, tarifaNoche: p.precio, cargos: 0, hotel: p.hotel, hotelId: p.hotelId, fuente: p.fuente, municipio: fin.municipio ?? null, provincia: fin.provincia ?? null };
+    };
     for (let i = 0; i < crons.length; i += 4) { // de 4 en 4 para no saturar el proveedor de mapas
       const lote = crons.slice(i, i + 4);
       const kms = necesitaKm ? await Promise.all(lote.map((c) => kmDeCronograma(c, perfil))) : lote.map(() => ({ km: 0 }));
       lote.forEach((c, k) => {
         if (kms[k].error) errores.add(kms[k].error);
-        dias.push({ fecha: c.fecha, origen: 'cronograma', km: kms[k].km ?? null, kmFuente: kms[k].km != null ? 'google' : null, conAlimentacion: true, hospedaje: null,
+        dias.push({ fecha: c.fecha, origen: 'cronograma', km: kms[k].km ?? null, kmFuente: kms[k].km != null ? 'google' : null, conAlimentacion: true, hospedaje: hotelPlan(c),
           peajes: 0, estacionamiento: 0, otros: 0, paradas: c.lugares ?? [], lugares: (c.lugares ?? []).length });
       });
     }
-    return { dias: dias.sort((a, b) => a.fecha.localeCompare(b.fecha)), errores: [...errores] };
+    return { dias: dias.sort((a, b) => a.fecha.localeCompare(b.fecha)), errores: [...errores], sinHotel: [...sinHotel] };
   }
   /** Agrupa los días por semana y suma cada partida (el combustible, por precio vigente dentro de la semana). */
   async function porSemana(mes, dias, { costoCombustible, comidaDia }) {
@@ -554,7 +652,8 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     const faltan = [];
     const perfil = await perfilDe(repId);
     if (!perfil) return { faltan: ['El perfil de viático (vehículo, residencia y tarifa de comida) no está configurado.'] };
-    const { dias, errores } = await diasDelMes(repId, mes, perfil);
+    const { dias, errores, sinHotel } = await diasDelMes(repId, mes, perfil);
+    faltan.push(...sinHotel);
     if (!dias.length) return { faltan: ['No hay días aprobados en el cronograma ni jornadas en ese mes.'] };
     const v = perfil.vehiculo;
     if (v.propiedad === 'ninguno') return calcularPublico(repId, perfil, mes, dias, faltan);
@@ -623,7 +722,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
         galones, rendimiento: v.rendimiento ?? null, combustible: v.combustible, preciosUsados, diasAlimentacion: diasComida, tarifaAlimentacion: comidaDentro, comidaDentro, comidaFuera, diasComidaDentro: cm.dentro, diasComidaFuera: cm.fuera, comidaFuente: fuentesComida, posicion: rep?.position ?? null,
         reembolsoPorKm: usaReembolso ? perfil.reembolsoPorKm : null, hospedajes: hoteles.length,
         combustibleCalculado, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
-        semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares })),
+        semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares, ...(d.hospedaje?.plan ? { noche: { precio: d.hospedaje.tarifaNoche, hotel: d.hospedaje.hotel, fuente: d.hospedaje.fuente, municipio: d.hospedaje.municipio } } : {}) })),
       },
       avisos: topado.topado ? [`El combustible calculado (RD$${combustibleCalculado.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [],
     };
@@ -667,7 +766,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
         posicion: rep?.position ?? null, dentroSegun: conZona ? 'zona' : 'residencia',
         diasAlimentacion: r.diasDentro + r.diasFuera, tarifaAlimentacion: null, reembolsoPorKm: null, hospedajes: hoteles.length,
         combustibleCalculado: r.transporte, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
-        semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares })),
+        semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares, ...(d.hospedaje?.plan ? { noche: { precio: d.hospedaje.tarifaNoche, hotel: d.hospedaje.hotel, fuente: d.hospedaje.fuente, municipio: d.hospedaje.municipio } } : {}) })),
       },
       avisos: [...avisosZona, ...(topado.topado ? [`El transporte calculado (RD$${r.transporte.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [])],
     };
@@ -845,7 +944,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     crearJornada, actualizarJornada, listarJornadas, calcularKm,
     crearCronograma, listarCronogramas, anularCronograma,
     vistaPreviaRuta: async (actor, id) => { permitir(esRep(actor)); const r = await rutaDeCronograma(actor, id); return { fecha: r.cronograma.fecha, paradas: r.paradas, km: r.km, minutos: r.minutos ?? null, kmFuente: r.kmFuente, optimizado: r.optimizado }; }, mapasActivo: () => Boolean(mapas?.activo),
-    crearCronogramaLote, proponerCronograma, verTopeGlobal, guardarTopeGlobal, prepararPerfil, verTarifasPublico, guardarTarifasPublico,
+    crearCronogramaLote, proponerCronograma, copiarMesAnterior, hotelDeCronograma, verReferenciaHotel, guardarReferenciaHotel, verTopeGlobal, guardarTopeGlobal, prepararPerfil, verTarifasPublico, guardarTarifasPublico,
     verPresupuesto, solicitar, asignarPresupuesto, decidirPresupuesto, desembolsar, reportarGasto, revisarGasto, liquidar, consolidado, presupuestoPorId,
   };
 }
