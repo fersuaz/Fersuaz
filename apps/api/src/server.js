@@ -267,6 +267,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', '/api/territorio/establecimientos', async ({ me, body }) => [201, { item: await t.crearEstablecimiento(me, body) }]);
   ruta('POST', /^\/api\/territorio\/establecimientos\/([\w-]+)\/validar$/, async ({ me, p }) => ({ item: await t.validarEstablecimiento(me, p[1]) }));
   ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p }) => ({ item: await t.verZona(me, p[1]) }));
+  ruta('GET', '/api/territorio/zonas-ocupadas', async ({ me, q }) => ({ items: await t.zonasOcupadas(me, q.get('posicion'), q.get('excluir') || null) }));
   ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await t.asignarZona(me, p[1], body ?? {}) }));
   ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)\/lugares$/, async ({ me, p }) => t.lugaresDeZona(me, p[1]));
   ruta('GET', '/api/territorio/preregistros', async ({ me }) => ({ items: await t.listarPreregistros(me) }));

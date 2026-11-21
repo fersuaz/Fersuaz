@@ -1279,7 +1279,7 @@ function formularioVehiculo(pf, combs, globales, posicion) {
   let epaId = v.epaId ?? null; let fuente = v.rendimientoFuente ?? (v.epaId ? 'epa' : 'manual');
   const radio = (valor, texto, detalle) => h('label', { class: 'opcion-tarjeta' }, h('input', { type: 'radio', name: 'tieneVehiculo', value: valor, checked: (valor === 'si') === tiene }), h('span', {}, h('strong', {}, texto), h('small', {}, detalle)));
   const eleccion = h('div', { class: 'opciones-tarjeta', role: 'radiogroup', 'aria-label': '¿Tiene vehículo?' },
-    radio('si', 'Tiene vehículo', 'Se calcula el combustible por los km del cronograma.'), radio('no', 'No tiene vehículo', 'Transporte público: transporte y comida por día, dentro o fuera de su municipio.'));
+    radio('si', 'Tiene vehículo', 'Se calcula el combustible por los km del cronograma.'), radio('no', 'No tiene vehículo', 'Transporte público: transporte y comida por día, dentro o fuera de su zona.'));
 
   // --- con vehículo
   const fProp = campo('vehiculo.propiedad', 'Propiedad', { options: [{ value: 'asignado', label: 'Asignado por FERSUAZ' }, { value: 'propio', label: 'Propio' }], value: v.propiedad && v.propiedad !== 'ninguno' ? v.propiedad : 'asignado' });
@@ -1357,12 +1357,64 @@ function residenciaCampos(div, valor) {
   return z;
 }
 
+/** Provincias (y municipios opcionales) de una zona, como casillas. */
+function filasZona(div, item) {
+  const marcadas = new Set(item?.provincias ?? []);
+  const resumenMun = (n) => (n ? `Solo ${n} municipio(s)` : 'Toda la provincia (elegir municipios)');
+  return div.provincias.map((p) => {
+    const elegidos = new Set(item?.municipios?.[p] ?? []);
+    const muns = h('details', { class: 'prov-muns', hidden: !marcadas.has(p), open: elegidos.size > 0 },
+      h('summary', {}, resumenMun(elegidos.size)),
+      h('div', { class: 'prov-muns-lista' }, div.municipios[p].map((m) => h('label', {}, h('input', { type: 'checkbox', name: `mun:${p}`, value: m, checked: elegidos.has(m) }), h('span', {}, m)))));
+    muns.addEventListener('change', () => { muns.querySelector('summary').textContent = resumenMun(muns.querySelectorAll('input:checked').length); });
+    const caja = h('input', { type: 'checkbox', name: 'prov', value: p, checked: marcadas.has(p), onchange: (e) => { muns.hidden = !e.target.checked; if (e.target.checked && muns.dataset.parcial) muns.open = true; } });
+    return h('div', { class: 'prov-item', dataset: { prov: p } }, h('label', {}, caja, h('span', {}, p)), h('small', { class: 'ocupada', hidden: true }), muns);
+  });
+}
+const zonaDeForm = (f) => {
+  const provincias = [...f.querySelectorAll('[name=prov]:checked')].map((x) => x.value);
+  const municipios = Object.fromEntries(provincias.map((p) => [p, [...f.querySelectorAll(`[name="mun:${p}"]:checked`)].map((x) => x.value)]).filter(([, ms]) => ms.length));
+  return { provincias, municipios };
+};
+/**
+ * Marca el territorio que ya cubre otro representante de la misma posición (no se puede repetir).
+ * Con otra posición sí se puede compartir, por eso se vuelve a pintar al cambiar la posición.
+ */
+async function marcarOcupadas(cont, posicion, excluirId) {
+  cont.querySelectorAll('.prov-item').forEach((it) => {
+    const n = it.querySelector('.ocupada'); n.hidden = true; n.textContent = ''; it.classList.remove('prov-ocupada'); delete it.querySelector('.prov-muns').dataset.parcial;
+    it.querySelectorAll('input').forEach((x) => { if (x.dataset.bloqueada) { x.disabled = false; delete x.dataset.bloqueada; } });
+    it.querySelectorAll('.mun-ocupado').forEach((x) => x.remove());
+  });
+  if (!posicion) return;
+  let items = [];
+  try { items = (await api('GET', `/api/territorio/zonas-ocupadas?posicion=${encodeURIComponent(posicion)}${excluirId ? `&excluir=${excluirId}` : ''}`)).items; } catch { return; }
+  const bloquear = (x) => { if (!x.checked) { x.disabled = true; x.dataset.bloqueada = '1'; } };
+  for (const z of items) for (const p of z.provincias) {
+    const it = cont.querySelector(`.prov-item[data-prov="${CSS.escape(p)}"]`); if (!it) continue;
+    const n = it.querySelector('.ocupada'); const muns = z.municipios?.[p];
+    const txt = muns?.length ? `${z.representante} cubre ${muns.join(', ')}` : `Ya la cubre ${z.representante}`;
+    n.textContent = n.textContent ? `${n.textContent}. ${txt}` : txt; n.hidden = false;
+    if (!muns?.length) { it.classList.add('prov-ocupada'); bloquear(it.querySelector('[name=prov]')); it.querySelectorAll('[name^="mun:"]').forEach(bloquear); continue; }
+    it.querySelector('.prov-muns').dataset.parcial = '1';
+    for (const m of muns) {
+      const x = it.querySelector(`[name="mun:${CSS.escape(p)}"][value="${CSS.escape(m)}"]`); if (!x) continue;
+      bloquear(x); x.closest('label').append(h('small', { class: 'mun-ocupado' }, z.representante));
+    }
+  }
+  // Si toda la provincia quedó repartida, no se puede elegir.
+  cont.querySelectorAll('.prov-item').forEach((it) => {
+    const ms = [...it.querySelectorAll('[name^="mun:"]')];
+    if (ms.length && ms.every((x) => x.dataset.bloqueada)) { it.classList.add('prov-ocupada'); bloquear(it.querySelector('[name=prov]')); }
+  });
+}
+
 /** Alta de representante por la administración: crea usuario y clave temporal, zona, residencia y vehículo. */
 async function altaRepresentante(div) {
   const [{ items: combs }, { item: globales }] = await Promise.all([api('GET', '/api/viaticos/combustibles'), api('GET', '/api/viaticos/tarifas-publico')]);
   const veh = formularioVehiculo(null, combs, globales);
   const res = residenciaCampos(div, null);
-  const provs = h('div', { class: 'provincias provincias-zona' }, div.provincias.map((p) => h('label', {}, h('input', { type: 'checkbox', name: 'prov', value: p }), p)));
+  const provs = h('div', { class: 'provincias provincias-zona' }, filasZona(div, null));
   const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar representante');
   const salida = h('div', { 'aria-live': 'polite' });
   const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo representante'),
@@ -1371,17 +1423,18 @@ async function altaRepresentante(div) {
       campo('posicion', 'Posición', { options: ['Visitador', 'PVC', 'Vendedor', 'Promotora'].map((x) => ({ value: x, label: x })), placeholder: 'Elige la posición' }),
       campo('telefono', 'Teléfono', { inputmode: 'tel', autocomplete: 'off' }, '(opcional)'), campo('correo', 'Correo', { type: 'email', autocomplete: 'off' }, '(opcional, para recuperar su clave)')),
     h('h3', { class: 'subtitulo-form' }, 'Dónde vive'), h('div', { class: 'form-fila' }, res.fp, res.fm),
-    h('h3', { class: 'subtitulo-form' }, 'Provincias que visitará'), h('p', { class: 'hint' }, 'Con esto se conectan sus municipios, farmacias, hospitales, clínicas, UNAP y hoteles. Si solo visita algunos municipios, ajústalo después en "Editar zona".'),
+    h('h3', { class: 'subtitulo-form' }, 'Provincias que visitará'), h('p', { class: 'hint' }, 'Con esto se conectan sus municipios, farmacias, hospitales, clínicas, UNAP y hoteles. Si solo visita algunos municipios, ábrela y márcalos. Dos representantes de la misma posición no pueden compartir zona; con otra posición sí. Elige primero la posición para ver lo que ya está cubierto.'),
     h('p', { class: 'error', dataset: { for: 'provincias' } }), provs,
     h('h3', { class: 'subtitulo-form' }, 'Vehículo'), veh.el,
     h('div', { class: 'form-fila solo-vehiculo' }, campo('tarifaAlimentacion', 'Comida por día RD$', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal' })),
     h('div', { class: 'acciones' }, b), salida);
   const sincronizar = () => f.querySelectorAll('.solo-vehiculo').forEach((x) => { x.hidden = !veh.tiene(); });
+  f.posicion.addEventListener('change', () => marcarOcupadas(provs, f.posicion.value, null));
   veh.el.addEventListener('change', sincronizar); sincronizar();
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const body = { nombre: f.nombre.value, apellido: f.apellido.value, posicion: f.posicion.value, telefono: f.telefono.value, correo: f.correo.value,
-      residencia: { provincia: res.sp.value, municipio: res.sm.value }, provincias: [...f.querySelectorAll('[name=prov]:checked')].map((x) => x.value),
+      residencia: { provincia: res.sp.value, municipio: res.sm.value }, ...zonaDeForm(f),
       tarifaAlimentacion: veh.tiene() ? f.tarifaAlimentacion.value : '', ...veh.valores(f) };
     const r = await enviar(f, b, () => api('POST', '/api/representantes', body));
     if (!r) return;
@@ -1435,28 +1488,20 @@ V.representantes = async () => {
     const marcadas = new Set(item.provincias);
     const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar zona');
     const pos = campo('posicion', 'Posición', { options: ['Visitador', 'PVC', 'Vendedor', 'Promotora'].map((x) => ({ value: x, label: x })), value: r?.position ?? '' });
-    const resumenMun = (n) => (n ? `Solo ${n} municipio(s)` : 'Toda la provincia (elegir municipios)');
-    const filas = div.provincias.map((p) => {
-      const elegidos = new Set(item.municipios?.[p] ?? []);
-      const muns = h('details', { class: 'prov-muns', hidden: !marcadas.has(p), open: elegidos.size > 0 },
-        h('summary', {}, resumenMun(elegidos.size)),
-        h('div', { class: 'prov-muns-lista' }, div.municipios[p].map((m) => h('label', {}, h('input', { type: 'checkbox', name: `mun:${p}`, value: m, checked: elegidos.has(m) }), m))));
-      muns.addEventListener('change', () => { muns.querySelector('summary').textContent = resumenMun(muns.querySelectorAll('input:checked').length); });
-      const caja = h('input', { type: 'checkbox', name: 'prov', value: p, checked: marcadas.has(p), onchange: (e) => { muns.hidden = !e.target.checked; } });
-      return h('div', { class: 'prov-item' }, h('label', {}, caja, p), muns);
-    });
+    const filas = filasZona(div, item);
     const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, r?.fullName ?? 'Representante'),
       h('div', { class: 'form-fila' }, pos),
-      h('p', { class: 'hint' }, 'Marca las provincias que visita. Si solo visita algunos municipios de una provincia, ábrela y márcalos; si no marcas ninguno, visita toda la provincia. Solo se le programan farmacias, hospitales, clínicas y UNAP de su zona.'),
-      h('p', { class: 'error', dataset: { for: 'municipios' } }),
+      h('p', { class: 'hint' }, 'Marca las provincias que visita. Si solo visita algunos municipios de una provincia, ábrela y márcalos; si no marcas ninguno, visita toda la provincia. Dos representantes de la misma posición no pueden compartir zona; con otra posición sí, por eso lo ya cubierto cambia según la posición.'),
+      h('p', { class: 'error', dataset: { for: 'municipios' } }), h('p', { class: 'error', dataset: { for: 'provincias' } }),
       h('div', { class: 'provincias provincias-zona' }, filas),
       h('div', { class: 'acciones' }, b, h('a', { class: 'btn-sec', href: '#representantes' }, 'Volver')));
     f.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const provincias = [...f.querySelectorAll('[name=prov]:checked')].map((x) => x.value);
-      const municipios = Object.fromEntries(provincias.map((p) => [p, [...f.querySelectorAll(`[name="mun:${p}"]:checked`)].map((x) => x.value)]).filter(([, ms]) => ms.length));
+      const { provincias, municipios } = zonaDeForm(f);
       if (await enviar(f, b, () => api('POST', `/api/territorio/zonas/${id}`, { provincias, municipios, posicion: f.posicion.value || undefined }))) irA('representantes', { rep: id, sec: 'lugares' });
     });
+    f.posicion.addEventListener('change', () => marcarOcupadas(f, f.posicion.value, id));
+    marcarOcupadas(f, r?.position, id);
     const T = (n) => (n ? fmtN.format(n) : '');
     const lugares = h('div', {},
       tabla([{ t: 'Municipio', v: (x) => [x.municipio, h('small', { style: 'display:block;color:var(--texto-2)' }, x.provincia)] },

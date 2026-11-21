@@ -58,6 +58,11 @@ export function createAltaRepresentantes({ store, t, v }) {
       const p = provinciaOficial(p0);
       if (p && (ms ?? []).some((m) => !municipioOficial(p, m))) e.municipios = `Hay municipios que no pertenecen a ${p}.`;
     }
+    if (!e.provincias && !e.municipios && POSITIONS.includes(input.posicion)) {
+      const municipios = Object.fromEntries(Object.entries(input.municipios ?? {}).map(([p0, ms]) => [provinciaOficial(p0), (ms ?? []).map((m) => municipioOficial(provinciaOficial(p0), m))]).filter(([p]) => p));
+      const cs = await t.conflictosZona({ provincias, municipios }, input.posicion, null);
+      if (cs.length) e.provincias = t.mensajeConflicto(cs, input.posicion);
+    }
     const rp = provinciaOficial(input.residencia?.provincia);
     const rm = rp && municipioOficial(rp, input.residencia?.municipio);
     if (!rp) e['residencia.provincia'] = 'Elige la provincia donde vive.';

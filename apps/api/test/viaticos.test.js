@@ -441,14 +441,14 @@ test('vouchers: precio por unidad suma el total; el Vendedor carga a nombre de u
 test('alta de representante: usuario y clave temporal, zona y perfil; debe cambiar la clave al entrar', async () => {
   const { server, call, t } = await setup();
   try {
-    const base = { nombre: 'José', apellido: 'Pérez Ejemplo', posicion: 'Visitador', telefono: '8095550101', provincias: ['Espaillat'], residencia: { provincia: 'Espaillat', municipio: 'Moca' },
+    const base = { nombre: 'José', apellido: 'Pérez Ejemplo', posicion: 'PVC', telefono: '8095550101', provincias: ['Espaillat'], residencia: { provincia: 'Espaillat', municipio: 'Moca' },
       vehiculo: { propiedad: 'propio', tipo: 'carro', marca: 'Toyota', modelo: 'Corolla', anio: 2022, combustible: 'gasolina_regular', rendimiento: 54.7, epaId: '45000', rendimientoFuente: 'epa' }, tarifaAlimentacion: 500 };
     assert.equal((await call('POST', '/api/representantes', base, t.supervisor)).status, 403);
     const malo = await call('POST', '/api/representantes', { ...base, posicion: 'Jefe', provincias: [], residencia: {} }, t.admin);
     assert.equal(malo.status, 422); assert.ok(malo.body.fields.posicion && malo.body.fields.provincias && malo.body.fields['residencia.provincia']);
     const r = await call('POST', '/api/representantes', base, t.admin);
     assert.equal(r.status, 201, JSON.stringify(r.body)); assert.equal(r.body.representante.usuario, 'jperez'); assert.match(r.body.claveTemporal, /^[A-Za-z2-9]{10}$/);
-    const r2 = await call('POST', '/api/representantes', { ...base, nombre: 'Juan' }, t.admin);
+    const r2 = await call('POST', '/api/representantes', { ...base, nombre: 'Juan', provincias: ['Santiago'] }, t.admin);
     assert.equal(r2.body.representante.usuario, 'jperez2', 'no repite usuarios');
     // Entra con el usuario; solo puede cambiar la clave
     const login = await call('POST', '/api/auth/login', { email: 'JPerez', password: r.body.claveTemporal });
@@ -510,6 +510,33 @@ test('sin vehículo: dentro o fuera de su zona de trabajo (no de su casa), con m
     p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
     assert.equal(p.supuestos.tarifasFuente.transporteFuera, 'representante'); assert.equal(p.detalle.transporte, 850, '100 + 800 = 900, topado a 850');
     assert.equal(p.avisos.length, 1);
+  } finally { server.close(); }
+});
+
+test('zonas: la misma posición no comparte territorio; posiciones distintas sí', async () => {
+  const { server, call, t, id } = await setup();
+  try {
+    // rep (Visitador) y rep2 (Vendedor) ya tienen Espaillat completo: posiciones distintas, se permite
+    assert.equal((await call('GET', `/api/territorio/zonas/${id.rep2}`, null, t.gerente)).body.item?.provincias?.[0] ?? 'Espaillat', 'Espaillat');
+    // pasar a rep2 a Visitador choca con rep en Espaillat
+    let r = await call('POST', `/api/territorio/zonas/${id.rep2}`, { provincias: ['Espaillat'], posicion: 'Visitador' }, t.gerente);
+    assert.equal(r.status, 409); assert.match(r.body.error ?? r.body.message ?? JSON.stringify(r.body), /rep ya cubre Espaillat \(toda la provincia\)/);
+    // repartiendo municipios distintos sí se puede
+    assert.equal((await call('POST', `/api/territorio/zonas/${id.rep}`, { provincias: ['Espaillat'], municipios: { Espaillat: ['Moca', 'Cayetano Germosén'] } }, t.gerente)).status, 200);
+    r = await call('POST', `/api/territorio/zonas/${id.rep2}`, { provincias: ['Espaillat'], municipios: { Espaillat: ['Moca', 'San Víctor'] }, posicion: 'Visitador' }, t.gerente);
+    assert.equal(r.status, 409, 'comparten Moca'); assert.match(JSON.stringify(r.body), /Espaillat \(Moca\)/);
+    r = await call('POST', `/api/territorio/zonas/${id.rep2}`, { provincias: ['Espaillat'], municipios: { Espaillat: ['Gaspar Hernández', 'San Víctor'] }, posicion: 'Visitador' }, t.gerente);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    // territorio ocupado por posición, para la pantalla
+    const oc = (await call('GET', '/api/territorio/zonas-ocupadas?posicion=Visitador', null, t.gerente)).body.items;
+    assert.equal(oc.length, 2);
+    assert.equal((await call('GET', '/api/territorio/zonas-ocupadas?posicion=Visitador', null, t.rep)).status, 403);
+    // alta de un Visitador en Moca: rechazada antes de crear la cuenta; como Promotora, aceptada
+    const base = { nombre: 'Ejemplo', apellido: 'Nuevo', provincias: ['Espaillat'], municipios: { Espaillat: ['Moca'] }, residencia: { provincia: 'Espaillat', municipio: 'Moca' }, vehiculo: { propiedad: 'ninguno' } };
+    r = await call('POST', '/api/representantes', { ...base, posicion: 'Visitador' }, t.admin);
+    assert.equal(r.status, 422); assert.match(JSON.stringify(r.body), /ya cubre Espaillat \(Moca\)/);
+    r = await call('POST', '/api/representantes', { ...base, posicion: 'Promotora' }, t.admin);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
   } finally { server.close(); }
 });
 
