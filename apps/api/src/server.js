@@ -175,6 +175,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', /^\/api\/representantes\/([\w-]+)\/editar$/, async ({ me, p, body }) => altas.editar(me, p[1], body ?? {}));
   ruta('POST', /^\/api\/representantes\/([\w-]+)\/baja$/, async ({ me, p, body }) => altas.baja(me, p[1], body?.motivo));
   ruta('POST', /^\/api\/representantes\/([\w-]+)\/reactivar$/, async ({ me, p }) => altas.reactivar(me, p[1]));
+  ruta('GET', '/api/representantes/clave-inicial', async ({ me }) => altas.verClaveInicial(me));
+  ruta('POST', '/api/representantes/clave-inicial', async ({ me, body }) => altas.guardarClaveInicial(me, body ?? {}));
   ruta('GET', '/api/representantes/inactivos', async ({ me }) => {
     if (!['administrador', 'gerencia'].includes(me.role)) throw new AuthError(403, 'Sin permiso.');
     return { items: (await store.listUsersByStatus('inactivo')).filter((u) => u.role === 'representante').map((u) => ({ id: u.id, fullName: u.fullName, position: u.position ?? null, username: u.username ?? null })) };

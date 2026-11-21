@@ -6,7 +6,7 @@ import { randomInt } from 'node:crypto';
 import { AuthError as HttpError } from './auth.js';
 import { POSITIONS, STATUS } from './roles.js';
 import { hashPassword } from './security.js';
-import { normalizeName } from './validation.js';
+import { normalizeName, errorClave } from './validation.js';
 import { provinciaOficial, municipioOficial } from './territorio.js';
 
 const sinTilde = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -37,6 +37,37 @@ export function createAltaRepresentantes({ store, t, v, data, notificar }) {
       if (!(await store.findUserByUsername(u))) return u;
     }
     throw new HttpError(409, 'No pudimos generar un usuario libre.');
+  }
+
+  // Contraseña inicial: una global y fija (si la administración la configuró) o una temporal al azar.
+  // En los dos casos el representante debe cambiarla al entrar por primera vez.
+  async function claveInicial() {
+    const [c] = data ? await data.list('configuracion', { clave: 'clave_inicial' }) : [];
+    if (c?.valor?.hash) return { passwordHash: c.valor.hash, clave: null, global: true };
+    const clave = claveTemporal();
+    return { passwordHash: await hashPassword(clave), clave, global: false };
+  }
+  const credenciales = (usuario, ini) => ({ usuario, claveTemporal: ini.clave, claveInicialGlobal: ini.global });
+  async function verClaveInicial(actor) {
+    permitir(actor);
+    const [c] = data ? await data.list('configuracion', { clave: 'clave_inicial' }) : [];
+    return { configurada: Boolean(c?.valor?.hash), actualizada: c?.updatedAt ?? c?.createdAt ?? null };
+  }
+  async function guardarClaveInicial(actor, input = {}) {
+    if (actor?.role !== 'administrador' || actor.status !== STATUS.ACTIVO) throw new HttpError(403, 'Solo la administración fija la contraseña inicial.');
+    if (input.quitar) {
+      const [c] = await data.list('configuracion', { clave: 'clave_inicial' });
+      if (c) await data.update('configuracion', c.id, { valor: {}, actualizadoPor: actor.id });
+      await store.addAudit({ actorId: actor.id, action: 'clave_inicial_quitada', entity: 'configuracion', entityId: 'clave_inicial' });
+      return { configurada: false };
+    }
+    const err = errorClave(input.clave);
+    if (err) throw new HttpError(422, 'Revisa los campos marcados.', { clave: err });
+    const valor = { hash: await hashPassword(String(input.clave)) }; // solo se guarda cifrada; no se puede volver a ver
+    const [c] = await data.list('configuracion', { clave: 'clave_inicial' });
+    if (c) await data.update('configuracion', c.id, { valor, actualizadoPor: actor.id }); else await data.insert('configuracion', { clave: 'clave_inicial', valor, actualizadoPor: actor.id });
+    await store.addAudit({ actorId: actor.id, action: 'clave_inicial_fijada', entity: 'configuracion', entityId: 'clave_inicial' });
+    return { configurada: true };
   }
 
   async function alta(actor, input = {}) {
@@ -74,16 +105,16 @@ export function createAltaRepresentantes({ store, t, v, data, notificar }) {
     if (Object.keys(e).length) throw new HttpError(422, 'Revisa los campos marcados.', e);
 
     const usuario = await usuarioLibre(usuarioBase(nombre, apellido));
-    const clave = claveTemporal();
+    const ini = await claveInicial();
     const u = await store.createUser({
       fullName: `${nombre} ${apellido}`, email: correo, phone: telefono ? telefono.slice(-10).replace(/^(\d{3})(\d{3})(\d{4})$/, '$1-$2-$3') : null,
       role: 'representante', position: input.posicion, username: usuario, debeCambiarClave: true,
-      passwordHash: await hashPassword(clave), status: STATUS.ACTIVO,
+      passwordHash: ini.passwordHash, status: STATUS.ACTIVO,
     });
     await store.addAudit({ actorId: actor.id, action: 'representante_creado', entity: 'user', entityId: u.id, after: { usuario, posicion: u.position, provincias } });
     await t.asignarZona(actor, u.id, { provincias, municipios: input.municipios ?? {} });
     await v.guardarPerfil(actor, u.id, { ...input, residencia: perfil.residencia });
-    return { representante: { id: u.id, nombre: u.fullName, posicion: u.position, usuario, correo }, claveTemporal: clave };
+    return { representante: { id: u.id, nombre: u.fullName, posicion: u.position, usuario, correo }, ...credenciales(usuario, ini) };
   }
 
   /** Nueva contraseña temporal (si la olvidó). Se muestra una sola vez y debe cambiarla al entrar. */
@@ -91,15 +122,15 @@ export function createAltaRepresentantes({ store, t, v, data, notificar }) {
     permitir(actor);
     const u = await store.findUserById(id);
     if (!u || u.role !== 'representante') throw new HttpError(404, 'El representante no existe.');
-    const clave = claveTemporal();
+    const ini = await claveInicial();
     let usuario = u.username;
     if (!usuario) {
       const [n, ...rest] = u.fullName.split(' ');
       usuario = await usuarioLibre(usuarioBase(n, rest.join(' ')));
     }
-    await store.updateUser(u.id, { passwordHash: await hashPassword(clave), debeCambiarClave: true, ...(u.username ? {} : { username: usuario }) });
-    await store.addAudit({ actorId: actor.id, action: 'clave_temporal_generada', entity: 'user', entityId: u.id });
-    return { usuario, claveTemporal: clave };
+    await store.updateUser(u.id, { passwordHash: ini.passwordHash, debeCambiarClave: true, ...(u.username ? {} : { username: usuario }) });
+    await store.addAudit({ actorId: actor.id, action: ini.global ? 'clave_inicial_asignada' : 'clave_temporal_generada', entity: 'user', entityId: u.id });
+    return credenciales(usuario, ini);
   }
   async function representante(id) {
     const u = await store.findUserById(id);
@@ -129,9 +160,19 @@ export function createAltaRepresentantes({ store, t, v, data, notificar }) {
     }
     if (Object.keys(e).length) throw new HttpError(422, 'Revisa los campos marcados.', e);
     if (!Object.keys(patch).length) return { item: vistaRep(u) };
+    // Si cambia el nombre, cambia su usuario y vuelve a la contraseña inicial (debe cambiarla al entrar).
+    let cred = null;
+    if (patch.fullName && patch.fullName !== u.fullName) {
+      const base = usuarioBase(normalizeName(input.nombre), normalizeName(input.apellido));
+      const usuario = base === u.username ? base : await usuarioLibre(base);
+      const ini = await claveInicial();
+      Object.assign(patch, { username: usuario, passwordHash: ini.passwordHash, debeCambiarClave: true });
+      cred = credenciales(usuario, ini);
+    }
     const out = await store.updateUser(u.id, patch);
-    await store.addAudit({ actorId: actor.id, action: 'representante_editado', entity: 'user', entityId: u.id, before: { fullName: u.fullName, phone: u.phone ?? null, email: u.email ?? null }, after: patch });
-    return { item: vistaRep(out) };
+    const { passwordHash, ...sinClave } = patch;
+    await store.addAudit({ actorId: actor.id, action: 'representante_editado', entity: 'user', entityId: u.id, before: { fullName: u.fullName, username: u.username ?? null, phone: u.phone ?? null, email: u.email ?? null }, after: sinClave });
+    return { item: vistaRep(out), ...(cred ?? {}) };
   }
   const vistaRep = (u) => ({ id: u.id, fullName: u.fullName, username: u.username ?? null, email: u.email ?? null, phone: u.phone ?? null, position: u.position ?? null, status: u.status });
   /**
@@ -168,5 +209,5 @@ export function createAltaRepresentantes({ store, t, v, data, notificar }) {
     const cred = await restablecerClave(actor, u.id);
     return { item: vistaRep(await store.findUserById(u.id)), ...cred };
   }
-  return { alta, restablecerClave, editar, baja, reactivar };
+  return { alta, restablecerClave, editar, baja, reactivar, verClaveInicial, guardarClaveInicial };
 }

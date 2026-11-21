@@ -582,7 +582,22 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       return { galones: r2(galones), costo: r2(costo) };
     }
     const fechasComida = (ds) => new Set(ds.filter((d) => d.conAlimentacion).map((d) => d.fecha)).size;
-    const semanas = await porSemana(mes, dias, { costoCombustible, comidaDia: (ds) => calcularAlimentacion({ tarifaDiaria: perfil.tarifaAlimentacion, diasElegibles: fechasComida(ds) }) });
+    // Comida por día: dentro o fuera de su zona de trabajo. Orden: monto propio del representante,
+    // luego el de su posición (Montos globales) y, si no hay, la tarifa diaria de su perfil.
+    const rep = await users.findUserById(repId);
+    const base = await tarifasDePosicion(rep?.position);
+    const zonaC = (await data.list('zonas', { representanteId: repId }))[0] ?? null;
+    const esDentroC = zonaC?.provincias?.length ? (p) => dentroDeZona(zonaC, p.provincia, p.municipio) : (p) => p.provincia === perfil.residencia?.provincia && p.municipio === perfil.residencia?.municipio;
+    const comidaDentro = perfil.publico?.comidaDentro ?? base.montos.comidaDentro ?? perfil.tarifaAlimentacion;
+    const comidaFuera = perfil.publico?.comidaFuera ?? base.montos.comidaFuera ?? perfil.tarifaAlimentacion;
+    const fuentesComida = perfil.publico?.comidaDentro != null || perfil.publico?.comidaFuera != null ? 'representante' : base.montos.comidaDentro != null || base.montos.comidaFuera != null ? base.fuente : 'perfil';
+    const comidaDe = (ds) => {
+      const porFecha = new Map();
+      for (const d of ds) { if (!d.conAlimentacion) continue; const f = porFecha.get(d.fecha) ?? false; porFecha.set(d.fecha, f || (d.paradas ?? []).some((p) => !esDentroC(p))); }
+      let dentro = 0; let fuera = 0; for (const x of porFecha.values()) { if (x) fuera++; else dentro++; }
+      return { dentro, fuera, monto: r2(dentro * (comidaDentro ?? 0) + fuera * (comidaFuera ?? 0)) };
+    };
+    const semanas = await porSemana(mes, dias, { costoCombustible, comidaDia: (ds) => comidaDe(ds).monto });
     if (sinPrecio.size) faltan.push(`No hay precio de ${COMBUSTIBLE_LABEL[tipo]?.toLowerCase() ?? 'combustible'} vigente para ${sinPrecio.size} día(s). Regístralo en Precios de combustible.`);
     // Tope mensual: el del representante si lo tiene; si no, el global. Lo calculado por km se paga hasta el tope.
     const topeRep = perfil.topeCombustible ?? null;
@@ -591,7 +606,8 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     const galones = r2(semanas.reduce((s, w) => s + w.galones, 0));
     const topado = aplicarTope({ calculado: combustibleCalculado, tope });
     const diasComida = fechasComida(dias);
-    const alimentacion = calcularAlimentacion({ tarifaDiaria: perfil.tarifaAlimentacion, diasElegibles: diasComida });
+    const cm = comidaDe(dias);
+    const alimentacion = cm.monto;
     const hoteles = dias.filter((d) => d.hospedaje);
     const sinAprobar = hoteles.filter((d) => d.hospedaje.estado !== 'aprobado');
     if (sinAprobar.length) faltan.push(`Hay ${sinAprobar.length} hospedaje(s) sin autorizar por la gerencia.`);
@@ -604,7 +620,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       supuestos: {
         jornadas: nJ, diasCronograma: dias.length - nJ, dias: new Set(dias.map((d) => d.fecha)).size, lugares: dias.reduce((s, d) => s + d.lugares, 0),
         km, kmTipo: dias.every((d) => d.kmFuente === 'google') ? 'por carretera (Google)' : dias.some((d) => d.kmFuente === 'google') ? 'mixto: mapa y manual' : 'estimado manual',
-        galones, rendimiento: v.rendimiento ?? null, combustible: v.combustible, preciosUsados, diasAlimentacion: diasComida, tarifaAlimentacion: perfil.tarifaAlimentacion,
+        galones, rendimiento: v.rendimiento ?? null, combustible: v.combustible, preciosUsados, diasAlimentacion: diasComida, tarifaAlimentacion: comidaDentro, comidaDentro, comidaFuera, diasComidaDentro: cm.dentro, diasComidaFuera: cm.fuera, comidaFuente: fuentesComida, posicion: rep?.position ?? null,
         reembolsoPorKm: usaReembolso ? perfil.reembolsoPorKm : null, hospedajes: hoteles.length,
         combustibleCalculado, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
         semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares })),
