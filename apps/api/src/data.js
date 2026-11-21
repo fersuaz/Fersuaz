@@ -14,6 +14,7 @@ export const COLECCIONES = {
   recetas: { tabla: 'recetas', campos: ['promotoraId', 'operativoId', 'medicoId', 'fecha', 'provincia', 'municipio', 'items', 'adjunto', 'pacienteId'], json: ['items', 'adjunto'] },
   pacientes: { tabla: 'pacientes', campos: ['telefono', 'nombre', 'creadoPor'], json: [] },
   inventario: { tabla: 'inventario', campos: ['farmaciaId', 'medicamentoId', 'unidades', 'fechaCorte', 'registradoPor', 'fuente', 'loteVenta'], json: [] },
+  planDias: { tabla: 'plan_dias_representante', campos: ['representanteId', 'diasDentro', 'diasFuera', 'fuente', 'actualizadoPor'], json: [] },
   ventasFarmacia: { tabla: 'ventas_farmacia', campos: ['farmaciaId', 'medicamentoId', 'unidades', 'precioUnitario', 'monto', 'fecha', 'factura', 'provincia', 'municipio', 'lote', 'fuente', 'archivo', 'cargadoPor'], json: [] },
   configuracion: { tabla: 'configuracion', campos: ['clave', 'valor', 'actualizadoPor'], json: ['valor'] },
   perfiles: { tabla: 'perfiles_viatico', campos: ['representanteId', 'residencia', 'vehiculo', 'tarifaAlimentacion', 'reembolsoPorKm', 'topeCombustible', 'publico', 'actualizadoPor'], json: ['residencia', 'vehiculo', 'publico'] },
