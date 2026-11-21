@@ -79,8 +79,13 @@ function crear() {
   });
   const soltar = (e) => { punteros.delete(e.pointerId); if (punteros.size < 2) pellizco = null; if (!punteros.size) arrastre = null; };
   marco.addEventListener('pointerup', soltar); marco.addEventListener('pointercancel', soltar);
-  dlg.addEventListener('keydown', (e) => {
-    if (e.target.closest('button') && (e.key === 'Enter' || e.key === ' ')) return;
+  // En todo el documento: si el foco se pierde (un botón que se deshabilita o se reemplaza), las flechas siguen funcionando.
+  document.addEventListener('keydown', (e) => {
+    if (!dlg.open || e.defaultPrevented) return;
+    if ([...document.querySelectorAll('dialog[open]')].some((d) => d !== dlg)) return; // hay una confirmación encima
+    if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+    if (e.target.closest?.('button') && (e.key === 'Enter' || e.key === ' ')) return;
+    if (!dlg.contains(document.activeElement)) marco.focus({ preventScroll: true });
     const paso = 60;
     // Sin zoom, las flechas izquierda y derecha pasan de foto; con zoom, mueven la foto. AvPág/RePág siempre pasan.
     if (e.key === 'PageDown' || (e.key === 'ArrowRight' && z === 1)) { e.preventDefault(); ir(actual + 1); return; }
@@ -118,6 +123,7 @@ function pintar() {
 async function ir(i) {
   if (i < 0 || i >= galeria.length) return;
   actual = i; const g = galeria[i]; const yo = ++turno;
+  marco.querySelector('.visor-error')?.remove();
   z = 1; x = 0; y = 0; giro = 0;
   titulo.textContent = g.nombre ?? 'Foto';
   detalle.textContent = (typeof g.detalle === 'function' ? g.detalle() : g.detalle) ?? '';
@@ -128,7 +134,13 @@ async function ir(i) {
   let { url, tipo } = g;
   if (!url && g.cargar) {
     img.removeAttribute('src'); titulo.textContent = `${g.nombre ?? 'Foto'} (cargando…)`;
-    try { ({ url, tipo } = await (g.precarga ?? g.cargar())); if (!url) throw new Error(); } catch { if (yo === turno) titulo.textContent = `${g.nombre ?? 'Foto'}: no se pudo abrir`; return; }
+    let error = null;
+    for (const intento of [g.precarga, null, null]) { // la precarga, y dos intentos más si falla
+      try { const r = await (intento ?? g.cargar()); if (r?.url) { ({ url, tipo } = r); error = null; break; } } catch (e) { error = e; }
+      if (yo !== turno) return;
+    }
+    g.precarga = null;
+    if (!url) { if (yo === turno) mostrarError(g, error); return; }
     if (yo !== turno) return; // ya pasó a otra
     Object.assign(g, { url, tipo }); titulo.textContent = g.nombre ?? 'Foto';
   }
@@ -141,6 +153,17 @@ async function ir(i) {
   const sig = galeria[i + 1]; if (sig && !sig.url && sig.cargar && !sig.precarga) sig.precarga = sig.cargar().then((r) => Object.assign(sig, r)).catch(() => {});
 }
 
+/** La foto no se pudo traer: se dice por qué y se puede reintentar sin cerrar. */
+function mostrarError(g, error) {
+  titulo.textContent = g.nombre ?? 'Foto';
+  pdf.hidden = true; marco.hidden = false; img.removeAttribute('src');
+  marco.querySelector('.visor-error')?.remove();
+  const caja = nodo('div', 'visor-error');
+  caja.append(nodo('strong', null, 'No se pudo abrir esta foto'), nodo('span', null, error?.message || 'Revisa tu conexión e inténtalo otra vez.'));
+  const b = nodo('button', 'visor-accion ok', 'Reintentar'); b.type = 'button';
+  b.addEventListener('click', () => { caja.remove(); ir(actual); });
+  caja.append(b); marco.append(caja);
+}
 const nodo = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
 /** Etiqueta encima de la foto con lo que escribió el usuario: así se compara sin salir de la foto. */
 function pintarEtiquetas(g) {

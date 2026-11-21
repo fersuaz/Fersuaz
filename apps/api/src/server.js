@@ -160,7 +160,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   const R = [];
   const ruta = (m, p, h, o = {}) => R.push([m, typeof p === 'string' ? new RegExp(`^${p}$`) : p, h, { auth: true, ...o }]);
 
-  ruta('GET', '/api/health', () => ({ ok: true }), { auth: false });
+  // `archivos`: dónde se guardan las fotos. En producción debe ser "spaces": en disco se pierden en cada despliegue.
+  ruta('GET', '/api/health', () => ({ ok: true, archivos: files.constructor.name === 'SpacesFiles' ? 'spaces' : files.constructor.name === 'LocalFiles' ? 'disco' : 'memoria' }), { auth: false });
   ruta('GET', '/api/auth/options', () => ({ roles: SELF_REGISTERABLE.map((r) => ({ value: r, label: ROLE_LABELS[r] })), positions: POSITIONS }), { auth: false });
   ruta('POST', '/api/auth/register', async ({ body }) => {
     const user = await auth.register(body);
