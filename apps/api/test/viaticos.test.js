@@ -468,28 +468,47 @@ test('alta de representante: usuario y clave temporal, zona y perfil; debe cambi
   } finally { server.close(); }
 });
 
-test('sin vehículo: transporte y comida dentro o fuera de su municipio, con montos globales o propios', async () => {
+test('sin vehículo: dentro o fuera de su zona de trabajo (no de su casa), con montos por posición, globales o propios', async () => {
   const { server, call, t, id, planificar } = await setup();
   try {
     const data = setup.data;
     const gh = await data.insert('establecimientos', { tipo: 'hospital', nombre: 'Hospital Ejemplo Gaspar', provincia: 'Espaillat', municipio: 'Gaspar Hernández', estado: 'validado', fuente: 'manual' });
-    await call('POST', `/api/viaticos/perfiles/${id.rep}`, { residencia: { provincia: 'Espaillat', municipio: 'Moca' }, vehiculo: { propiedad: 'ninguno' } }, t.gerente);
-    await planificar(jornada('2026-11-23', 10), t.rep); // hospital de Moca: dentro
+    // Vive en Santiago, pero su zona de trabajo es Moca (Espaillat). Es Visitador.
+    await call('POST', `/api/territorio/zonas/${id.rep}`, { provincias: ['Espaillat'], municipios: { Espaillat: ['Moca'] } }, t.gerente);
+    await call('POST', `/api/viaticos/perfiles/${id.rep}`, { residencia: { provincia: 'Santiago', municipio: 'Santiago de los Caballeros' }, vehiculo: { propiedad: 'ninguno' } }, t.gerente);
+    await planificar(jornada('2026-11-23', 10), t.rep); // hospital de Moca: dentro de su zona aunque no viva allí
     let p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
-    assert.match(p.faltan.join(' '), /montos de transporte público/);
-    assert.equal((await call('POST', '/api/viaticos/tarifas-publico', { transporteDentro: 150 }, t.rep)).status, 403);
-    await call('POST', '/api/viaticos/tarifas-publico', { transporteDentro: 150, comidaDentro: 300, transporteFuera: 500, comidaFuera: 450 }, t.gerente);
-    // Un día fuera: cronograma con el hospital de Gaspar Hernández
+    assert.match(p.faltan.join(' '), /montos de transporte público.*Visitador/);
+    assert.equal((await call('POST', '/api/viaticos/tarifas-publico', { modo: 'global' }, t.rep)).status, 403);
+    // Por defecto, por posición: Visitador y Vendedor un monto, Promotora otro
+    const vis = { transporteDentro: 150, comidaDentro: 300, transporteFuera: 500, comidaFuera: 450 };
+    const pro = { transporteDentro: 100, comidaDentro: 250, transporteFuera: 400, comidaFuera: 350 };
+    const g = await call('POST', '/api/viaticos/tarifas-publico', { modo: 'posicion', porPosicion: { Visitador: vis, Vendedor: vis, Promotora: pro }, global: { transporteDentro: 999, comidaDentro: 999, transporteFuera: 999, comidaFuera: 999 } }, t.gerente);
+    assert.equal(g.status, 200, JSON.stringify(g.body));
+    assert.equal((await call('GET', '/api/viaticos/tarifas-publico', null, t.rep)).body.item.modo, 'posicion');
+    // Un día fuera de su zona: Gaspar Hernández
     const c = await call('POST', '/api/cronogramas', { representanteId: id.rep, fechas: ['2026-11-24'], lugares: [{ refTipo: 'establecimiento', refId: gh.id }] }, t.admin);
+    if (c.status !== 201) { // si la zona no permite el lugar, se amplía solo para planificar y se vuelve a reducir
+      await call('POST', `/api/territorio/zonas/${id.rep}`, { provincias: ['Espaillat'], municipios: { Espaillat: ['Moca', 'Gaspar Hernández'] } }, t.gerente);
+      const c2 = await call('POST', '/api/cronogramas', { representanteId: id.rep, fechas: ['2026-11-24'], lugares: [{ refTipo: 'establecimiento', refId: gh.id }] }, t.admin);
+      c.body = c2.body;
+      await call('POST', `/api/territorio/zonas/${id.rep}`, { provincias: ['Espaillat'], municipios: { Espaillat: ['Moca'] } }, t.gerente);
+    }
     const j = await call('POST', '/api/viaticos/jornadas', { cronogramaId: c.body.items[0].id, kmEstimados: 60, conAlimentacion: true }, t.rep);
     assert.equal(j.status, 201, JSON.stringify(j.body));
     p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
-    assert.equal(p.supuestos.diasDentro, 1); assert.equal(p.supuestos.diasFuera, 1);
+    assert.equal(p.supuestos.dentroSegun, 'zona'); assert.equal(p.supuestos.posicion, 'Visitador');
+    assert.equal(p.supuestos.diasDentro, 1, 'Moca es su zona'); assert.equal(p.supuestos.diasFuera, 1, 'Gaspar Hernández no');
     assert.equal(p.detalle.transporte, 650); assert.equal(p.detalle.alimentacion, 750); assert.equal(p.detalle.combustible, 0);
-    // Montos propios del representante mandan sobre los globales; el tope también limita el transporte
-    await call('POST', `/api/viaticos/perfiles/${id.rep}`, { residencia: { provincia: 'Espaillat', municipio: 'Moca' }, vehiculo: { propiedad: 'ninguno' }, publico: { transporteFuera: 800 }, topeCombustible: 900 }, t.gerente);
+    assert.equal(p.supuestos.tarifasFuente.transporteDentro, 'posicion');
+    // Si se elige un solo monto global, aplica a todas las posiciones
+    await call('POST', '/api/viaticos/tarifas-publico', { modo: 'global', global: pro, porPosicion: { Visitador: vis } }, t.gerente);
     p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
-    assert.equal(p.supuestos.tarifasFuente.transporteFuera, 'representante'); assert.equal(p.detalle.transporte, 900, '150 + 800 = 950, topado a 900');
+    assert.equal(p.detalle.transporte, 500); assert.equal(p.supuestos.tarifasFuente.transporteDentro, 'global');
+    // Montos propios del representante mandan sobre los demás; el tope también limita el transporte
+    await call('POST', `/api/viaticos/perfiles/${id.rep}`, { residencia: { provincia: 'Santiago', municipio: 'Santiago de los Caballeros' }, vehiculo: { propiedad: 'ninguno' }, publico: { transporteFuera: 800 }, topeCombustible: 850 }, t.gerente);
+    p = (await call('GET', '/api/viaticos/presupuesto?mes=2026-11', null, t.rep)).body.calculo;
+    assert.equal(p.supuestos.tarifasFuente.transporteFuera, 'representante'); assert.equal(p.detalle.transporte, 850, '100 + 800 = 900, topado a 850');
     assert.equal(p.avisos.length, 1);
   } finally { server.close(); }
 });

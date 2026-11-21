@@ -1,6 +1,7 @@
 // Acceso unificado: pestañas, inicio de sesión, recuperar acceso y ver contraseña.
 // El registro (pestaña "Crear cuenta") lo maneja registro.js.
 import { apiBase } from './api.js';
+import { activarDesplegables } from './desplegable.js';
 import './registro.js';
 
 const tabs = [...document.querySelectorAll('[role="tab"]')];
@@ -82,3 +83,5 @@ login.addEventListener('submit', async (e) => {
   } catch { say('status-entrar', 'error', 'No pudimos conectar con el servidor. Revisa tu conexión e intenta de nuevo.'); }
   finally { btn.disabled = false; btn.textContent = 'Continuar'; }
 });
+
+activarDesplegables();

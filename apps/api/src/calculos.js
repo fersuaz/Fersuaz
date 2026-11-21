@@ -62,11 +62,17 @@ const mismoLugar = (a, b) => a && b && String(a.provincia) === String(b.provinci
  * Transporte: un monto por día (dentro o fuera). Comida: un monto por día, solo si la jornada lleva alimentación.
  * tarifas = { transporteDentro, comidaDentro, transporteFuera, comidaFuera } en RD$ por día.
  */
-export function calcularTransportePublico({ jornadas, residencia, tarifas }) {
+/**
+ * Transporte público por día. Un día es "dentro" si todas sus paradas están en la zona de trabajo
+ * del representante (esDentro); si una parada sale de la zona, el día es "fuera".
+ * Sin zona se usa su municipio de residencia (residencia).
+ */
+export function calcularTransportePublico({ jornadas, esDentro, residencia, tarifas }) {
   for (const k of ['transporteDentro', 'comidaDentro', 'transporteFuera', 'comidaFuera']) requireNumber(k, tarifas[k]);
+  const dentroDe = esDentro ?? ((p) => mismoLugar(p, residencia));
   const dias = new Map();
   for (const j of jornadas) {
-    const fuera = (j.paradas ?? []).some((p) => !mismoLugar(p, residencia));
+    const fuera = (j.paradas ?? []).some((p) => !dentroDe(p));
     const d = dias.get(j.fecha) ?? { fecha: j.fecha, fuera: false, comida: false };
     d.fuera = d.fuera || fuera; d.comida = d.comida || j.conAlimentacion !== false;
     dias.set(j.fecha, d);

@@ -2,7 +2,7 @@
 // Reglas: el salario no entra; nada se inventa (si falta un dato, se dice cuál); el hotel nunca se aprueba solo;
 // los movimientos aprobados no se borran; los km son estimados manuales hasta conectar un proveedor de mapas.
 import { AuthError as HttpError } from './auth.js';
-import { STATUS } from './roles.js';
+import { STATUS, POSITIONS } from './roles.js';
 import { calcularCombustible, calcularAlimentacion, calcularHospedaje, calcularPresupuesto, detectarDuplicados, aplicarTope, calcularTransportePublico } from './calculos.js';
 import { esFechaISO, hoyRD } from './periodos.js';
 import { normalizeName } from './validation.js';
@@ -99,18 +99,30 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
     return p;
   }
   // ------------------------------------------------------------ montos globales de transporte público
+  // Montos por día: por posición (por defecto) o uno global para todos. El perfil del representante manda sobre ambos.
+  const montos = (o) => Object.fromEntries(TARIFAS_PUBLICO.map((k) => [k, o?.[k] ?? null]));
   async function verTarifasPublico() {
     const [c] = await data.list('configuracion', { clave: 'tarifas_publico' });
-    return Object.fromEntries(TARIFAS_PUBLICO.map((k) => [k, c?.valor?.[k] ?? null]));
+    const v = c?.valor ?? {};
+    if (!v.modo && TARIFAS_PUBLICO.some((k) => v[k] != null)) return { modo: 'global', global: montos(v), porPosicion: Object.fromEntries(POSITIONS.map((p) => [p, montos()])) }; // formato anterior
+    return { modo: v.modo === 'global' ? 'global' : 'posicion', global: montos(v.global), porPosicion: Object.fromEntries(POSITIONS.map((p) => [p, montos(v.porPosicion?.[p])])) };
+  }
+  /** Montos que aplican a una posición: los de su posición o los globales, según el modo elegido. */
+  async function tarifasDePosicion(posicion) {
+    const t = await verTarifasPublico();
+    if (t.modo === 'posicion' && POSITIONS.includes(posicion)) return { montos: t.porPosicion[posicion], fuente: 'posicion' };
+    return { montos: t.global, fuente: 'global' };
   }
   async function guardarTarifasPublico(actor, input) {
     permitir(rol(actor, ['administrador', 'gerencia']), 'Solo la administración o la gerencia fijan los montos de transporte público.');
-    const e = {}; const valor = {};
-    for (const k of TARIFAS_PUBLICO) {
-      const x = input?.[k] === '' || input?.[k] == null ? null : num(input[k]);
-      if (x != null && (!Number.isFinite(x) || x < 0)) e[k] = 'Escribe un monto en RD$.';
-      valor[k] = x == null ? null : r2(x);
-    }
+    const e = {};
+    const leer = (o, pre) => Object.fromEntries(TARIFAS_PUBLICO.map((k) => {
+      const x = o?.[k] === '' || o?.[k] == null ? null : num(o[k]);
+      if (x != null && (!Number.isFinite(x) || x < 0)) e[`${pre}${k}`] = 'Escribe un monto en RD$.';
+      return [k, x == null ? null : r2(x)];
+    }));
+    const modo = input?.modo === 'global' ? 'global' : 'posicion';
+    const valor = { modo, global: leer(input?.global, 'global.'), porPosicion: Object.fromEntries(POSITIONS.map((p) => [p, leer(input?.porPosicion?.[p], `${p}.`)])) };
     if (Object.keys(e).length) invalido(e);
     const antes = await verTarifasPublico();
     const [c] = await data.list('configuracion', { clave: 'tarifas_publico' });
@@ -430,7 +442,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
     const v = perfil.vehiculo;
     let combustible = 0; let galones = 0; const preciosUsados = {};
     const km = r2(js.reduce((s, j) => s + j.kmEstimados, 0));
-    if (v.propiedad === 'ninguno') return calcularPublico(perfil, js, km, faltan);
+    if (v.propiedad === 'ninguno') return calcularPublico(repId, perfil, js, km, faltan);
     const usaReembolso = v.propiedad === 'propio' && perfil.reembolsoPorKm != null;
     if (usaReembolso) {
       combustible = r2(km * perfil.reembolsoPorKm); // política expresa: reembolso por km sustituye al combustible, no se suman
@@ -477,17 +489,21 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
       avisos: topado.topado ? [`El combustible calculado (RD$${combustibleCalculado.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [],
     };
   }
-  /** Sin vehículo: transporte y comida por día, dentro o fuera de su municipio de residencia, según el cronograma. */
-  async function calcularPublico(perfil, js, km, faltan) {
-    const global = await verTarifasPublico();
+  /** Sin vehículo: transporte y comida por día, dentro o fuera de su zona de trabajo, según el cronograma. */
+  async function calcularPublico(repId, perfil, js, km, faltan) {
+    const rep = await users.findUserById(repId);
+    const base = await tarifasDePosicion(rep?.position);
     const tarifas = {}; const fuente = {};
     for (const k of TARIFAS_PUBLICO) {
       const propio = perfil.publico?.[k];
-      tarifas[k] = propio ?? global[k]; fuente[k] = propio != null ? 'representante' : 'global';
+      tarifas[k] = propio ?? base.montos[k]; fuente[k] = propio != null ? 'representante' : base.fuente;
     }
     const sinMonto = TARIFAS_PUBLICO.filter((k) => tarifas[k] == null);
-    if (sinMonto.length) return { faltan: [...faltan, 'Faltan los montos de transporte público (transporte y comida, dentro y fuera de su municipio). Configúralos en Perfiles de viático.'] };
-    const r = calcularTransportePublico({ jornadas: js, residencia: perfil.residencia, tarifas });
+    if (sinMonto.length) return { faltan: [...faltan, `Faltan los montos de transporte público (transporte y comida, dentro y fuera de su zona)${base.fuente === 'posicion' && rep?.position ? ` para la posición ${rep.position}` : ''}. Configúralos en Perfiles de viático → Montos globales.`] };
+    const zona = (await data.list('zonas', { representanteId: repId }))[0] ?? null;
+    const conZona = !!zona?.provincias?.length;
+    const avisosZona = conZona ? [] : ['No tiene zona asignada: se tomó su municipio de residencia como "dentro". Asígnale su zona en Representantes.'];
+    const r = calcularTransportePublico({ jornadas: js, esDentro: conZona ? (p) => dentroDeZona(zona, p.provincia, p.municipio) : undefined, residencia: perfil.residencia, tarifas });
     const topeRep = perfil.topeCombustible ?? null;
     const tope = topeRep ?? (await verTopeGlobal());
     const topado = aplicarTope({ calculado: r.transporte, tope });
@@ -503,10 +519,11 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, ho
       supuestos: {
         jornadas: js.length, km, kmTipo: 'transporte público', galones: null, rendimiento: null, combustible: null, preciosUsados: {},
         transportePublico: true, diasDentro: r.diasDentro, diasFuera: r.diasFuera, tarifas, tarifasFuente: fuente, dias: r.dias,
+        posicion: rep?.position ?? null, dentroSegun: conZona ? 'zona' : 'residencia',
         diasAlimentacion: r.diasDentro + r.diasFuera, tarifaAlimentacion: null, reembolsoPorKm: null, hospedajes: hoteles.length,
         combustibleCalculado: r.transporte, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
       },
-      avisos: topado.topado ? [`El transporte calculado (RD$${r.transporte.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [],
+      avisos: [...avisosZona, ...(topado.topado ? [`El transporte calculado (RD$${r.transporte.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [])],
     };
   }
   const MES = /^\d{4}-(0[1-9]|1[0-2])$/;

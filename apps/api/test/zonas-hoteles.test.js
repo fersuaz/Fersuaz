@@ -81,6 +81,10 @@ test('transporte público: días dentro y fuera de su municipio según las parad
   assert.equal(r.transporte, 2 * 150 + 2 * 500);
   assert.equal(r.alimentacion, 1 * 300 + 2 * 450, 'el 25 no lleva comida');
   assert.deepEqual(r.dias.map((d) => d.fuera), [false, true, false, true]);
+  // Con zona de trabajo: vive en Moca pero trabaja en Gaspar Hernández y San Víctor; Moca cuenta como fuera.
+  const zona = new Set(['Gaspar Hernández', 'San Víctor']);
+  const z = calcularTransportePublico({ jornadas: [J('2026-11-23', ['Gaspar Hernández', 'San Víctor']), J('2026-11-24', ['Moca'])], esDentro: (p) => zona.has(p.municipio), residencia: casa, tarifas: { transporteDentro: 150, comidaDentro: 300, transporteFuera: 500, comidaFuera: 450 } });
+  assert.deepEqual([z.diasDentro, z.diasFuera], [1, 1]);
   assert.throws(() => calcularTransportePublico({ jornadas: [], residencia: casa, tarifas: { transporteDentro: 1, comidaDentro: 1, transporteFuera: null, comidaFuera: 1 } }));
   // EPA: millas por galón (EE. UU.) a km por galón
   assert.equal(mpgAKmPorGalon(30), 48.3); assert.equal(mpgAKmPorGalon(41), 66);

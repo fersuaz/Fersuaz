@@ -494,3 +494,24 @@ a.btn, a.btn-sec { display: inline-flex; align-items: center; justify-content: c
 .cuenta-banco-nombre { font: 600 .9rem var(--sans); color: #C9E1EE; }
 .cuenta-banco-numero { font: 600 1.4rem ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; color: #fff; overflow-wrap: anywhere; }
 .cuenta-banco small { color: #C9E1EE; }
+
+/* Montos de transporte público por posición */
+.tabla-montos { overflow-x: auto; margin: 1rem 0 .25rem; }
+.tabla-montos table { border-collapse: collapse; width: 100%; min-width: 40rem; }
+.tabla-montos th, .tabla-montos td { padding: .45rem .5rem; text-align: left; vertical-align: bottom; }
+.tabla-montos thead th { font: 500 .82rem var(--sans); color: var(--texto-2); }
+.tabla-montos tbody th { font-weight: 600; white-space: nowrap; color: var(--tinta); }
+.tabla-montos tbody tr + tr { border-top: 1px solid var(--linea); }
+.tabla-montos input { width: 100%; min-width: 7rem; }
+.tabla-montos input { min-height: 44px; padding: 0 .75rem; border: 1.5px solid var(--linea); border-radius: 10px; font: inherit; color: var(--tinta); background: #fff; }
+.tabla-montos input:focus-visible { outline: none; border-color: var(--celeste-texto); box-shadow: 0 0 0 4px rgba(48,133,172,.18); }
+.tabla-montos tbody th { font: 600 .98rem var(--sans); }
+.modo-montos { border: 0; padding: 0; margin: 1.25rem 0 .5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .75rem; }
+.modo-montos legend { font: 600 1rem var(--sans); color: var(--tinta); margin-bottom: .6rem; padding: 0; }
+.modo-montos label { display: flex; gap: .75rem; align-items: flex-start; padding: .85rem 1rem; border: 1.5px solid var(--linea); border-radius: 12px; cursor: pointer; background: #fff; }
+.modo-montos label:has(input:checked) { border-color: var(--marino); background: var(--canvas); box-shadow: inset 0 0 0 1px var(--marino); }
+.modo-montos input { margin-top: .2rem; accent-color: var(--marino); width: 1.05rem; height: 1.05rem; }
+.modo-montos span { display: grid; gap: .15rem; }
+.modo-montos strong { color: var(--marino); font-weight: 600; }
+.modo-montos small { color: var(--texto-2); font-size: .88rem; }
+.tabla-montos tbody th, .tabla-montos tbody td { vertical-align: middle; }
