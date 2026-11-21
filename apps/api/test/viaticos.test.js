@@ -317,6 +317,11 @@ test('propuesta del mes: reparte los lugares de la zona en días libres y se apr
     await call('POST', `/api/viaticos/perfiles/${id.rep}`, { ...PERFIL, residencia: { provincia: 'Espaillat', municipio: 'Moca' } }, t.gerente);
     assert.equal((await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-11', porDia: 2 }, t.gerente)).status, 403);
     assert.equal((await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-10', porDia: 2 }, t.admin)).status, 422);
+    assert.equal((await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-11', porDia: 2, dias: [] }, t.admin)).status, 422, 'al menos un día');
+    assert.equal((await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-11', porDia: 2, feriados: ['2026-12-01'] }, t.admin)).status, 422, 'fechas del mes');
+    const solo = (await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-11', porDia: 2, dias: [1, 3], feriados: ['2026-11-25'] }, t.admin)).body.item;
+    assert.ok(solo.dias.every((d) => [1, 3].includes(new Date(`${d.fecha}T12:00:00Z`).getUTCDay()) && d.fecha !== '2026-11-25'));
+    assert.deepEqual(solo.resumen.diasSemana, [1, 3]);
     const p = (await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-11', porDia: 2 }, t.admin)).body.item;
     assert.equal(p.resumen.lugares, 6); assert.equal(p.resumen.diasLibres, 7); assert.equal(p.dias.length, 3);
     assert.deepEqual(p.dias.map((d) => d.fecha), ['2026-11-20', '2026-11-23', '2026-11-24']);
