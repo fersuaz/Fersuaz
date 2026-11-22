@@ -492,15 +492,20 @@ function cargaMasiva(cfg) {
       f.totalEl = cfg.conPrecio ? h('strong', {}, RD(0)) : null;
       f.extras = cfg.extras ? cfg.extras(f) : null;
       const vista = file.type === 'application/pdf' ? h('span', { class: 'cm-pdf' }, 'PDF') : h('img', { src: f.url, alt: `Foto ${file.name}`, loading: 'lazy' });
-      const ver = h('button', { type: 'button', class: 'cm-foto', 'aria-label': 'Ver la foto en grande', onclick: () => verGaleria(filas.filter((x) => x.estado !== 'ok').map((x, i) => ({ url: x.url, tipo: x.file.type, nombre: `${x.num.textContent}: ${x.file.name}`,
-        detalle: () => { const ms = x.lineas.filter((l) => l.sel.value).map((l) => `${l.sel.selectedOptions[0].textContent} ×${l.cant.value}`); return ms.length ? ms.join(', ') : 'Falta elegir el medicamento'; } })), filas.filter((x) => x.estado !== 'ok').indexOf(f)) }, vista);
-      f.el = h('article', { class: 'cm-fila' }, ver,
-        h('div', { class: 'cm-datos' },
+      // En grande: la foto con sus datos al lado para elegir medicamentos y médico, y pasar a la siguiente con las flechas.
+      const ver = h('button', { type: 'button', class: 'cm-foto', 'aria-label': 'Ver la foto en grande y completar sus datos', onclick: () => {
+        const vis = filas.filter((x) => x.estado !== 'ok');
+        verGaleria(vis.map((x) => ({ url: x.url, tipo: x.file.type, nombre: `${x.num.textContent}: ${x.file.name}`,
+          detalle: () => { const ms = x.lineas.filter((l) => l.sel.value).map((l) => `${l.sel.selectedOptions[0].textContent} ×${l.cant.value}`); return ms.length ? ms.join(', ') : 'Falta elegir el medicamento'; },
+          panel: { nodo: () => x.datos, devolver: () => x.el.append(x.datos) } })), vis.indexOf(f), { onClose: () => f.el.scrollIntoView({ block: 'nearest' }) });
+      } }, vista);
+      f.datos = h('div', { class: 'cm-datos' },
           h('div', { class: 'cm-cabeza' }, h('div', {}, f.num, h('small', {}, file.name)), f.fecha ? h('label', { class: 'cm-fecha' }, h('span', {}, 'Fecha'), f.fecha) : null,
             h('button', { type: 'button', class: 'btn-sec btn-peq btn-peligro', onclick: () => quitarFila(f) }, cfg.nombre === 'receta' ? 'Quitar receta' : 'Quitar voucher')),
           f.extras?.nodos ?? null, f.cajaLineas,
           h('div', { class: 'cm-pie' }, h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: () => lineaNueva(f, true) }, 'Agregar medicamento'), f.totalEl ? h('span', {}, 'Total de este voucher ', f.totalEl) : null),
-          f.msg));
+          f.msg);
+      f.el = h('article', { class: 'cm-fila' }, ver, f.datos);
       lineaNueva(f, false);
       filas.push(f); lista.append(f.el);
     }

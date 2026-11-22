@@ -927,3 +927,25 @@ tr.fila-sel td { background: #E9F0F6; }
   .visor-acciones { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
   .visor-accion { width: 100%; }
 }
+/* Visor con panel de datos (cargar vouchers y recetas desde la foto) */
+.visor-panel { background: #fff; color: #0F2A44; overflow: auto; padding: 1rem 1.1rem; min-height: 0; }
+.visor-panel[hidden] { display: none; }
+.visor.con-panel .visor-cuerpo { grid-template-columns: minmax(0, 1fr) minmax(340px, 38%); }
+.visor.con-panel .visor-cuerpo > .visor-marco, .visor.con-panel .visor-cuerpo > .visor-pdf { grid-area: 1 / 1; }
+.visor.con-panel .visor-panel { grid-area: 1 / 2; border-left: 1px solid #C7D6E3; }
+.visor-panel .cm-datos { display: grid; gap: .75rem; }
+.visor-panel .cm-cabeza { flex-wrap: wrap; }
+.visor-panel .cm-linea { grid-template-columns: 1fr 1fr; }
+.visor-panel .cm-linea > :first-child { grid-column: 1 / -1; }
+@media (max-width: 760px) {
+  .visor.con-panel .visor-cuerpo { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 52%); }
+  .visor.con-panel .visor-cuerpo > .visor-marco, .visor.con-panel .visor-cuerpo > .visor-pdf { grid-area: 1 / 1; }
+  .visor.con-panel .visor-panel { grid-area: 2 / 1; border-left: 0; border-top: 1px solid #C7D6E3; }
+}
+.visor-marco img { position: absolute; inset: 0; margin: auto; }
+.visor-panel:has(.dsp-abierto) { padding-bottom: 380px; }
+.visor-panel input:not([type=checkbox]):not([type=radio]), .visor-panel select { font: inherit; font-size: .95rem; color: #0F2A44; background: #fff; border: 1px solid #C7D6E3; border-radius: 10px; padding: .6rem .75rem; width: 100%; min-height: 44px; min-width: 0; }
+.visor-panel input:focus, .visor-panel select:focus { border-color: #246C8E; outline: none; box-shadow: 0 0 0 3px rgba(36, 108, 142, .25); }
+.visor-panel label { display: grid; gap: .25rem; font-size: .88rem; color: #52677A; }
+.visor-panel .med-nuevo { grid-template-columns: 1fr 1fr; }
+.visor-panel .med-nuevo label:nth-child(3) { grid-column: 1 / -1; }
