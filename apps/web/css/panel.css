@@ -1003,3 +1003,20 @@ tr.fila-sel td { background: #E9F0F6; }
   .visor.con-panel .visor-barra { padding-top: calc(.5rem + env(safe-area-inset-top)); }
   .visor-titulo { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .95rem; }
 }
+/* Visor en el celular (2): sin foto rota, error centrado, barra en una sola fila y fondo que tapa la página */
+.visor::backdrop { background: #0F2A44; }
+.visor-marco img:not([src]) { display: none; }
+.visor-error { inset: auto; top: 50%; left: 50%; transform: translate(-50%, -50%); margin: 0; width: min(420px, calc(100% - 2rem)); height: auto; }
+.visor-error .visor-accion { width: auto; padding: 0 1.6rem; }
+@media (max-width: 640px) {
+  .visor-barra { display: grid; grid-template-columns: auto 1fr; align-items: center; row-gap: .45rem; column-gap: .5rem; }
+  .visor-info { grid-column: 1 / -1; }
+  .visor-nav { order: 0; gap: .35rem; }
+  .visor-nav .visor-txt { display: none; }
+  .visor-nav button { min-width: 42px; padding: 0 .6rem; font-size: 1.2rem; line-height: 1; }
+  .visor-pos { min-width: 3.6rem; font-size: .9rem; }
+  .visor-ctrl { order: 0; justify-self: end; margin: 0; }
+  .visor-error { padding: 1.1rem; }
+  .visor-error strong { font-size: 1rem; }
+  .visor-error span { font-size: .92rem; }
+}
