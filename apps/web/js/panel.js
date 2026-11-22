@@ -42,9 +42,14 @@ class ApiError extends Error { constructor(status, body) { super(body?.error || 
 let accionPendiente = null;
 let avisosEnPausa = false; // carga masiva: un solo aviso al final, no uno por fila
 const SIN_AVISO = /\/(leer|propuesta|estimar|login|cambiar-clave|leer-todas|ruta|verificar)(\?|$)|\/notificaciones\//;
+const HECHO = { aprobar: 'aprobado', rechazar: 'rechazado', eliminar: 'eliminado', anular: 'anulado', guardar: 'guardado', enviar: 'enviado', cancelar: 'cancelado', cerrar: 'cerrado', quitar: 'quitado', confirmar: 'confirmado' };
 function textoAccion(etiqueta) {
-  const t = String(etiqueta ?? '').replace(/\s+/g, ' ').replace(/…$/, '').trim();
-  return t ? `Listo. Se completó: ${t}.` : 'Listo. Los cambios se guardaron.';
+  // "Sí, rechazar" → "Listo: rechazado."; "Guardar cambios" → "Listo: guardado (cambios)."
+  const t = String(etiqueta ?? '').replace(/\s+/g, ' ').replace(/…$/, '').replace(/^sí,\s*/i, '').trim();
+  if (!t) return 'Listo. Los cambios se guardaron.';
+  const [v, ...resto] = t.split(' ');
+  const p = HECHO[v.toLowerCase()];
+  return p ? `Listo: ${p}${resto.length ? ` (${resto.join(' ')})` : ''}.` : `Listo. Se completó: ${t}.`;
 }
 function aviso(texto, tipo = 'ok') {
   let zona = document.getElementById('avisos');
@@ -184,7 +189,7 @@ function tabla(cols, filas, vacio, { porPagina = 25, exportar = null } = {}) {
     const xs = (Array.isArray(v) ? v : [v]).flat().filter((x) => x != null && x !== '' && x !== false);
     return xs.length && xs.every(esAccion) ? h('span', { class: 'celda acciones-celda' }, xs) : h('span', { class: 'celda' }, v);
   };
-  const fila = (f) => h('tr', {}, cols.map((c) => { const v = c.v(f); const cel = celda(v); return h('td', { 'data-label': c.t, class: [c.num ? 'num' : null, cel.classList.contains('acciones-celda') ? 'td-acciones' : null].filter(Boolean).join(' ') || null }, cel); }));
+  const fila = (f) => h('tr', {}, cols.map((c) => { const v = c.v(f); const cel = celda(v); return h('td', { 'data-label': c.etiqueta ?? (typeof c.t === 'string' ? c.t : ''), class: [c.num ? 'num' : null, c.clase ?? null, cel.classList.contains('acciones-celda') ? 'td-acciones' : null].filter(Boolean).join(' ') || null }, cel); }));
   const cabeza = h('thead', {}, h('tr', {}, cols.map((c) => h('th', { scope: 'col', class: c.num ? 'num' : null }, c.t))));
   if (filas.length <= porPagina) {
     const t = h('div', { class: 'tabla-envoltura' }, h('table', { class: 'tabla' }, cabeza, h('tbody', {}, filas.map(fila))));
@@ -615,15 +620,26 @@ function listaFiltrada(clave, filas, campos, pintarTabla, resumen) {
     }
     return true;
   }
-  function aplicar() {
+  let aplicar = function () {
     const vis = filas.filter(pasa);
     const activos = ctrls.filter(({ c }) => st[c.id]).length;
     cuenta.textContent = `${activos ? `${fmtN.format(vis.length)} de ${fmtN.format(filas.length)}` : fmtN.format(filas.length)}${resumen ? ` · ${resumen(vis)}` : ''}`;
     limpiar.hidden = !activos;
     caja.replaceChildren(pintarTabla(vis, activos));
-  }
+  };
   aplicar();
-  return h('div', { class: 'lf' }, filas.length ? h('div', { class: 'lf-barra' }, ...ctrls.map((x) => x.nodo), h('div', { class: 'lf-pie' }, cuenta, limpiar)) : null, caja);
+  // En el celular los filtros extra se pliegan bajo "Más filtros" para no ocupar toda la pantalla.
+  const principales = ctrls.filter(({ c }) => c.tipo === 'buscar');
+  const extra = ctrls.filter(({ c }) => c.tipo !== 'buscar');
+  const resumenMas = h('summary', {}, 'Más filtros');
+  const mas = h('details', { class: 'lf-mas' }, resumenMas, h('div', { class: 'lf-mas-campos' }, ...extra.map((x) => x.nodo)));
+  const ancho = matchMedia('(min-width: 768px)');
+  const ajustar = () => { const n = extra.filter(({ c }) => st[c.id]).length; resumenMas.textContent = n ? `Más filtros (${n} activo${n > 1 ? 's' : ''})` : 'Más filtros'; if (ancho.matches) mas.open = true; };
+  ancho.addEventListener?.('change', ajustar);
+  const aplicarAntes = aplicar;
+  aplicar = () => { aplicarAntes(); ajustar(); };
+  ajustar();
+  return h('div', { class: 'lf' }, filas.length ? h('div', { class: 'lf-barra' }, ...principales.map((x) => x.nodo), extra.length ? mas : null, h('div', { class: 'lf-pie' }, cuenta, limpiar)) : null, caja);
 }
 
 V.misVouchers = async () => {
@@ -1249,12 +1265,31 @@ V.revisar = async () => {
     { id: 'hasta', etiqueta: 'Hasta', tipo: 'hasta', valor: (v) => v.fecha },
     { id: 'min', etiqueta: 'Total desde RD$', tipo: 'minimo', valor: (v) => v.total },
   ];
+  // Selección: una por una o todas las que se ven con los filtros (en todas las páginas).
+  const sel = new Set();
+  const elegidos = () => vistos.filter((v) => sel.has(v.id));
+  const marcaTodos = h('input', { type: 'checkbox', 'aria-label': 'Seleccionar todos los vouchers que se ven con los filtros' });
+  marcaTodos.addEventListener('change', () => { if (marcaTodos.checked) vistos.forEach((v) => sel.add(v.id)); else sel.clear(); document.querySelectorAll('input[data-sel-voucher]').forEach((c) => { c.checked = sel.has(c.dataset.selVoucher); c.closest('tr')?.classList.toggle('fila-sel', c.checked); }); pintarLote(); });
+  const loteCaja = h('div', { class: 'lote-barra' });
+  function pintarLote() {
+    const es = elegidos(); const n = es.length; const objetivo = n ? es : vistos;
+    marcaTodos.checked = n > 0 && n === vistos.length; marcaTodos.indeterminate = n > 0 && n < vistos.length;
+    const total = RD(objetivo.reduce((t, v) => t + v.total, 0));
+    loteCaja.replaceChildren(...(vistos.length < 2 && !n ? [] : [
+      h('span', { class: 'lote-estado' }, n ? `${fmtN.format(n)} seleccionado(s) · ${total}` : `Ninguno seleccionado. Los botones actúan sobre los ${fmtN.format(vistos.length)} que se ven.`),
+      h('div', { class: 'acciones', style: 'margin:0' },
+        h('button', { class: 'btn', type: 'button', onclick: () => todos(true) }, n ? `Aprobar seleccionados (${fmtN.format(n)})` : `Aprobar todos (${fmtN.format(vistos.length)})`),
+        h('button', { class: 'btn-sec btn-peligro', type: 'button', onclick: () => todos(false) }, n ? `Rechazar seleccionados (${fmtN.format(n)})` : `Rechazar todos (${fmtN.format(vistos.length)})`),
+        n ? h('button', { class: 'btn-enlace', type: 'button', onclick: () => { sel.clear(); marcaTodos.dispatchEvent(new Event('change')); } }, 'Quitar selección') : null),
+    ]));
+  }
   async function todos(aprobar) {
-    const vs = vistos; if (!vs.length) return;
+    const vs = elegidos().length ? elegidos() : vistos; if (!vs.length) return;
+    const que = elegidos().length ? 'Son los que seleccionaste.' : 'Son todos los que se ven con los filtros de ahora.';
     const total = RD(vs.reduce((n, v) => n + v.total, 0));
     const r = aprobar
-      ? await confirmar(`Aprobar ${fmtN.format(vs.length)} voucher(s)`, `¿Seguro que quieres aprobar ${fmtN.format(vs.length)} voucher(s) por ${total} en total? Son los que se ven con los filtros de ahora. Contarán para la comisión de cada dependiente.`, { okTexto: `Sí, aprobar ${fmtN.format(vs.length)}` })
-      : await confirmar(`Rechazar ${fmtN.format(vs.length)} voucher(s)`, `¿Seguro que quieres rechazar ${fmtN.format(vs.length)} voucher(s) por ${total} en total? Son los que se ven con los filtros de ahora. Escribe el motivo: cada dependiente lo verá.`, { okTexto: `Sí, rechazar ${fmtN.format(vs.length)}`, pedirMotivo: true });
+      ? await confirmar(`Aprobar ${fmtN.format(vs.length)} voucher(s)`, `¿Seguro que quieres aprobar ${fmtN.format(vs.length)} voucher(s) por ${total} en total? ${que} Contarán para la comisión de cada dependiente.`, { okTexto: `Sí, aprobar ${fmtN.format(vs.length)}` })
+      : await confirmar(`Rechazar ${fmtN.format(vs.length)} voucher(s)`, `¿Seguro que quieres rechazar ${fmtN.format(vs.length)} voucher(s) por ${total} en total? ${que} Escribe el motivo: cada dependiente lo verá.`, { okTexto: `Sí, rechazar ${fmtN.format(vs.length)}`, pedirMotivo: true });
     if (r == null || r === false) return;
     try {
       const out = await api('POST', '/api/vouchers/decidir', { ids: vs.map((v) => v.id), aprobar, ...(aprobar ? {} : { motivo: r }) });
@@ -1263,14 +1298,15 @@ V.revisar = async () => {
     router();
   }
   const cols = [
+    { t: marcaTodos, etiqueta: 'Seleccionar este voucher', clase: 'td-sel', v: (v) => { const c = h('input', { type: 'checkbox', 'data-sel-voucher': v.id, 'aria-label': `Seleccionar voucher de ${v.dependiente} del ${fecha(v.fecha)} por ${RD(v.total)}` }); c.checked = sel.has(v.id); c.addEventListener('change', () => { if (c.checked) sel.add(v.id); else sel.delete(v.id); c.closest('tr')?.classList.toggle('fila-sel', c.checked); pintarLote(); }); queueMicrotask(() => c.closest('tr')?.classList.toggle('fila-sel', c.checked)); return h('span', { class: 'celda-sel' }, c); } },
     { t: 'Dependiente', v: (v) => [v.dependiente, sub(v.farmacia ?? ''), v.municipio ? sub(`${v.municipio}, ${v.provincia}`) : null] },
     { t: 'Foto', v: (v) => (v.foto ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => abrirFoto(v) }, 'Ver foto') : v.referencia ?? '') }, { t: 'Fecha', v: (v) => fecha(v.fecha) },
     { t: 'Medicamentos', v: (v) => [medsDe(v), v.medico ? sub(v.medico) : null] }, { t: 'Total', num: true, v: (v) => RD(v.total) },
-    { t: '', v: (v) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' }, h('button', { class: 'btn btn-peq', onclick: async () => { if (await decidir(v, true)) router(); } }, 'Aprobar'), h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await decidir(v, false)) router(); } }, 'Rechazar')) },
+    { t: '', clase: 'td-acciones', v: (v) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' }, h('button', { class: 'btn btn-peq', onclick: async () => { if (await decidir(v, true)) router(); } }, 'Aprobar'), h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await decidir(v, false)) router(); } }, 'Rechazar')) },
   ];
-  const lote = (vs) => (vs.length > 1 ? h('div', { class: 'acciones lote' }, h('button', { class: 'btn', type: 'button', onclick: () => todos(true) }, `Aprobar todos (${fmtN.format(vs.length)})`), h('button', { class: 'btn-sec btn-peligro', type: 'button', onclick: () => todos(false) }, `Rechazar todos (${fmtN.format(vs.length)})`)) : null);
+
   return vista('Vouchers por revisar', 'Todos los pendientes, de cualquier dependiente, provincia o municipio. Solo los aprobados cuentan para la comisión. En la foto puedes comparar lo cargado y aprobar o rechazar sin cerrarla.',
-    listaFiltrada('revisar', filas, campos, (vs, activos) => { vistos = vs; return h('div', {}, lote(vs), tabla(cols, vs, activos ? ['Ningún voucher pendiente con estos filtros', 'Cambia o limpia los filtros.'] : ['No hay vouchers pendientes', 'Cuando un dependiente cargue uno, aparecerá aquí.'], { porPagina: 25 })); }, (vs) => `Total ${RD(vs.reduce((n, v) => n + v.total, 0))}`));
+    listaFiltrada('revisar', filas, campos, (vs, activos) => { vistos = vs; for (const id of [...sel]) if (!vs.some((v) => v.id === id)) sel.delete(id); pintarLote(); return h('div', {}, loteCaja, tabla(cols, vs, activos ? ['Ningún voucher pendiente con estos filtros', 'Cambia o limpia los filtros.'] : ['No hay vouchers pendientes', 'Cuando un dependiente cargue uno, aparecerá aquí.'], { porPagina: 25 })); }, (vs) => `Total ${RD(vs.reduce((n, v) => n + v.total, 0))}`));
 };
 V.comisiones = async () => {
   const puedeConfig = ['administrador', 'gerencia', 'finanzas'].includes(yo.role);
