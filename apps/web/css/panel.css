@@ -993,3 +993,13 @@ tr.fila-sel td { background: #E9F0F6; }
 .lf-campo .ms-op input, .ms-op input { width: 18px; height: 18px; min-height: 0; padding: 0; border-radius: 4px; flex: none; }
 .lf-campo .ms-op { display: flex; gap: .55rem; align-items: center; }
 .lf-campo .ms-op span { color: #0F2A44; font-size: .95rem; }
+/* Celular (Safari/iPhone): la altura real visible, la foto arriba más pequeña y los datos abajo con su propio desplazamiento */
+.visor { height: 100vh; height: 100dvh; max-height: 100dvh; }
+.visor-panel { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; }
+@media (max-width: 760px) {
+  .visor.con-panel .visor-cuerpo { grid-template-rows: minmax(0, 40%) minmax(0, 1fr); }
+  .visor.con-panel .visor-pie { display: none; }
+  .visor.con-panel .visor-panel { padding: .75rem .9rem calc(1.5rem + env(safe-area-inset-bottom)); }
+  .visor.con-panel .visor-barra { padding-top: calc(.5rem + env(safe-area-inset-top)); }
+  .visor-titulo { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .95rem; }
+}
