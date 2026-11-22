@@ -190,7 +190,7 @@ function textoCelda(v) {
 }
 /** Botones de exportar (Excel y PDF) para una tabla; exporta las filas que se están viendo. */
 function barraExportar(cols, filasVisibles, { nombre, titulo }) {
-  const usar = cols.filter((c) => c.t);
+  const usar = cols.filter((c) => typeof c.t === 'string' && c.t);
   const datos = () => { const fs = filasVisibles(); return [usar.map((c) => c.t), fs.map((f) => usar.map((c) => { try { return textoCelda(c.v(f)); } catch { return ''; } }))]; };
   const archivo = `${nombre}-${hoy()}`;
   return h('div', { class: 'exportar' },
@@ -2718,7 +2718,13 @@ V.establecimientos = async () => {
   // "No es un centro de salud": por fila o varios marcados a la vez. Se puede restaurar.
   const marcados = new Set();
   const bDesc = h('button', { class: 'btn-sec', type: 'button', disabled: true }, 'Marcar como no es centro de salud');
-  const contar = () => { bDesc.disabled = !marcados.size; bDesc.textContent = marcados.size ? `Marcar ${fmtN.format(marcados.size)} como no es centro de salud` : 'Marcar como no es centro de salud'; };
+  // Marcar todos: los de la lista con los filtros actuales (todas las páginas).
+  const marcaTodosE = h('input', { type: 'checkbox', 'aria-label': 'Marcar todos los de la lista' });
+  const contar = () => {
+    bDesc.disabled = !marcados.size; bDesc.textContent = marcados.size ? `Marcar ${fmtN.format(marcados.size)} como no es centro de salud` : 'Marcar como no es centro de salud';
+    marcaTodosE.checked = marcados.size > 0 && marcados.size === items.length; marcaTodosE.indeterminate = marcados.size > 0 && marcados.size < items.length;
+  };
+  marcaTodosE.addEventListener('change', () => { if (marcaTodosE.checked) items.forEach((x) => marcados.add(x.id)); else marcados.clear(); document.querySelectorAll('input[data-marca]').forEach((c) => { c.checked = marcados.has(c.dataset.marca); }); contar(); });
   const descartar = async (ids) => {
     if (!(await confirmar('No es un centro de salud', `${fmtN.format(ids.length)} registro(s) saldrán de las zonas, los cronogramas y las propuestas. El registro automático no los volverá a traer. Puedes restaurarlos en "No son centros de salud".`, { okTexto: 'Marcar' }))) return;
     try { await api('POST', '/api/territorio/establecimientos/descartar', { ids }); router(); } catch (e) { alert(e.message); }
@@ -2726,7 +2732,7 @@ V.establecimientos = async () => {
   bDesc.addEventListener('click', () => descartar([...marcados]));
   const restaurar = async (x) => { try { await api('POST', `/api/territorio/establecimientos/${x.id}/restaurar`); router(); } catch (e) { alert(e.message); } };
   const columnas = [
-    ...(GESTION_T() && fver !== 'descartados' ? [{ t: '', v: (x) => h('input', { type: 'checkbox', class: 'marca', 'aria-label': `Marcar ${x.nombre}`, checked: marcados.has(x.id), onchange: (e) => { e.target.checked ? marcados.add(x.id) : marcados.delete(x.id); contar(); } }) }] : []),
+    ...(GESTION_T() && fver !== 'descartados' ? [{ t: marcaTodosE, etiqueta: 'Marcar', v: (x) => h('input', { type: 'checkbox', class: 'marca', 'data-marca': x.id, 'aria-label': `Marcar ${x.nombre}`, checked: marcados.has(x.id), onchange: (e) => { e.target.checked ? marcados.add(x.id) : marcados.delete(x.id); contar(); } }) }] : []),
     { t: 'Nombre', v: (x) => [x.nombre, x.revisar && GESTION_T() ? h('span', { class: 'chip pendiente', style: 'margin-left:.5rem' }, 'Revisar') : null, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] },
     { t: 'Tipo', v: (x) => div.tipos[x.tipo] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` },
     { t: 'Estado', v: (x) => (x.estado === 'inactivo' ? [h('span', { class: 'chip anulado' }, 'No es centro de salud'), x.descarteMotivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.descarteMotivo) : null] : chip(x.estado)) },
@@ -3245,7 +3251,13 @@ V.representantes = async () => {
     const uni = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), 'es'));
     const selL = new Set();
     const bQuitar = h('button', { class: 'btn-sec btn-peligro', type: 'button', disabled: true }, 'Quitar los marcados');
-    const contarL = () => { bQuitar.disabled = !selL.size; bQuitar.textContent = selL.size ? `Quitar ${fmtN.format(selL.size)} marcado(s)` : 'Quitar los marcados'; };
+    let vistosL = [];
+    const marcaTodosL = h('input', { type: 'checkbox', 'aria-label': 'Marcar todos los lugares que se ven con los filtros' });
+    const contarL = () => {
+      bQuitar.disabled = !selL.size; bQuitar.textContent = selL.size ? `Quitar ${fmtN.format(selL.size)} marcado(s)` : 'Quitar los marcados';
+      const n = vistosL.filter((x) => selL.has(x.id)).length; marcaTodosL.checked = n > 0 && n === vistosL.length; marcaTodosL.indeterminate = n > 0 && n < vistosL.length;
+    };
+    marcaTodosL.addEventListener('change', () => { if (marcaTodosL.checked) vistosL.forEach((x) => selL.add(x.id)); else vistosL.forEach((x) => selL.delete(x.id)); document.querySelectorAll('input[data-marca-l]').forEach((c) => { c.checked = selL.has(c.dataset.marcaL); }); contarL(); });
     const quitarL = async (ids) => {
       const r2 = await confirmar('Quitar lugares', `${fmtN.format(ids.length)} lugar(es) saldrán de las zonas, los cronogramas y las metas de visitas. El registro automático no los volverá a traer. Los establecimientos se pueden restaurar en Establecimientos → "No son centros de salud".`, { okTexto: 'Quitar', pedirMotivo: true, etiquetaMotivo: 'Motivo', sugerencias: [{ texto: 'No es un centro de salud.' }, { texto: 'No es una farmacia.' }, { texto: 'Está cerrado.' }, { texto: 'Repetido.' }, { texto: 'No está en esta zona.' }] });
       if (r2 == null) return;
@@ -3263,7 +3275,7 @@ V.representantes = async () => {
       { id: 'desde', etiqueta: 'Agregado desde', tipo: 'desde', valor: (x) => String(x.createdAt ?? '').slice(0, 10) },
     ];
     const colsL = [
-      ...(ES_GER() ? [{ t: '', etiqueta: 'Marcar', clase: 'td-sel', v: (x) => { const c = h('input', { type: 'checkbox', 'aria-label': `Marcar ${x.nombre}`, checked: selL.has(x.id) }); c.addEventListener('change', () => { c.checked ? selL.add(x.id) : selL.delete(x.id); contarL(); }); return h('span', { class: 'celda-sel' }, c); } }] : []),
+      ...(ES_GER() ? [{ t: marcaTodosL, etiqueta: 'Marcar', clase: 'td-sel', v: (x) => { const c = h('input', { type: 'checkbox', 'data-marca-l': x.id, 'aria-label': `Marcar ${x.nombre}`, checked: selL.has(x.id) }); c.addEventListener('change', () => { c.checked ? selL.add(x.id) : selL.delete(x.id); contarL(); }); return h('span', { class: 'celda-sel' }, c); } }] : []),
       { t: 'Lugar', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] },
       { t: 'Tipo', v: (x) => TIPOS_L[x.tipo] ?? x.tipo }, { t: 'Municipio', v: (x) => [x.municipio, h('small', { style: 'display:block;color:var(--texto-2)' }, x.provincia)] },
       { t: 'Cómo entró', v: (x) => [ORIGEN[x.fuente ?? 'manual'] ?? x.fuente, x.createdAt ? h('small', { style: 'display:block;color:var(--texto-2)' }, fecha(String(x.createdAt).slice(0, 10))) : null] },
@@ -3272,7 +3284,7 @@ V.representantes = async () => {
     ];
     const detalle = todos.length ? h('div', { style: 'margin-top:1.5rem' }, h('h2', {}, 'Cada lugar de su zona'),
       h('p', { class: 'hint' }, 'Todos los lugares activos de sus provincias y municipios, con cómo entraron al sistema. Si alguno no va (no es centro de salud, está cerrado, repetido), márcalo y quítalo.'),
-      listaFiltrada(`lugares-${id}`, todos, camposL, (vs) => h('div', {}, ES_GER() ? h('div', { class: 'acciones', style: 'margin:0 0 .75rem' }, bQuitar) : null, tabla(colsL, vs, ['Ningún lugar con estos filtros', 'Cambia o limpia los filtros.'], { porPagina: 25 })))) : null;
+      listaFiltrada(`lugares-${id}`, todos, camposL, (vs) => { vistosL = vs; contarL(); return h('div', {}, ES_GER() ? h('div', { class: 'acciones', style: 'margin:0 0 .75rem' }, bQuitar) : null, tabla(colsL, vs, ['Ningún lugar con estos filtros', 'Cambia o limpia los filtros.'], { porPagina: 25 })); })) : null;
     const lugares = h('div', {},
       tabla([{ t: 'Municipio', v: (x) => [x.municipio, h('small', { style: 'display:block;color:var(--texto-2)' }, x.provincia)] },
         { t: 'Farmacias', num: true, v: (x) => T(x.farmacia) }, { t: 'Hospitales', num: true, v: (x) => T(x.hospital) }, { t: 'Clínicas', num: true, v: (x) => T(x.clinica) },
