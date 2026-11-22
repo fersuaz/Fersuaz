@@ -1,6 +1,8 @@
 // Metas mensuales por posición (globales) y por representante (reemplazan la de su posición).
-// - Vendedor y PVC: visitas a farmacias.
-// - Visitador: visitas a farmacias y a centros de salud.
+// - Vendedor: visitas a farmacias.
+// - Visitador y PVC (visitador y vendedor a la vez): visitas a farmacias y a centros de salud.
+// Las metas de visitas son "veces al mes por lugar": la meta del mes = veces × lugares de su zona
+// (por ejemplo, 2 veces × 100 farmacias = 200 visitas). También se mide cuántos lugares recibieron todas sus visitas.
 // - Promotora: recetas, medicamentos por receta, volumen recetado (RD$, precio del catálogo) y pacientes.
 // Una visita cuenta solo cuando el representante la marca como hecha en su jornada.
 import { AuthError as HttpError } from './auth.js';
@@ -8,20 +10,32 @@ import { solapes, dentroDeZona, textoSolapes } from './territorio.js';
 
 const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 export const METRICAS = Object.freeze({
-  visitasFarmacias: { nombre: 'Visitas a farmacias', unidad: 'visitas' },
-  visitasCentros: { nombre: 'Visitas a centros de salud', unidad: 'visitas' },
+  visitasFarmacias: { nombre: 'Visitas a farmacias', unidad: 'visitas', porLugar: 'farmacia', etiquetaMeta: 'Veces al mes por farmacia' },
+  visitasCentros: { nombre: 'Visitas a centros de salud', unidad: 'visitas', porLugar: 'centro', etiquetaMeta: 'Veces al mes por centro de salud' },
   recetas: { nombre: 'Recetas', unidad: 'recetas' },
   medicamentosPorReceta: { nombre: 'Medicamentos por receta', unidad: 'promedio', decimal: true },
   volumen: { nombre: 'Volumen recetado', unidad: 'RD$', decimal: true },
   pacientes: { nombre: 'Pacientes', unidad: 'pacientes' },
 });
 export const METRICAS_POSICION = Object.freeze({
-  Vendedor: ['visitasFarmacias'], PVC: ['visitasFarmacias'],
+  Vendedor: ['visitasFarmacias'], PVC: ['visitasFarmacias', 'visitasCentros'],
   Visitador: ['visitasFarmacias', 'visitasCentros'],
   Promotora: ['recetas', 'medicamentosPorReceta', 'volumen', 'pacientes'],
 });
 
 /** Valores del mes de un representante, a partir de sus jornadas (visitas hechas) y sus recetas. */
+/** Meta de visitas del mes: veces por lugar × lugares de la zona. Unidad de cálculo con prueba. */
+export function metaVisitas(vecesPorLugar, lugares) {
+  if (vecesPorLugar == null || !Number.isFinite(Number(lugares))) return null;
+  return Number(vecesPorLugar) * Number(lugares);
+}
+/** Lugares que recibieron al menos `veces` visitas hechas en el mes. */
+export function lugaresCubiertos(paradas, tipo, veces) {
+  if (!veces) return 0;
+  const n = new Map();
+  for (const p of paradas) if (p.hecha === true && (tipo === 'farmacia' ? p.refTipo === 'farmacia' : p.refTipo === 'establecimiento')) n.set(p.refId, (n.get(p.refId) ?? 0) + 1);
+  return [...n.values()].filter((x) => x >= veces).length;
+}
 export function valoresDelMes({ jornadas = [], recetas = [], precios = new Map() }) {
   const paradas = jornadas.filter((j) => j.estado !== 'cancelada').flatMap((j) => j.paradas ?? []).filter((p) => p.hecha === true);
   const lineas = recetas.flatMap((r) => r.items ?? []);
@@ -100,13 +114,26 @@ export function createMetas({ data, users, audit, hoy }) {
     const jornadas = (await data.list('jornadas')).filter((j) => j.fecha.startsWith(mes));
     const recetas = (await data.list('recetas')).filter((r) => String(r.fecha).startsWith(mes));
     const dias = diasDe(mes);
+    const zonas = new Map((await data.list('zonas')).map((z) => [z.representanteId, z]));
+    const vivo = (x) => !['inactivo', 'inactiva'].includes(x.estado);
+    const farmacias = (await data.list('farmacias')).filter(vivo);
+    const centros = (await data.list('establecimientos')).filter(vivo);
     const items = reps.map((rep) => {
-      const val = valoresDelMes({ jornadas: jornadas.filter((j) => j.representanteId === rep.id), recetas: recetas.filter((r) => r.promotoraId === rep.id), precios });
+      const js = jornadas.filter((j) => j.representanteId === rep.id);
+      const val = valoresDelMes({ jornadas: js, recetas: recetas.filter((r) => r.promotoraId === rep.id), precios });
+      const paradas = js.filter((j) => j.estado !== 'cancelada').flatMap((j) => j.paradas ?? []);
+      const z = zonas.get(rep.id);
+      const enZona = { farmacia: z ? farmacias.filter((x) => dentroDeZona(z, x.provincia, x.municipio)).length : 0, centro: z ? centros.filter((x) => dentroDeZona(z, x.provincia, x.municipio)).length : 0 };
       const metas = metaEfectiva(config, rep);
-      const metricas = Object.entries(metas).map(([k, m]) => ({
-        clave: k, ...METRICAS[k], meta: m.meta, fuente: m.fuente, valor: val[k],
-        porcentaje: m.meta ? Math.round((val[k] / m.meta) * 100) : null,
-      }));
+      const metricas = Object.entries(metas).map(([k, m]) => {
+        const lugar = METRICAS[k].porLugar;
+        const meta = lugar ? metaVisitas(m.meta, enZona[lugar]) : m.meta;
+        return {
+          clave: k, ...METRICAS[k], meta, fuente: m.fuente, valor: val[k],
+          ...(lugar ? { vecesPorLugar: m.meta, lugares: enZona[lugar], cubiertos: lugaresCubiertos(paradas, lugar, m.meta) } : {}),
+          porcentaje: meta ? Math.round((val[k] / meta) * 100) : null,
+        };
+      });
       const conMeta = metricas.filter((m) => m.porcentaje != null);
       return { representante: { id: rep.id, nombre: rep.fullName, posicion: rep.position }, metricas, promedio: conMeta.length ? Math.round(conMeta.reduce((s, m) => s + Math.min(m.porcentaje, 100), 0) / conMeta.length) : null };
     }).sort((a, b) => (b.promedio ?? -1) - (a.promedio ?? -1) || a.representante.nombre.localeCompare(b.representante.nombre, 'es'));

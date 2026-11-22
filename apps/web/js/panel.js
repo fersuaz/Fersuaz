@@ -619,8 +619,14 @@ function listaFiltrada(clave, filas, campos, pintarTabla, resumen) {
   const cuenta = h('p', { class: 'lf-cuenta', 'aria-live': 'polite' });
   const ctrls = campos.map((c) => {
     let el;
-    if (c.tipo === 'opciones') el = h('select', { 'data-sin-buscador': c.opciones.length < 9 ? '1' : null }, h('option', { value: '' }, 'Todos'), ...c.opciones.map((o) => h('option', { value: o.value ?? o }, o.label ?? o)));
-    else if (c.tipo === 'desde' || c.tipo === 'hasta') el = h('input', { type: 'date' });
+    if (c.tipo === 'opciones') {
+      // Varias a la vez: se guarda la lista elegida.
+      const ms = multiSel({ id: `lf-${clave}-${c.id}`, etiqueta: c.etiqueta, opciones: c.opciones.map((o) => ({ value: o.value ?? o, label: o.label ?? o })), valores: Array.isArray(st[c.id]) ? st[c.id] : [], plural: c.plural ?? 'elegidos', conAplicar: false,
+        alCambiar: (vals) => { st[c.id] = vals.length ? vals : ''; aplicar(); } });
+      ms.classList.add('lf-campo');
+      return { c, el: null, nodo: ms };
+    }
+    if (c.tipo === 'desde' || c.tipo === 'hasta') el = h('input', { type: 'date' });
     else if (c.tipo === 'minimo') el = h('input', { inputmode: 'decimal', placeholder: '0.00' });
     else el = h('input', { type: 'search', placeholder: c.placeholder ?? 'Buscar', autocomplete: 'off' });
     el.value = st[c.id] ?? '';
@@ -628,13 +634,13 @@ function listaFiltrada(clave, filas, campos, pintarTabla, resumen) {
     return { c, el, nodo: h('label', { class: `lf-campo lf-${c.tipo}` }, h('span', {}, c.etiqueta), el) };
   });
   const limpiar = h('button', { type: 'button', class: 'btn-enlace' }, 'Limpiar filtros');
-  limpiar.addEventListener('click', () => { for (const k of Object.keys(st)) delete st[k]; ctrls.forEach(({ el }) => { el.value = ''; }); aplicar(); });
+  limpiar.addEventListener('click', () => { for (const k of Object.keys(st)) delete st[k]; router(); });
   function pasa(f) {
     for (const { c } of ctrls) {
       const v = st[c.id]; if (!v) continue;
       const x = c.valor(f);
       if (c.tipo === 'buscar') { if (!sinTildes(x).includes(sinTildes(v.trim()))) return false; }
-      else if (c.tipo === 'opciones') { if (!(Array.isArray(x) ? x.includes(v) : String(x ?? '') === v)) return false; }
+      else if (c.tipo === 'opciones') { const vs = Array.isArray(v) ? v : [v]; const xs = Array.isArray(x) ? x : [String(x ?? '')]; if (!vs.some((y) => xs.includes(y))) return false; }
       else if (c.tipo === 'desde') { if (String(x) < v) return false; }
       else if (c.tipo === 'hasta') { if (String(x) > v) return false; }
       else if (c.tipo === 'minimo') { const n = Number(String(v).replace(/,/g, '')); if (Number.isFinite(n) && Number(x) < n) return false; }
@@ -981,7 +987,8 @@ function barraMeta(m, dias) {
   const atrasado = m.clave !== 'medicamentosPorReceta' && dias.transcurridos > 0 && dias.transcurridos < dias.total && pct < esperado * 0.8;
   return h('div', { class: 'meta-celda' }, h('span', {}, h('strong', {}, fmtMeta(m, m.valor)), ` de ${fmtMeta(m, m.meta)}`),
     h('div', { class: 'meta-barra', role: 'img', 'aria-label': `${pct}% de la meta` }, h('span', { style: `width:${Math.min(pct, 100)}%` }), m.clave !== 'medicamentosPorReceta' && esperado > 0 && esperado < 100 ? h('i', { style: `left:${esperado}%`, title: `Ritmo esperado a hoy: ${esperado}%` }) : null),
-    h('small', { class: atrasado ? 'atrasado' : '' }, `${pct}%${atrasado ? ' · por debajo del ritmo' : ''}${m.fuente === 'representante' ? ' · meta propia' : ''}`));
+    h('small', { class: atrasado ? 'atrasado' : '' }, `${pct}%${atrasado ? ' · por debajo del ritmo' : ''}${m.fuente === 'representante' ? ' · meta propia' : ''}`),
+    m.vecesPorLugar != null ? h('small', { class: 'meta-calculo' }, `${fmtN.format(m.vecesPorLugar)} ${m.vecesPorLugar === 1 ? 'vez' : 'veces'} × ${fmtN.format(m.lugares)} ${m.porLugar === 'farmacia' ? 'farmacias' : 'centros'} de su zona. Con todas sus visitas: ${fmtN.format(m.cubiertos)} de ${fmtN.format(m.lugares)}.`) : null);
 }
 /** Equipos por zona: vendedor + visitador + promotora (y PVC) de la misma zona; un objetivo común, vender más. */
 async function seccionEquipos(mes) {
@@ -1040,12 +1047,12 @@ V.metas = async () => {
       const ks = cfg.porPosicionMetricas[pos];
       const b = h('button', { class: 'btn-sec', type: 'submit' }, `Guardar metas de ${pos}`);
       const f = h('form', { class: 'tarjeta', novalidate: true, style: 'margin-bottom:1rem' }, h('h2', {}, pos),
-        h('div', { class: 'form-fila' }, ks.map((k) => campo(k, `${cfg.metricas[k].nombre}${cfg.metricas[k].unidad === 'RD$' ? ' (RD$)' : ''} por mes`, { type: 'number', min: 0, step: cfg.metricas[k].decimal ? 0.1 : 1, inputmode: cfg.metricas[k].decimal ? 'decimal' : 'numeric', value: cfg.porPosicion?.[pos]?.[k] ?? '' }))),
+        h('div', { class: 'form-fila' }, ks.map((k) => campo(k, cfg.metricas[k].etiquetaMeta ?? `${cfg.metricas[k].nombre}${cfg.metricas[k].unidad === 'RD$' ? ' (RD$)' : ''} por mes`, { type: 'number', min: 0, step: cfg.metricas[k].decimal ? 0.1 : 1, inputmode: cfg.metricas[k].decimal ? 'decimal' : 'numeric', value: cfg.porPosicion?.[pos]?.[k] ?? '' }))),
         h('div', { class: 'acciones' }, b));
       f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/metas/posicion', { posicion: pos, valores: Object.fromEntries(ks.map((k) => [k, f[k].value])) }))) router(); });
       return f;
     };
-    bloques.push(S('posicion', 'Metas por posición', h('p', { class: 'hint' }, 'Aplican a todos los de esa posición, cada mes. Vendedor y PVC: visitas a farmacias. Visitador: farmacias y centros. Promotora: recetas, medicamentos por receta, volumen (unidades × precio del catálogo) y pacientes.'), ['Vendedor', 'PVC', 'Visitador', 'Promotora'].map(formPos)));
+    bloques.push(S('posicion', 'Metas por posición', h('p', { class: 'hint' }, 'Aplican a todos los de esa posición, cada mes. Las visitas se fijan como veces al mes por lugar: la meta del mes es veces × lugares de su zona (por ejemplo, 2 veces × 100 farmacias = 200 visitas). Vendedor: farmacias. Visitador y PVC (visitador y vendedor a la vez): farmacias y centros de salud. Promotora: recetas, medicamentos por receta, volumen (unidades × precio del catálogo) y pacientes.'), ['Vendedor', 'PVC', 'Visitador', 'Promotora'].map(formPos)));
     const reps = av.items.map((x) => x.representante);
     const rep = param('rep') || '';
     const sel = campo('rep', 'Representante', { options: reps.map((r) => ({ value: r.id, label: `${r.nombre} (${r.posicion})` })), value: rep, placeholder: 'Elige el representante' });
@@ -1057,7 +1064,7 @@ V.metas = async () => {
       const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar metas propias');
       fr = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, r.nombre),
         h('p', { class: 'hint' }, 'Deja en blanco lo que debe seguir la meta de su posición (aparece como sugerencia).'),
-        h('div', { class: 'form-fila' }, ks.map((k) => campo(k, cfg.metricas[k].nombre, { type: 'number', min: 0, step: cfg.metricas[k].decimal ? 0.1 : 1, value: propias[k] ?? '', placeholder: cfg.porPosicion?.[r.posicion]?.[k] != null ? `Posición: ${fmtN.format(cfg.porPosicion[r.posicion][k])}` : 'Sin meta' }))),
+        h('div', { class: 'form-fila' }, ks.map((k) => campo(k, cfg.metricas[k].etiquetaMeta ?? cfg.metricas[k].nombre, { type: 'number', min: 0, step: cfg.metricas[k].decimal ? 0.1 : 1, value: propias[k] ?? '', placeholder: cfg.porPosicion?.[r.posicion]?.[k] != null ? `Posición: ${fmtN.format(cfg.porPosicion[r.posicion][k])}` : 'Sin meta' }))),
         h('div', { class: 'acciones' }, b, Object.keys(propias).length ? h('button', { class: 'btn-sec', type: 'button', onclick: async () => { if (await confirmar('Quitar metas propias', `${r.nombre} volverá a la meta de ${r.posicion}.`, { okTexto: 'Quitar metas propias' })) { await api('POST', `/api/metas/representante/${r.id}`, { quitar: true }).catch((e) => alert(e.message)); router(); } } }, 'Usar las de su posición') : null));
       fr.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(fr, b, () => api('POST', `/api/metas/representante/${r.id}`, { valores: Object.fromEntries(ks.map((k) => [k, fr[k].value])) }))) router(); });
     }
@@ -2283,6 +2290,48 @@ function segmentos(etiqueta, opciones, actual, alCambiar) {
 const irA = (ruta, params) => { location.hash = `#${ruta}?${new URLSearchParams(params)}`; };
 
 /** Selects de provincia y municipio dependientes. */
+/**
+ * Selección múltiple con buscador: un botón que dice lo elegido ("Todas", "Duarte, Santiago", "3 municipios")
+ * y una lista de casillas. opciones: [{ value, label, grupo? }]. alCambiar(valores) al pulsar "Aplicar".
+ */
+function multiSel({ id, etiqueta, opciones, valores = [], todas = 'Todos', plural = 'elegidos', alCambiar, conAplicar = true }) {
+  let elegidos = new Set(valores.filter((v) => opciones.some((o) => o.value === v)));
+  const texto = () => { const xs = opciones.filter((o) => elegidos.has(o.value)); return !xs.length ? todas : xs.length <= 2 ? xs.map((o) => o.label).join(', ') : `${fmtN.format(xs.length)} ${plural}`; };
+  const boton = h('button', { type: 'button', class: 'ms-boton', id, 'aria-haspopup': 'true', 'aria-expanded': 'false' }, h('span', { class: 'ms-texto' }, texto()), h('span', { class: 'ms-flecha', 'aria-hidden': 'true' }));
+  const buscar = h('input', { type: 'search', placeholder: 'Buscar', 'aria-label': `Buscar en ${etiqueta}`, autocomplete: 'off' });
+  const lista = h('div', { class: 'ms-lista', role: 'group', 'aria-label': etiqueta });
+  const pintar = () => {
+    const k = sinTilde(buscar.value.trim());
+    const vis = opciones.filter((o) => !k || sinTilde(o.label).includes(k) || sinTilde(o.grupo ?? '').includes(k));
+    const nodos = []; let grupo = null;
+    for (const o of vis) {
+      if (o.grupo && o.grupo !== grupo) { grupo = o.grupo; nodos.push(h('div', { class: 'ms-grupo' }, grupo)); }
+      const c = h('input', { type: 'checkbox', value: o.value, checked: elegidos.has(o.value) });
+      c.addEventListener('change', () => { c.checked ? elegidos.add(o.value) : elegidos.delete(o.value); boton.querySelector('.ms-texto').textContent = texto(); if (!conAplicar) alCambiar?.([...elegidos]); });
+      nodos.push(h('label', { class: 'ms-op' }, c, h('span', {}, o.label)));
+    }
+    lista.replaceChildren(...(nodos.length ? nodos : [h('p', { class: 'hint', style: 'margin:.5rem' }, 'Sin resultados.')]));
+  };
+  buscar.addEventListener('input', pintar);
+  const todo = h('button', { type: 'button', class: 'btn-enlace' }, 'Todos'); const nada = h('button', { type: 'button', class: 'btn-enlace' }, 'Ninguno');
+  todo.addEventListener('click', () => { lista.querySelectorAll('input').forEach((c) => elegidos.add(c.value)); pintar(); boton.querySelector('.ms-texto').textContent = texto(); if (!conAplicar) alCambiar?.([...elegidos]); });
+  nada.addEventListener('click', () => { elegidos.clear(); pintar(); boton.querySelector('.ms-texto').textContent = texto(); if (!conAplicar) alCambiar?.([]); });
+  const aplicar = h('button', { type: 'button', class: 'btn btn-peq' }, 'Aplicar');
+  const panel = h('div', { class: 'ms-panel', hidden: true }, buscar, h('div', { class: 'ms-acc' }, todo, nada), lista, conAplicar ? h('div', { class: 'ms-pie' }, aplicar) : null);
+  const caja = h('div', { class: 'ms' }, boton, panel);
+  const cerrar = (aplicarCambios) => { if (panel.hidden) return; panel.hidden = true; boton.setAttribute('aria-expanded', 'false'); document.removeEventListener('pointerdown', fuera, true); if (aplicarCambios && conAplicar) alCambiar?.([...elegidos]); };
+  const fuera = (e) => { if (!caja.contains(e.target)) cerrar(true); };
+  boton.addEventListener('click', () => {
+    if (!panel.hidden) return cerrar(true);
+    panel.hidden = false; boton.setAttribute('aria-expanded', 'true'); buscar.value = ''; pintar(); buscar.focus();
+    document.addEventListener('pointerdown', fuera, true);
+  });
+  aplicar.addEventListener('click', () => { cerrar(true); boton.focus(); });
+  caja.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) { e.stopPropagation(); cerrar(true); boton.focus(); } });
+  caja.valores = () => [...elegidos];
+  return h('div', { class: 'field ms-campo' }, h('label', { for: id }, etiqueta), caja);
+}
+
 function selectorZona(provincias, municipios, { provincia = '', municipio = '', prefijo = '' } = {}) {
   const fp = campo(`${prefijo}provincia`, 'Provincia', { options: provincias.map((p) => ({ value: p, label: p })), value: provincia, placeholder: 'Elige la provincia' });
   const fm = campo(`${prefijo}municipio`, 'Municipio', { options: [], placeholder: 'Elige primero la provincia' });
@@ -2640,18 +2689,25 @@ V.establecimientos = async () => {
   const [div, mias] = await Promise.all([division(), api('GET', '/api/territorio/mis-provincias')]);
   const provincias = mias.items;
   if (!provincias.length) return vista('Establecimientos', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Aún no tienes provincias asignadas'), 'Pide a tu supervisor que te asigne las provincias que visitas.'));
-  const fprov = param('provincia') || (provincias.length === 1 ? provincias[0] : '');
-  const fmun = param('municipio') || ''; const ftipo = param('tipo') || '';
+  // Filtros de varias opciones a la vez: provincias, municipios y tipos (en la dirección, separados por coma).
+  const lst = (k) => (param(k) || '').split(',').filter(Boolean);
+  const fprovs = lst('provincia').length ? lst('provincia') : provincias.length === 1 ? [provincias[0]] : [];
+  const fmuns = lst('municipio'); const ftipos = lst('tipo');
+  const fprov = fprovs.length === 1 ? fprovs[0] : ''; const fmun = fmuns.length === 1 ? fmuns[0] : '';
   const fver = GESTION_T() && ['revisar', 'descartados'].includes(param('ver')) ? param('ver') : '';
-  const qs = new URLSearchParams(Object.entries({ provincia: fprov, municipio: fmun, tipo: ftipo, ver: fver }).filter(([, v]) => v));
+  const qs = new URLSearchParams(Object.entries({ provincia: fprovs.join(','), municipio: fmuns.join(','), tipo: ftipos.join(','), ver: fver }).filter(([, v]) => v));
   const { items } = await api('GET', `/api/territorio/establecimientos?${qs}`);
   const tipos = Object.entries(div.tipos);
-  const fz = selectorZona(provincias, div.municipios, { provincia: fprov, municipio: fmun, prefijo: 'f' });
-  const ft = campo('ftipo', 'Tipo', { options: tipos.map(([value, label]) => ({ value, label })), value: ftipo, placeholder: 'Todos los tipos' });
+  const ir = (cambio) => irA('establecimientos', Object.fromEntries(Object.entries({ sec: 'lista', provincia: fprovs.join(','), municipio: fmuns.join(','), tipo: ftipos.join(','), ver: fver, ...cambio }).filter(([, v]) => v)));
+  const msProv = multiSel({ id: 'fprov', etiqueta: 'Provincias', opciones: provincias.map((p) => ({ value: p, label: p })), valores: fprovs, todas: 'Todas mis provincias', plural: 'provincias',
+    alCambiar: (vs) => { const munsOk = fmuns.filter((m) => vs.some((p) => (div.municipios[p] ?? []).includes(m))); ir({ provincia: vs.join(','), municipio: munsOk.join(',') }); } });
+  const provsMun = fprovs.length ? fprovs : provincias;
+  const msMun = multiSel({ id: 'fmun', etiqueta: 'Municipios', opciones: provsMun.flatMap((p) => (div.municipios[p] ?? []).map((m) => ({ value: m, label: m, grupo: provsMun.length > 1 ? p : null }))), valores: fmuns, todas: 'Todos los municipios', plural: 'municipios',
+    alCambiar: (vs) => ir({ municipio: vs.join(',') }) });
+  const msTipo = multiSel({ id: 'ftipo', etiqueta: 'Tipos', opciones: tipos.map(([value, label]) => ({ value, label })), valores: ftipos, todas: 'Todos los tipos', plural: 'tipos', alCambiar: (vs) => ir({ tipo: vs.join(',') }) });
   const fv = GESTION_T() ? campo('fver', 'Mostrar', { options: [{ value: '', label: 'Todos los activos' }, { value: 'revisar', label: 'Posibles errores de Google' }, { value: 'descartados', label: 'No son centros de salud' }], value: fver }) : null;
-  const aplicar = () => irA('establecimientos', Object.fromEntries(Object.entries({ sec: 'lista', provincia: fz.sp.value, municipio: fz.sm.value, tipo: ft.querySelector('select').value, ver: fv?.querySelector('select').value }).filter(([, v]) => v)));
-  fz.sm.addEventListener('change', aplicar); ft.querySelector('select').addEventListener('change', aplicar); fv?.querySelector('select').addEventListener('change', aplicar);
-  fz.sp.addEventListener('change', () => { if (!fz.sp.value) aplicar(); });
+  fv?.querySelector('select').addEventListener('change', (e) => ir({ ver: e.target.value }));
+  const fz = { fp: msProv, fm: msMun }; const ft = msTipo;
   const z = selectorZona(provincias, div.municipios, { provincia: fprov, municipio: fmun });
   const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar establecimiento');
   const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo establecimiento'),
@@ -3182,6 +3238,41 @@ V.representantes = async () => {
     f.posicion.addEventListener('change', () => marcarOcupadas(f, f.posicion.value, id));
     marcarOcupadas(f, r?.position, id);
     const T = (n) => (n ? fmtN.format(n) : '');
+    // Lista de cada lugar de su zona: para revisar qué entró (por ejemplo, del registro automático de Google) y quitar lo que no va.
+    const ORIGEN = { google: 'Google', manual: 'Manual', excel: 'Excel', registro_dependiente: 'Registro de dependiente' };
+    const TIPOS_L = { farmacia: 'Farmacia', hospital: 'Hospital', clinica: 'Clínica', unap: 'UNAP', cpn: 'Primer nivel', diagnostico: 'Centro diagnóstico', consultorio: 'Consultorio' };
+    const todos = [...lz.farmacias.map((x) => ({ ...x, tipo: 'farmacia', esFarmacia: true })), ...lz.establecimientos].sort((a, b) => a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
+    const uni = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), 'es'));
+    const selL = new Set();
+    const bQuitar = h('button', { class: 'btn-sec btn-peligro', type: 'button', disabled: true }, 'Quitar los marcados');
+    const contarL = () => { bQuitar.disabled = !selL.size; bQuitar.textContent = selL.size ? `Quitar ${fmtN.format(selL.size)} marcado(s)` : 'Quitar los marcados'; };
+    const quitarL = async (ids) => {
+      const r2 = await confirmar('Quitar lugares', `${fmtN.format(ids.length)} lugar(es) saldrán de las zonas, los cronogramas y las metas de visitas. El registro automático no los volverá a traer. Los establecimientos se pueden restaurar en Establecimientos → "No son centros de salud".`, { okTexto: 'Quitar', pedirMotivo: true, etiquetaMotivo: 'Motivo', sugerencias: [{ texto: 'No es un centro de salud.' }, { texto: 'No es una farmacia.' }, { texto: 'Está cerrado.' }, { texto: 'Repetido.' }, { texto: 'No está en esta zona.' }] });
+      if (r2 == null) return;
+      try { await api('POST', '/api/territorio/establecimientos/descartar', { ids, motivo: r2 }); aviso(`Listo: ${fmtN.format(ids.length)} lugar(es) quitado(s).`, 'ok'); router(); } catch (e) { alert(e.message); }
+    };
+    bQuitar.addEventListener('click', () => quitarL([...selL]));
+    const camposL = [
+      { id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Nombre o dirección', valor: (x) => `${x.nombre} ${x.direccion ?? ''} ${x.sector ?? ''}` },
+      { id: 'prov', etiqueta: 'Provincias', tipo: 'opciones', plural: 'provincias', opciones: uni(todos.map((x) => x.provincia)), valor: (x) => x.provincia },
+      { id: 'mun', etiqueta: 'Municipios', tipo: 'opciones', plural: 'municipios', opciones: uni(todos.map((x) => x.municipio)), valor: (x) => x.municipio },
+      { id: 'tipo', etiqueta: 'Tipos', tipo: 'opciones', plural: 'tipos', opciones: uni(todos.map((x) => x.tipo)).map((t) => ({ value: t, label: TIPOS_L[t] ?? t })), valor: (x) => x.tipo },
+      { id: 'origen', etiqueta: 'Cómo entró', tipo: 'opciones', plural: 'orígenes', opciones: uni(todos.map((x) => x.fuente ?? 'manual')).map((t) => ({ value: t, label: ORIGEN[t] ?? t })), valor: (x) => x.fuente ?? 'manual' },
+      { id: 'est', etiqueta: 'Estado', tipo: 'opciones', opciones: uni(todos.map((x) => x.estado)).map((t) => ({ value: t, label: t[0].toUpperCase() + t.slice(1) })), valor: (x) => x.estado },
+      { id: 'ubic', etiqueta: 'Ubicación', tipo: 'opciones', opciones: [{ value: 'si', label: 'Con ubicación' }, { value: 'no', label: 'Sin ubicación' }], valor: (x) => (x.lat == null || x.lng == null ? 'no' : 'si') },
+      { id: 'desde', etiqueta: 'Agregado desde', tipo: 'desde', valor: (x) => String(x.createdAt ?? '').slice(0, 10) },
+    ];
+    const colsL = [
+      ...(ES_GER() ? [{ t: '', etiqueta: 'Marcar', clase: 'td-sel', v: (x) => { const c = h('input', { type: 'checkbox', 'aria-label': `Marcar ${x.nombre}`, checked: selL.has(x.id) }); c.addEventListener('change', () => { c.checked ? selL.add(x.id) : selL.delete(x.id); contarL(); }); return h('span', { class: 'celda-sel' }, c); } }] : []),
+      { t: 'Lugar', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] },
+      { t: 'Tipo', v: (x) => TIPOS_L[x.tipo] ?? x.tipo }, { t: 'Municipio', v: (x) => [x.municipio, h('small', { style: 'display:block;color:var(--texto-2)' }, x.provincia)] },
+      { t: 'Cómo entró', v: (x) => [ORIGEN[x.fuente ?? 'manual'] ?? x.fuente, x.createdAt ? h('small', { style: 'display:block;color:var(--texto-2)' }, fecha(String(x.createdAt).slice(0, 10))) : null] },
+      { t: 'Estado', v: (x) => [chip(x.estado), x.lat == null ? h('small', { style: 'display:block;color:var(--alerta)' }, 'Sin ubicación') : null] },
+      ...(ES_GER() ? [{ t: '', v: (x) => h('button', { class: 'btn-enlace', type: 'button', onclick: () => quitarL([x.id]) }, 'Quitar') }] : []),
+    ];
+    const detalle = todos.length ? h('div', { style: 'margin-top:1.5rem' }, h('h2', {}, 'Cada lugar de su zona'),
+      h('p', { class: 'hint' }, 'Todos los lugares activos de sus provincias y municipios, con cómo entraron al sistema. Si alguno no va (no es centro de salud, está cerrado, repetido), márcalo y quítalo.'),
+      listaFiltrada(`lugares-${id}`, todos, camposL, (vs) => h('div', {}, ES_GER() ? h('div', { class: 'acciones', style: 'margin:0 0 .75rem' }, bQuitar) : null, tabla(colsL, vs, ['Ningún lugar con estos filtros', 'Cambia o limpia los filtros.'], { porPagina: 25 })))) : null;
     const lugares = h('div', {},
       tabla([{ t: 'Municipio', v: (x) => [x.municipio, h('small', { style: 'display:block;color:var(--texto-2)' }, x.provincia)] },
         { t: 'Farmacias', num: true, v: (x) => T(x.farmacia) }, { t: 'Hospitales', num: true, v: (x) => T(x.hospital) }, { t: 'Clínicas', num: true, v: (x) => T(x.clinica) },
@@ -3189,7 +3280,7 @@ V.representantes = async () => {
         { t: 'Sin ubicación', num: true, v: (x) => x.sinUbicacion ? h('span', { style: 'color:var(--alerta)' }, fmtN.format(x.sinUbicacion)) : '' }],
       lz.resumen, ['Su zona aún no tiene lugares registrados', 'Usa el registro automático en Catálogo → Farmacias y en Establecimientos.']),
       lz.resumen.length ? h('p', { class: 'hint' }, 'Los lugares sin ubicación no entran en el cálculo de distancia; regístralos desde Google Maps para tener km exactos.') : null,
-      lz.resumen.length && yo.role === 'administrador' ? h('div', { class: 'acciones' }, h('a', { class: 'btn', href: `#cronogramas?rep=${id}` }, 'Programar su cronograma')) : null);
+      lz.resumen.length && yo.role === 'administrador' ? h('div', { class: 'acciones' }, h('a', { class: 'btn', href: `#cronogramas?rep=${id}` }, 'Programar su cronograma')) : null, detalle);
     return vistaS('representantes', ['zona', 'lugares'], 'Zona del representante', `${r?.fullName ?? ''}: posición, provincias y municipios que visita. De aquí salen sus lugares, su cronograma, los km, el combustible y sus viáticos.`, S('zona', 'Zona y posición', f), S('lugares', `Lugares de su zona (${fmtN.format(lz.farmacias.length + lz.establecimientos.length)})`, lugares));
   }
   const zonas = await Promise.all(reps.map((r) => api('GET', `/api/territorio/zonas/${r.id}`).then((z) => z.item).catch(() => ({ provincias: [], municipios: {} }))));
