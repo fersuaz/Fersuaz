@@ -9,7 +9,7 @@ export const COLECCIONES = {
   pedidos: { tabla: 'pedidos', campos: ['numero', 'farmaciaId', 'creadoPor', 'items', 'total', 'unidades', 'pago', 'comprobante', 'nota', 'estado', 'historial', 'vendedorId', 'provincia', 'municipio'], json: ['items', 'comprobante', 'historial'] },
   farmacias: { tabla: 'farmacias', campos: ['nombre', 'provincia', 'municipio', 'sector', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'fuente', 'estado', 'creadoPor'], json: [] },
   medicos: { tabla: 'medicos', campos: ['nombre', 'especialidad', 'centro', 'provincia', 'municipio', 'estado', 'creadoPor', 'telefono', 'direccion', 'redes', 'establecimientoId', 'lat', 'lng', 'placeId', 'fuente'], json: ['redes'] },
-  vouchers: { tabla: 'vouchers', campos: ['dependienteId', 'farmacia', 'referencia', 'fecha', 'periodo', 'items', 'total', 'estado', 'decididoPor', 'motivo', 'registradoPor', 'foto', 'fotoHuella', 'fotoDhash', 'medicoId', 'medico'], json: ['items', 'foto'] },
+  vouchers: { tabla: 'vouchers', campos: ['dependienteId', 'farmacia', 'referencia', 'fecha', 'periodo', 'items', 'total', 'estado', 'decididoPor', 'motivo', 'registradoPor', 'foto', 'fotoHuella', 'fotoDhash', 'medicoId', 'medico', 'corregible', 'nota', 'decididoAt', 'correcciones'], json: ['items', 'foto'] },
   cierres: { tabla: 'cierres_comision', campos: ['dependienteId', 'periodo', 'desde', 'hasta', 'ventas', 'porcentaje', 'comision', 'voucherIds', 'cerradoPor'], json: ['voucherIds'] },
   operativos: { tabla: 'operativos', campos: ['promotoraId', 'fecha', 'provincia', 'municipio', 'centro'], json: [] },
   recetas: { tabla: 'recetas', campos: ['promotoraId', 'operativoId', 'medicoId', 'fecha', 'provincia', 'municipio', 'items', 'adjunto', 'pacienteId', 'fotoHuella', 'fotoDhash'], json: ['items', 'adjunto'] },
@@ -59,6 +59,7 @@ export class MemoryData {
     this.db[col].set(id, row);
     return structuredClone(row);
   }
+  async remove(col, id) { check(col); return this.db[col].delete(id); }
   async list(col, where = {}) {
     check(col);
     return [...this.db[col].values()]
@@ -106,6 +107,12 @@ export class PgData {
     const sql = `UPDATE ${c.tabla} SET ${keys.map((f, i) => `${snake(f)} = $${i + 2}`).join(', ')}, updated_at = now() WHERE id = $1 RETURNING *`;
     const { rows } = await this.pool.query(sql, [id, ...vals]);
     return this.#row(col, rows[0]);
+  }
+  async remove(col, id) {
+    const c = check(col);
+    if (!UUID.test(String(id))) return false;
+    const { rowCount } = await this.pool.query(`DELETE FROM ${c.tabla} WHERE id = $1`, [id]);
+    return rowCount > 0;
   }
   async list(col, where = {}) {
     const c = check(col);

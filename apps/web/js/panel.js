@@ -130,12 +130,28 @@ async function enviar(form, boton, fn) {
   catch (e) { mostrarErrores(form, e); estado(st, 'error', e.message); return null; }
   finally { boton.disabled = false; boton.textContent = txt; }
 }
-function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false, casilla = null, campos = null } = {}) {
+function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false, etiquetaMotivo = 'Motivo', sugerencias = null, corregir = null, casilla = null, campos = null } = {}) {
   const d = $('#dialogo');
   $('#dialogo-titulo').textContent = titulo;
   const c = $('#dialogo-cuerpo'); c.replaceChildren(h('p', {}, cuerpo));
   let motivo; let caja;
-  if (pedirMotivo) { motivo = h('textarea', { id: 'motivo', rows: 3 }); c.append(h('label', { for: 'motivo', class: 'hint' }, 'Motivo'), motivo); }
+  if (pedirMotivo) {
+    motivo = h('textarea', { id: 'motivo', rows: 3 });
+    c.append(h('label', { for: 'motivo', class: 'hint' }, etiquetaMotivo));
+    // Respuestas rápidas: un clic llena el motivo (y marca si el usuario puede corregirlo).
+    if (sugerencias?.length) {
+      const chips = sugerencias.map((x) => h('button', { type: 'button', class: 'chip-sug', 'aria-pressed': 'false', onclick: (e) => {
+        motivo.value = x.texto; chips.forEach((b) => b.setAttribute('aria-pressed', String(b === e.currentTarget)));
+        if (corr && x.corregible != null) corr.checked = x.corregible;
+        motivo.focus();
+      } }, x.texto));
+      c.append(h('div', { class: 'sugerencias', role: 'group', 'aria-label': 'Respuestas rápidas' }, ...chips));
+    }
+    c.append(motivo);
+  }
+  // Rechazo que el usuario puede corregir: la respuesta es { motivo, corregible }.
+  let corr = null;
+  if (corregir) { corr = h('input', { type: 'checkbox', checked: Boolean(corregir.marcada) }); c.append(h('label', { class: 'check', style: 'margin-top:.75rem' }, corr, h('span', {}, corregir.texto))); }
   // Una casilla opcional: la respuesta es { casilla: true | false } en vez de true.
   if (casilla) { caja = h('input', { type: 'checkbox', checked: casilla.marcada !== false }); c.append(h('label', { class: 'check', style: 'margin-top:.75rem' }, caja, h('span', {}, casilla.texto))); }
   // Campos opcionales: la respuesta es { nombre: valor } con lo que se escribió.
@@ -148,7 +164,7 @@ function confirmar(titulo, cuerpo, { okTexto = 'Confirmar', pedirMotivo = false,
     // Confirmado: la próxima acción guardada se anuncia con este nombre. Cancelado: se avisa que no se hizo nada.
     if (ok && !soloVer) accionPendiente = okTexto;
     if (!ok && !soloVer) aviso('Cancelado. No se hizo ningún cambio.', 'info');
-    res(!ok ? null : motivo ? motivo.value : caja ? { casilla: caja.checked } : entradas.length ? Object.fromEntries(entradas.map((x) => [x.name, x.value])) : true);
+    res(!ok ? null : corr ? { motivo: motivo?.value ?? '', corregible: corr.checked } : motivo ? motivo.value : caja ? { casilla: caja.checked } : entradas.length ? Object.fromEntries(entradas.map((x) => [x.name, x.value])) : true);
   }, { once: true }));
 }
 const sinTilde = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -647,8 +663,58 @@ function listaFiltrada(clave, filas, campos, pintarTabla, resumen) {
   return h('div', { class: 'lf' }, filas.length ? h('div', { class: 'lf-barra' }, ...principales.map((x) => x.nodo), extra.length ? mas : null, h('div', { class: 'lf-pie' }, cuenta, limpiar)) : null, caja);
 }
 
+/** Corregir un voucher rechazado: la foto a la izquierda y fecha, medicamentos y médico a la derecha. */
+async function corregirVoucher(v) {
+  const [meds, cat] = await Promise.all([medicamentos(), api('GET', '/api/catalogo/medicos').catch(() => ({ items: [], especialidades: [] }))]);
+  const catMed = { items: cat.items.filter((m) => m.estado !== 'inactivo' && m.estado !== 'rechazado'), especialidades: cat.especialidades ?? [] };
+  const activos = meds.filter((m) => m.activo !== false);
+  const fechaIn = h('input', { type: 'date', value: v.fecha, max: hoy(), id: 'cv-fecha' });
+  const lineas = h('div', { class: 'cv-lineas' });
+  const totalEl = h('strong', {});
+  const recalc = () => { let t = 0; lineas.querySelectorAll('.cv-linea').forEach((l) => { const c = Number(l.querySelector('[data-c]').value) || 0; const p = Number(String(l.querySelector('[data-p]').value).replace(/,/g, '')) || 0; t += c * p; }); totalEl.textContent = RD(t); };
+  const linea = (it = {}) => {
+    const sel = h('select', { 'aria-label': 'Medicamento', 'data-m': '1' }, h('option', { value: '' }, 'Elige el medicamento'), ...activos.map((m) => h('option', { value: m.id }, `${m.nombre}${m.presentacion ? `, ${m.presentacion}` : ''}`)));
+    sel.value = it.medicamentoId ?? '';
+    const cant = h('input', { inputmode: 'numeric', value: it.cantidad ?? 1, 'aria-label': 'Cantidad', 'data-c': '1' });
+    const precio = h('input', { inputmode: 'decimal', value: it.precio ?? (it.monto && it.cantidad ? (it.monto / it.cantidad).toFixed(2) : ''), 'aria-label': 'Precio por unidad RD$', 'data-p': '1' });
+    sel.addEventListener('change', () => { const m = activos.find((x) => x.id === sel.value); if (m?.precio != null && !precio.value) precio.value = m.precio; recalc(); });
+    const el = h('div', { class: 'cv-linea' },
+      h('label', {}, h('span', {}, 'Medicamento'), sel), h('label', {}, h('span', {}, 'Cantidad'), cant), h('label', {}, h('span', {}, 'Precio por unidad RD$'), precio),
+      h('button', { type: 'button', class: 'btn-enlace', onclick: () => { if (lineas.children.length > 1) { el.remove(); recalc(); } } }, 'Quitar'));
+    el.addEventListener('input', recalc);
+    lineas.append(el);
+  };
+  (v.items.length ? v.items : [{}]).forEach(linea); recalc();
+  const med = selectorMedico(catMed, {});
+  if (v.medicoId) { const s = med.nodos[0].querySelector('select'); s.value = v.medicoId; }
+  const err = h('div', { role: 'alert' });
+  const enviarC = h('button', { class: 'btn', type: 'button', onclick: async () => {
+    err.replaceChildren();
+    const items = [...lineas.querySelectorAll('.cv-linea')].map((l) => ({ medicamentoId: l.querySelector('[data-m]').value, cantidad: Number(l.querySelector('[data-c]').value), precio: Number(String(l.querySelector('[data-p]').value).replace(/,/g, '')) }));
+    if (items.some((i) => !i.medicamentoId)) { err.append(h('div', { class: 'aviso error' }, 'Elige el medicamento en cada fila.')); return; }
+    const malMed = med.valido(); if (malMed) { err.append(h('div', { class: 'aviso error' }, malMed)); return; }
+    enviarC.disabled = true;
+    try {
+      await api('POST', `/api/vouchers/${v.id}/corregir`, { fecha: fechaIn.value, items, medicoId: await med.valor() });
+      aviso('Listo: el voucher corregido se envió otra vez a revisión.', 'ok'); irA('misVouchers');
+    } catch (e) { err.append(h('div', { class: 'aviso error' }, e.message)); enviarC.disabled = false; }
+  } }, 'Enviar corregido a revisión');
+  const foto = v.foto ? h('button', { type: 'button', class: 'cv-foto', 'aria-label': 'Ver la foto en grande', onclick: () => verAdjunto(v.foto.clave) }, h('span', {}, 'Ver la foto en grande')) : h('p', { class: 'hint' }, 'Este voucher no tiene foto.');
+  if (v.foto) cargarAdjunto(v.foto.clave).then((x) => foto.prepend(h('img', { src: x.url, alt: 'Foto del voucher' }))).catch(() => {});
+  return vista('Corregir voucher', `Rechazado: ${v.motivo ?? ''} Corrige lo que haga falta y envíalo otra vez. Tienes hasta el ${fecha(finDeMes())}; si no, se elimina.`,
+    h('div', { class: 'cv' }, foto,
+      h('div', { class: 'tarjeta cv-form' },
+        h('label', { for: 'cv-fecha' }, h('span', {}, 'Fecha del voucher')), fechaIn, ...med.nodos,
+        h('h3', {}, 'Medicamentos'), lineas,
+        h('div', { class: 'acciones', style: 'justify-content:space-between' }, h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: () => linea() }, 'Agregar medicamento'), h('span', {}, 'Total ', totalEl)),
+        err, h('div', { class: 'acciones' }, enviarC, h('button', { type: 'button', class: 'btn-sec', onclick: () => irA('misVouchers') }, 'Cancelar')))));
+}
+const finDeMes = () => { const [y, m] = hoy().split('-').map(Number); return `${y}-${String(m).padStart(2, '0')}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`; };
+
 V.misVouchers = async () => {
   const { items } = await api('GET', '/api/vouchers');
+  const aCorregir = param('corregir') && items.find((v) => v.id === param('corregir') && v.estado === 'rechazado' && v.corregible);
+  if (aCorregir) return corregirVoucher(aCorregir);
   const pintar = async () => router();
   const vendedor = yo.role === 'representante';
   const ESTADOS_V = { pendiente: 'Pendiente', aprobado: 'Aprobado', rechazado: 'Rechazado', anulado: 'Anulado' };
@@ -674,11 +740,13 @@ V.misVouchers = async () => {
     ...(vendedor ? [{ t: 'Dependiente', v: (v) => [v.dependiente, v.farmacia ? h('small', { style: 'display:block;color:var(--texto-2)' }, v.farmacia) : null] }] : [{ t: 'Cargado por', v: (v) => v.cargadoPor ?? 'Tú' }]),
     { t: 'Medicamentos', v: (v) => v.items.map((i) => `${i.medicamento}${i.cantidad ? ` ×${i.cantidad}` : ""}`).join(', ') },
     { t: 'Médico', v: (v) => v.medico ?? h('span', { style: 'color:var(--texto-2)' }, 'Sin médico') },
-    { t: 'Total', num: true, v: (v) => RD(v.total) }, { t: 'Estado', v: (v) => [chip(v.estado), v.motivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, v.motivo) : null] },
-    { t: '', v: (v) => v.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await confirmar('Anular voucher', `¿Anular el voucher del ${fecha(v.fecha)} por ${RD(v.total)}? No contará para la comisión.`, { okTexto: 'Anular voucher' })) { await api('POST', `/api/vouchers/${v.id}/anular`).catch((e) => alert(e.message)); pintar(); } } }, 'Anular') : '' },
+    { t: 'Total', num: true, v: (v) => RD(v.total) }, { t: 'Estado', v: (v) => [chip(v.estado), v.motivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, v.motivo) : null, v.estado === 'rechazado' && v.corregible ? h('small', { style: 'display:block;color:#C0462C;font-weight:600' }, `Corrígelo antes del ${fecha(finDeMes())}`) : null, v.nota ? h('small', { style: 'display:block;color:var(--texto-2)' }, `Nota: ${v.nota}`) : null] },
+    { t: '', v: (v) => v.estado === 'rechazado' && v.corregible ? h('button', { class: 'btn btn-peq', onclick: () => irA('misVouchers', { corregir: v.id }) }, 'Corregir') : v.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await confirmar('Anular voucher', `¿Anular el voucher del ${fecha(v.fecha)} por ${RD(v.total)}? No contará para la comisión.`, { okTexto: 'Anular voucher' })) { await api('POST', `/api/vouchers/${v.id}/anular`).catch((e) => alert(e.message)); pintar(); } } }, 'Anular') : '' },
   ];
   const resumen = (vs) => { const vivos = vs.filter((v) => v.estado !== 'anulado' && v.estado !== 'rechazado'); return `Total ${RD(vivos.reduce((n, v) => n + v.total, 0))} (sin anulados ni rechazados)`; };
-  return vista(vendedor ? 'Vouchers cargados' : 'Mis vouchers', 'Puedes anular un voucher mientras siga pendiente de revisión.',
+  const porCorregir = items.filter((v) => v.estado === 'rechazado' && v.corregible);
+  const avisoCorregir = porCorregir.length ? h('div', { class: 'aviso alerta' }, h('strong', {}, `Tienes ${fmtN.format(porCorregir.length)} voucher(s) para corregir. `), `Revisa el motivo, pulsa "Corregir" y envíalos otra vez antes del ${fecha(finDeMes())}. Si no se corrigen, se eliminan al cerrar el mes.`) : null;
+  return vista(vendedor ? 'Vouchers cargados' : 'Mis vouchers', 'Puedes anular un voucher mientras siga pendiente de revisión.', avisoCorregir,
     listaFiltrada('misVouchers', filas, campos, (vs, activos) => (vistos = vs, tabla(cols, vs, activos ? ['Ningún voucher con estos filtros', 'Cambia o limpia los filtros.'] : ['Aún no has cargado vouchers', 'Cuando cargues uno, aparecerá aquí con su estado.'], { porPagina: 15 })), resumen));
 };
 function resumenComision(r) {
@@ -1243,12 +1311,30 @@ V.revisar = async () => {
   const unicos = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
   const filas = items.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || String(a.createdAt).localeCompare(String(b.createdAt)));
   let vistos = filas; let cambios = false;
-  const pedirAprobar = (v) => confirmar('Aprobar voucher', `¿Aprobar el voucher del ${fecha(v.fecha)} de ${v.dependiente} por ${RD(v.total)}? Contará para su comisión.`, { okTexto: 'Sí, aprobar' });
-  const pedirRechazo = (v) => confirmar('Rechazar voucher', `¿Rechazar el voucher del ${fecha(v.fecha)} de ${v.dependiente} por ${RD(v.total)}? Escribe el motivo: la dependiente lo verá.`, { okTexto: 'Sí, rechazar', pedirMotivo: true });
+  // Respuestas rápidas. Las que se pueden arreglar (fecha, medicamento, cantidad, precio) dejan que el usuario corrija
+  // el voucher hasta fin de mes; si no lo hace, se elimina al cerrar el mes.
+  const SUG_RECHAZO = [
+    { texto: 'La fecha del voucher no pertenece al mes.', corregible: true },
+    { texto: 'El medicamento cargado no coincide con la prescripción.', corregible: true },
+    { texto: 'La cantidad no coincide con la prescripción.', corregible: true },
+    { texto: 'El precio no coincide con el voucher.', corregible: true },
+    { texto: 'Falta el médico o no coincide con la prescripción.', corregible: true },
+    { texto: 'La foto no se ve clara. Vuelve a cargarla.', corregible: false },
+    { texto: 'La foto no quedó guardada. Vuelve a cargarla.', corregible: false },
+    { texto: 'Voucher repetido.', corregible: false },
+    { texto: 'No es un voucher de esta farmacia.', corregible: false },
+  ];
+  const SUG_APROBAR = [{ texto: 'Todo coincide con la prescripción.' }, { texto: 'Verificado: medicamento, cantidad y fecha correctos.' }, { texto: 'Aprobado con observación: ' }];
+  const CORREGIR = { texto: 'Dejar que lo corrija (fecha, medicamento, cantidad, precio o médico) hasta fin de mes. Si no lo corrige, se elimina al cerrar el mes.', marcada: true };
+  const pedirAprobar = (v) => confirmar('Aprobar voucher', `¿Aprobar el voucher del ${fecha(v.fecha)} de ${v.dependiente} por ${RD(v.total)}? Contará para su comisión.`, { okTexto: 'Sí, aprobar', pedirMotivo: true, etiquetaMotivo: 'Nota (opcional)', sugerencias: SUG_APROBAR });
+  const pedirRechazo = (v) => confirmar('Rechazar voucher', `¿Rechazar el voucher del ${fecha(v.fecha)} de ${v.dependiente} por ${RD(v.total)}? Elige o escribe el motivo: la dependiente lo verá.`, { okTexto: 'Sí, rechazar', pedirMotivo: true, sugerencias: SUG_RECHAZO, corregir: CORREGIR });
   async function decidir(v, aprobar) {
     const r = aprobar ? await pedirAprobar(v) : await pedirRechazo(v);
     if (r == null || r === false) return null;
-    try { await api('POST', `/api/vouchers/${v.id}/${aprobar ? 'aprobar' : 'rechazar'}`, aprobar ? {} : { motivo: r }); cambios = true; return aprobar ? 'Aprobado' : 'Rechazado'; } catch (e) { alert(e.message); return null; }
+    try {
+      await api('POST', `/api/vouchers/${v.id}/${aprobar ? 'aprobar' : 'rechazar'}`, aprobar ? { motivo: r } : { motivo: r.motivo, corregible: r.corregible });
+      cambios = true; return aprobar ? 'Aprobado' : r.corregible ? 'Rechazado: lo puede corregir' : 'Rechazado';
+    } catch (e) { alert(e.message); return null; }
   }
   const etiquetasDe = (v) => ({ titulo: 'Lo que cargó', lineas: v.items.map((i) => ({ texto: `${i.medicamento}${i.presentacion ? `, ${i.presentacion}` : ''}`, extra: `${i.cantidad ?? 1} × ${RD(i.precio ?? (i.monto / (i.cantidad || 1)))} = ${RD(i.monto)}` })),
     notas: [`Fecha del voucher: ${fecha(v.fecha)}`, v.medico ? `Médico: ${v.medico}` : 'Sin médico', v.cargadoPor ? `Cargado por ${v.cargadoPor}` : null].filter(Boolean), total: `Total ${RD(v.total)}` });
@@ -1285,7 +1371,7 @@ V.revisar = async () => {
       h('div', { class: 'acciones', style: 'margin:0' },
         h('button', { class: 'btn', type: 'button', onclick: () => todos(true) }, n ? `Aprobar seleccionados (${fmtN.format(n)})` : `Aprobar todos (${fmtN.format(vistos.length)})`),
         h('button', { class: 'btn-sec btn-peligro', type: 'button', onclick: () => todos(false) }, n ? `Rechazar seleccionados (${fmtN.format(n)})` : `Rechazar todos (${fmtN.format(vistos.length)})`),
-        n ? h('button', { class: 'btn-enlace', type: 'button', onclick: () => { sel.clear(); marcaTodos.dispatchEvent(new Event('change')); } }, 'Quitar selección') : null),
+        n ? h('button', { class: 'btn-enlace', type: 'button', onclick: () => { marcaTodos.checked = false; marcaTodos.indeterminate = false; marcaTodos.dispatchEvent(new Event('change')); } }, 'Quitar selección') : null),
     ]));
   }
   async function todos(aprobar) {
@@ -1293,11 +1379,11 @@ V.revisar = async () => {
     const que = elegidos().length ? 'Son los que seleccionaste.' : 'Son todos los que se ven con los filtros de ahora.';
     const total = RD(vs.reduce((n, v) => n + v.total, 0));
     const r = aprobar
-      ? await confirmar(`Aprobar ${fmtN.format(vs.length)} voucher(s)`, `¿Seguro que quieres aprobar ${fmtN.format(vs.length)} voucher(s) por ${total} en total? ${que} Contarán para la comisión de cada dependiente.`, { okTexto: `Sí, aprobar ${fmtN.format(vs.length)}` })
-      : await confirmar(`Rechazar ${fmtN.format(vs.length)} voucher(s)`, `¿Seguro que quieres rechazar ${fmtN.format(vs.length)} voucher(s) por ${total} en total? ${que} Escribe el motivo: cada dependiente lo verá.`, { okTexto: `Sí, rechazar ${fmtN.format(vs.length)}`, pedirMotivo: true });
+      ? await confirmar(`Aprobar ${fmtN.format(vs.length)} voucher(s)`, `¿Seguro que quieres aprobar ${fmtN.format(vs.length)} voucher(s) por ${total} en total? ${que} Contarán para la comisión de cada dependiente.`, { okTexto: `Sí, aprobar ${fmtN.format(vs.length)}`, pedirMotivo: true, etiquetaMotivo: 'Nota (opcional)', sugerencias: SUG_APROBAR })
+      : await confirmar(`Rechazar ${fmtN.format(vs.length)} voucher(s)`, `¿Seguro que quieres rechazar ${fmtN.format(vs.length)} voucher(s) por ${total} en total? ${que} Elige o escribe el motivo: cada dependiente lo verá.`, { okTexto: `Sí, rechazar ${fmtN.format(vs.length)}`, pedirMotivo: true, sugerencias: SUG_RECHAZO, corregir: CORREGIR });
     if (r == null || r === false) return;
     try {
-      const out = await api('POST', '/api/vouchers/decidir', { ids: vs.map((v) => v.id), aprobar, ...(aprobar ? {} : { motivo: r }) });
+      const out = await api('POST', '/api/vouchers/decidir', { ids: vs.map((v) => v.id), aprobar, ...(aprobar ? { motivo: r } : { motivo: r.motivo, corregible: r.corregible }) });
       aviso(out.errores.length ? `${fmtN.format(out.hechos)} ${aprobar ? 'aprobado(s)' : 'rechazado(s)'}; ${out.errores.length} no se pudieron: ${out.errores[0].error}` : `Listo: ${fmtN.format(out.hechos)} voucher(s) ${aprobar ? 'aprobado(s)' : 'rechazado(s)'}.`, out.errores.length ? 'error' : 'ok');
     } catch (e) { alert(e.message); }
     router();
