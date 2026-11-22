@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
@@ -9,6 +9,7 @@ export class MemoryFiles {
   constructor() { this.m = new Map(); }
   async put(buf, tipo, ownerId) { const clave = `${randomUUID()}.${EXT[tipo]}`; this.m.set(clave, { buf, tipo, ownerId }); return clave; }
   async get(clave) { return this.m.get(clave) ?? null; }
+  async remove(clave) { this.m.delete(clave); }
 }
 
 /** Fotos en disco: desarrollo local. En producción se reemplaza por DigitalOcean Spaces (privado). */
@@ -29,6 +30,7 @@ export class LocalFiles {
       return { buf, tipo, ownerId: this.meta.get(clave)?.ownerId };
     } catch { return null; }
   }
+  async remove(clave) { if (/^[0-9a-f-]{36}\.(jpg|png|webp|pdf)$/.test(clave)) await unlink(join(this.dir, clave)).catch(() => {}); }
 }
 
 // ---------------------------------------------------------------- DigitalOcean Spaces (compatible con S3)
@@ -74,6 +76,13 @@ export class SpacesFiles {
     if (r.status === 404 || r.status === 403) return null;
     if (!r.ok) throw new Error(`No se pudo leer el archivo (Spaces ${r.status}).`);
     return { buf: Buffer.from(await r.arrayBuffer()), tipo: r.headers.get('content-type'), ownerId: r.headers.get('x-amz-meta-owner') };
+  }
+  async remove(clave) {
+    if (!/^[0-9a-f-]{36}\.(jpg|png|webp|pdf)$/.test(clave)) return;
+    const path = `/${this.prefijo}/${clave}`;
+    const headers = firmarS3({ method: 'DELETE', host: this.host, path, region: this.region, accessKey: this.accessKey, secretKey: this.secretKey, payloadHash: sha256('') });
+    const r = await this.fetch(`https://${this.host}${path}`, { method: 'DELETE', headers });
+    if (!r.ok && r.status !== 404) throw new Error(`No se pudo borrar el archivo (Spaces ${r.status}).`);
   }
 }
 

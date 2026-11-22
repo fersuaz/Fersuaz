@@ -46,6 +46,8 @@ const telefonoOculto = (d) => (d ? `···-···-${d.slice(6)}` : '');
 
 export function createComercial({ data, users, files, audit, now = () => new Date() }) {
   const hoy = () => hoyRD(now());
+  /** Mes (AAAA-MM) en hora de Santo Domingo de una fecha ISO. */
+  const mesDe = (iso) => hoyRD(new Date(iso)).slice(0, 7);
 
   async function config(clave) {
     const [c] = await data.list('configuracion', { clave });
@@ -329,6 +331,29 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
     return u.pharmacy ?? null;
   }
 
+  /** Medicamentos (cantidad × precio) y médico de un voucher: lo mismo al cargarlo y al corregirlo. */
+  async function contenidoVoucher(input, e) {
+    const items = Array.isArray(input.items) ? input.items : [];
+    if (!items.length) e.items = 'Agrega al menos un medicamento.';
+    if (items.length > 50) e.items = 'Máximo 50 medicamentos por voucher.';
+    const lineas = [];
+    for (const [i, it] of items.entries()) {
+      const med = await medicamentoActivo(it.medicamentoId);
+      const cantidad = Number(it.cantidad);
+      // Precio por unidad: el subtotal es precio × cantidad. Se acepta también el monto de la línea (versión anterior).
+      const precio = it.precio != null && it.precio !== '' ? Number(it.precio) : null;
+      const monto = precio != null ? precio * cantidad : Number(it.monto);
+      if (!med) e[`items.${i}.medicamentoId`] = 'Elige un medicamento del catálogo.';
+      if (!Number.isInteger(cantidad) || cantidad < 1) e[`items.${i}.cantidad`] = 'La cantidad debe ser un número entero mayor que cero.';
+      if (precio != null && (!Number.isFinite(precio) || precio <= 0)) e[`items.${i}.precio`] = 'Escribe el precio en RD$, mayor que cero.';
+      else if (!Number.isFinite(monto) || monto <= 0) e[`items.${i}.${precio != null ? 'precio' : 'monto'}`] = 'Escribe el precio en RD$, mayor que cero.';
+      if (med) lineas.push({ medicamentoId: med.id, medicamento: med.nombre, presentacion: med.presentacion ?? null, cantidad, ...(precio != null ? { precio: round2(precio) } : {}), monto: round2(monto) });
+    }
+    // Médico que prescribió (opcional): uno ya registrado.
+    let medico = null;
+    if (input.medicoId) { medico = await data.get('medicos', String(input.medicoId)); if (!medico || medico.estado === 'rechazado') e.medicoId = 'Ese médico no está registrado. Elígelo de la lista o agrégalo.'; }
+    return { lineas, medico };
+  }
   const vouchers = {
     dependientesDeZona: async (actor) => { permitir(cargaPorDependiente(actor), 'Solo los representantes cargan vouchers a nombre de una dependiente.'); return dependientesDeZona(actor); },
     /** Porcentaje de comisión que aplica a una dependiente (para mostrar la comisión estimada mientras se carga). */
@@ -360,25 +385,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const dhash = input.foto && esDhash(input.fotoDhash) ? input.fotoDhash : null;
       if (!esFechaISO(input.fecha)) e.fecha = 'Elige la fecha del voucher.';
       else if (input.fecha > hoy()) e.fecha = 'La fecha no puede ser futura.';
-      const items = Array.isArray(input.items) ? input.items : [];
-      if (!items.length) e.items = 'Agrega al menos un medicamento.';
-      if (items.length > 50) e.items = 'Máximo 50 medicamentos por voucher.';
-      const lineas = [];
-      for (const [i, it] of items.entries()) {
-        const med = await medicamentoActivo(it.medicamentoId);
-        const cantidad = Number(it.cantidad);
-        // Precio por unidad: el subtotal es precio × cantidad. Se acepta también el monto de la línea (versión anterior).
-        const precio = it.precio != null && it.precio !== '' ? Number(it.precio) : null;
-        const monto = precio != null ? precio * cantidad : Number(it.monto);
-        if (!med) e[`items.${i}.medicamentoId`] = 'Elige un medicamento del catálogo.';
-        if (!Number.isInteger(cantidad) || cantidad < 1) e[`items.${i}.cantidad`] = 'La cantidad debe ser un número entero mayor que cero.';
-        if (precio != null && (!Number.isFinite(precio) || precio <= 0)) e[`items.${i}.precio`] = 'Escribe el precio en RD$, mayor que cero.';
-        else if (!Number.isFinite(monto) || monto <= 0) e[`items.${i}.${precio != null ? 'precio' : 'monto'}`] = 'Escribe el precio en RD$, mayor que cero.';
-        if (med) lineas.push({ medicamentoId: med.id, medicamento: med.nombre, presentacion: med.presentacion ?? null, cantidad, ...(precio != null ? { precio: round2(precio) } : {}), monto: round2(monto) });
-      }
-      // Médico que prescribió (opcional): uno ya registrado.
-      let medico = null;
-      if (input.medicoId) { medico = await data.get('medicos', String(input.medicoId)); if (!medico || medico.estado === 'rechazado') e.medicoId = 'Ese médico no está registrado. Elígelo de la lista o agrégalo.'; }
+      const { lineas, medico } = await contenidoVoucher(input, e);
       if (Object.keys(e).length) invalido(e);
       const previos = (await data.list('vouchers', { dependienteId: dep.id })).filter((v) => v.estado !== 'anulado');
       if (referencia && previos.some((v) => (v.referencia ?? '').toLowerCase() === referencia.toLowerCase())) {
@@ -412,7 +419,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const where = {}; if (filtro.estado) where.estado = filtro.estado; if (filtro.dependienteId) where.dependienteId = filtro.dependienteId;
       return conNombres(await data.list('vouchers', where));
     },
-    async decidir(actor, id, aprobar, motivo) {
+    async decidir(actor, id, aprobar, motivo, { corregible = false } = {}) {
       permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor', 'finanzas']), 'No tienes permiso para revisar vouchers.');
       const v = await data.get('vouchers', id);
       if (!v) throw new HttpError(404, 'El voucher no existe.');
@@ -421,20 +428,63 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const m = normalizeName(motivo);
       if (!aprobar && m.length < 3) throw new HttpError(422, 'Explica por qué se rechaza.', { motivo: 'Escribe el motivo del rechazo.' });
       const estado = aprobar ? 'aprobado' : 'rechazado';
-      const out = await data.update('vouchers', id, { estado, decididoPor: actor.id, motivo: aprobar ? null : m });
-      await audit({ actorId: actor.id, action: `voucher_${estado}`, entity: 'voucher', entityId: id, before: { estado: v.estado }, after: { estado } });
+      // Al aprobar, el motivo es una nota opcional. Al rechazar, `corregible` deja que el usuario lo corrija y lo reenvíe
+      // dentro del mes; si no lo hace, se elimina al cerrar el mes (ver limpiarRechazados).
+      const out = await data.update('vouchers', id, { estado, decididoPor: actor.id, decididoAt: now().toISOString(), motivo: aprobar ? null : m, nota: aprobar ? (m || null) : null, corregible: !aprobar && Boolean(corregible) });
+      await audit({ actorId: actor.id, action: `voucher_${estado}`, entity: 'voucher', entityId: id, before: { estado: v.estado }, after: { estado, motivo: m || null, corregible: !aprobar && Boolean(corregible) } });
       return out;
     },
     /** Aprobar o rechazar varios a la vez. Cada uno pasa por las mismas reglas que uno solo. */
-    async decidirLote(actor, { ids, aprobar, motivo } = {}) {
+    async decidirLote(actor, { ids, aprobar, motivo, corregible } = {}) {
       permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor', 'finanzas']), 'No tienes permiso para revisar vouchers.');
       if (!Array.isArray(ids) || !ids.length || ids.length > 1000) invalido({ ids: 'Elige de 1 a 1,000 vouchers.' });
       if (!aprobar && normalizeName(motivo).length < 3) throw new HttpError(422, 'Explica por qué se rechazan.', { motivo: 'Escribe el motivo del rechazo.' });
-      let hechos = 0; const errores = [];
+      let hechos = 0; const errores = []; const hechosIds = [];
       for (const id of [...new Set(ids.map(String))]) {
-        try { await this.decidir(actor, id, Boolean(aprobar), motivo); hechos++; } catch (e) { errores.push({ id, error: e.message }); }
+        try { await this.decidir(actor, id, Boolean(aprobar), motivo, { corregible }); hechos++; hechosIds.push(id); } catch (e) { errores.push({ id, error: e.message }); }
       }
-      return { hechos, errores };
+      return { hechos, errores, ids: hechosIds };
+    },
+    /**
+     * Corregir un voucher rechazado con opción de corrección: fecha, medicamentos y médico. Vuelve a "pendiente"
+     * para que lo revisen otra vez. La foto no cambia. Solo la dueña o quien lo cargó, y solo en el mes del rechazo.
+     */
+    async corregir(actor, id, input = {}) {
+      const v = await data.get('vouchers', String(id));
+      if (!v) throw new HttpError(404, 'El voucher no existe.');
+      permitir((esDependiente(actor) && v.dependienteId === actor.id) || (cargaPorDependiente(actor) && v.registradoPor === actor.id), 'Solo quien cargó el voucher puede corregirlo.');
+      if (v.estado !== 'rechazado' || !v.corregible) throw new HttpError(409, 'Este voucher no se puede corregir.');
+      if (mesDe(v.decididoAt ?? v.updatedAt) !== mesDe(now().toISOString())) throw new HttpError(409, 'El plazo para corregirlo terminó con el mes.');
+      const e = {};
+      if (!esFechaISO(input.fecha)) e.fecha = 'Elige la fecha del voucher.';
+      else if (input.fecha > hoy()) e.fecha = 'La fecha no puede ser futura.';
+      const { lineas, medico } = await contenidoVoucher(input, e);
+      if (Object.keys(e).length) invalido(e);
+      if (await periodoCerrado(v.dependienteId, input.fecha)) throw new HttpError(409, 'Ese período de comisión ya está cerrado.', { fecha: 'El período de esa fecha ya se cerró.' });
+      const out = await data.update('vouchers', v.id, {
+        fecha: input.fecha, items: lineas, total: round2(lineas.reduce((s, l) => s + l.monto, 0)), estado: 'pendiente', corregible: false, motivo: null,
+        medicoId: medico?.id ?? null, medico: medico ? `${medico.nombre}${medico.especialidad ? `, ${medico.especialidad}` : ''}` : null,
+        correcciones: (v.correcciones ?? 0) + 1,
+      });
+      await audit({ actorId: actor.id, action: 'voucher_corregido', entity: 'voucher', entityId: v.id, before: { estado: 'rechazado', motivo: v.motivo, fecha: v.fecha, total: v.total }, after: { estado: 'pendiente', fecha: out.fecha, total: out.total } });
+      return out;
+    },
+    /**
+     * Al cambiar de mes se eliminan los vouchers rechazados en meses anteriores que nadie corrigió: el registro y su foto.
+     * No toca aprobados ni pendientes. Queda constancia en la auditoría.
+     */
+    async limpiarRechazados(ahora = now()) {
+      const mes = mesDe(ahora.toISOString());
+      let eliminados = 0;
+      for (const v of await data.list('vouchers', { estado: 'rechazado' })) {
+        const cuando = v.decididoAt ?? v.updatedAt ?? v.createdAt;
+        if (!cuando || mesDe(cuando) >= mes) continue;
+        if (v.foto?.clave) await files.remove?.(v.foto.clave).catch(() => {});
+        await data.remove('vouchers', v.id);
+        await audit({ actorId: null, action: 'voucher_rechazado_eliminado', entity: 'voucher', entityId: v.id, before: { dependienteId: v.dependienteId, fecha: v.fecha, total: v.total, motivo: v.motivo }, after: { razon: 'No se corrigió en el mes del rechazo.' } });
+        eliminados++;
+      }
+      return { eliminados };
     },
     async anular(actor, id) {
       const v = await data.get('vouchers', id);

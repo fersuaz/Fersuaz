@@ -326,12 +326,19 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     return [201, { item }];
   }, { limite: 7 * 1024 * 1024 });
   ruta('POST', '/api/fotos/verificar', async ({ me, body }) => c.verificarFotos(me, body ?? {}), { limite: 512 * 1024 });
-  ruta('POST', '/api/vouchers/decidir', async ({ me, body }) => c.vouchers.decidirLote(me, body ?? {}), { limite: 512 * 1024 });
+  ruta('POST', /^\/api\/vouchers\/([\w-]+)\/corregir$/, async ({ me, p, body }) => ({ item: await c.vouchers.corregir(me, p[1], body ?? {}) }));
+  ruta('POST', '/api/vouchers/decidir', async ({ me, body }) => {
+    const r = await c.vouchers.decidirLote(me, body ?? {});
+    for (const id of r.ids ?? []) {
+      avisar(async () => { const item = await data.get('vouchers', id); if (item) await n.notificar(item.dependienteId, { tipo: 'voucher', titulo: item.estado === 'aprobado' ? 'Voucher aprobado' : 'Voucher rechazado', texto: `Tu voucher del ${item.fecha} por RD$${Number(item.total).toLocaleString('es-DO', { minimumFractionDigits: 2 })} fue ${item.estado}${item.motivo ? `: ${item.motivo}` : '.'}${item.corregible ? ' Corrígelo en Mis vouchers antes de que termine el mes; si no, se elimina.' : ''}`, enlace: '#misVouchers' }); });
+    }
+    return { hechos: r.hechos, errores: r.errores };
+  }, { limite: 512 * 1024 });
   ruta('GET', '/api/vouchers/dependientes', async ({ me }) => ({ items: await c.vouchers.dependientesDeZona(me) }));
   ruta('GET', '/api/vouchers/porcentaje', async ({ me, q }) => ({ item: await c.vouchers.porcentaje(me, q.get('dependienteId')) }));
   ruta('POST', /^\/api\/vouchers\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p, body }) => {
-    const item = await c.vouchers.decidir(me, p[1], p[2] === 'aprobar', body.motivo);
-    avisar(() => n.notificar(item.dependienteId, { tipo: 'voucher', titulo: item.estado === 'aprobado' ? 'Voucher aprobado' : 'Voucher rechazado', texto: `Tu voucher del ${item.fecha}${item.referencia ? ` (${item.referencia})` : ''} por RD$${Number(item.total).toLocaleString('es-DO', { minimumFractionDigits: 2 })} fue ${item.estado}${item.motivo ? `: ${item.motivo}` : '.'}`, enlace: '#misVouchers' }));
+    const item = await c.vouchers.decidir(me, p[1], p[2] === 'aprobar', body?.motivo, { corregible: body?.corregible });
+    avisar(() => n.notificar(item.dependienteId, { tipo: 'voucher', titulo: item.estado === 'aprobado' ? 'Voucher aprobado' : 'Voucher rechazado', texto: `Tu voucher del ${item.fecha}${item.referencia ? ` (${item.referencia})` : ''} por RD$${Number(item.total).toLocaleString('es-DO', { minimumFractionDigits: 2 })} fue ${item.estado}${item.motivo ? `: ${item.motivo}` : '.'}${item.corregible ? ' Corrígelo en Mis vouchers antes de que termine el mes; si no, se elimina.' : ''}`, enlace: '#misVouchers' }));
     return { item };
   });
   ruta('POST', /^\/api\/vouchers\/([\w-]+)\/anular$/, async ({ me, p }) => ({ item: await c.vouchers.anular(me, p[1]) }));
@@ -491,7 +498,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     return { raw: f };
   });
 
-  return async (req, res) => {
+  const manejador = async (req, res) => {
     const origin = req.headers.origin;
     const url = new URL(req.url, 'http://localhost');
     try {
@@ -523,6 +530,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
       return send(res, 500, { error: 'Error interno. Intenta de nuevo.' }, origin);
     }
   };
+  manejador.comercial = c; // para tareas programadas (limpieza mensual)
+  return manejador;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -535,6 +544,13 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (!secret) { console.error('SESSION_SECRET es obligatorio.'); process.exit(1); }
   const app = createApp({ store, data, files: crearArchivos(process.env, UPLOAD_DIR), mapas: crearMapas(), lugares: crearLugares(), correo: crearCorreo(), lectorIA: createLectorIA({ apiKey: process.env.ANTHROPIC_API_KEY, modelo: process.env.ANTHROPIC_MODELO || undefined }), sitio: process.env.SITIO_URL || 'https://fersuaz-web.pages.dev', sessionSecret: secret, allowedOrigins: ALLOWED_ORIGINS.split(',').filter(Boolean) });
   createServer(app).listen(PORT, () => console.log(`API FERSUAZ en :${PORT}`));
+  // Vouchers rechazados que no se corrigieron en su mes: se eliminan al empezar el mes siguiente (al arrancar y cada 6 horas).
+  if (DATABASE_URL) {
+    const limpiar = () => app.comercial.vouchers.limpiarRechazados()
+      .then((r) => { if (r?.eliminados) console.log(`Vouchers rechazados eliminados: ${r.eliminados}`); }).catch((e) => console.error('Limpieza de vouchers:', e.message));
+    setTimeout(limpiar, 90_000).unref();
+    setInterval(limpiar, 6 * 3600_000).unref();
+  }
   // Revisión automática del aviso semanal del MICM: al arrancar y cada 6 horas (desactivar con MICM_AUTO=off).
   if (DATABASE_URL && process.env.MICM_AUTO !== 'off') {
     const revisar = () => actualizarDesdeMicm({ data, audit: (e) => store.addAudit(e) })
