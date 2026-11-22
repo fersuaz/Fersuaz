@@ -1281,7 +1281,7 @@ function cargarAdjunto(clave) {
   if (!adjuntosCache.has(clave)) {
     adjuntosCache.set(clave, fetch(`${API}/api/adjuntos/${encodeURIComponent(clave)}`, { headers: { authorization: `Bearer ${token()}` } })
       .then(async (r) => {
-        if (r.status === 404) throw new Error('El archivo de esta foto no está guardado en el servidor. Pide que la vuelvan a cargar o recházalo.');
+        if (r.status === 404) throw Object.assign(new Error('El archivo de esta foto no está guardado en el servidor. Pide que la vuelvan a cargar o recházalo.'), { permanente: true });
         if (!r.ok) throw new Error(`El servidor no entregó la foto (${r.status}).`);
         const b = await r.blob(); return { url: URL.createObjectURL(b), tipo: b.type };
       })

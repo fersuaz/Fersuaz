@@ -17,9 +17,9 @@ function crear() {
     <div class="visor-barra">
       <div class="visor-info"><strong class="visor-titulo"></strong><span class="visor-detalle"></span></div>
       <div class="visor-nav" role="group" aria-label="Fotos">
-        <button type="button" data-a="ant" aria-label="Foto anterior">‹ Anterior</button>
+        <button type="button" data-a="ant" aria-label="Foto anterior"><span aria-hidden="true">‹</span><span class="visor-txt"> Anterior</span></button>
         <span class="visor-pos" aria-live="polite"></span>
-        <button type="button" data-a="sig" aria-label="Foto siguiente">Siguiente ›</button>
+        <button type="button" data-a="sig" aria-label="Foto siguiente"><span class="visor-txt">Siguiente </span><span aria-hidden="true">›</span></button>
       </div>
       <div class="visor-ctrl" role="group" aria-label="Zoom">
         <button type="button" data-a="menos" aria-label="Alejar">−</button>
@@ -136,7 +136,8 @@ async function ir(i) {
   if (!url && g.cargar) {
     img.removeAttribute('src'); titulo.textContent = `${g.nombre ?? 'Foto'} (cargando…)`;
     let error = null;
-    for (const intento of [g.precarga, null, null]) { // la precarga, y dos intentos más si falla
+    for (const intento of [g.precarga, null, null]) {
+      if (error?.permanente) break; // la precarga, y dos intentos más si falla
       try { const r = await (intento ?? g.cargar()); if (r?.url) { ({ url, tipo } = r); error = null; break; } } catch (e) { error = e; }
       if (yo !== turno) return;
     }
@@ -177,7 +178,8 @@ function mostrarError(g, error) {
   caja.append(nodo('strong', null, 'No se pudo abrir esta foto'), nodo('span', null, error?.message || 'Revisa tu conexión e inténtalo otra vez.'));
   const b = nodo('button', 'visor-accion ok', 'Reintentar'); b.type = 'button';
   b.addEventListener('click', () => { caja.remove(); ir(actual); });
-  caja.append(b); marco.append(caja);
+  if (!error?.permanente) caja.append(b); // si el archivo no existe, reintentar no sirve
+  marco.append(caja);
 }
 const nodo = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
 /** Etiqueta encima de la foto con lo que escribió el usuario: así se compara sin salir de la foto. */
