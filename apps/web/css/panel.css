@@ -882,3 +882,48 @@ body.visor-abierto { overflow: hidden; }
 @media (max-width: 640px) { .visor-etiquetas { position: static; width: auto; max-height: 30vh; margin: .5rem; } .visor-cuerpo { grid-template-rows: auto 1fr; } .visor-cuerpo > .visor-marco, .visor-cuerpo > .visor-pdf { grid-area: 2 / 1; } }
 .visor-error { position: absolute; inset: 0; margin: auto; width: min(420px, 90%); height: fit-content; display: grid; gap: .6rem; justify-items: center; text-align: center; padding: 1.5rem; border-radius: 14px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.3); color: #fff; }
 .visor-error strong { font-family: Poppins, sans-serif; font-size: 1.1rem; }
+.lote-barra { display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; align-items: center; justify-content: space-between; margin: 0 0 1rem; }
+.lote-barra:empty { display: none; }
+.lote-estado { color: #52677A; font-weight: 500; }
+.celda-sel input, th input[type=checkbox] { width: 20px; height: 20px; accent-color: #003463; cursor: pointer; }
+tr.fila-sel td { background: #E9F0F6; }
+/* ---------- Responsive: revisión, filtros, visor ---------- */
+/* Tableta: el menú angosto no tapa el contenido (solo se abre ancho cuando se pide) */
+@media (min-width: 768px) and (max-width: 1023px) { .panel:not(.flotante) .lateral { width: 72px; } }
+.lf-mas { grid-column: 1 / -1; }
+.lf-mas > summary { cursor: pointer; font-weight: 600; color: #246C8E; padding: .35rem 0; list-style-position: inside; }
+.lf-mas > summary:focus-visible { outline: 3px solid #246C8E; outline-offset: 2px; border-radius: 6px; }
+.lf-mas-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: .75rem; margin-top: .5rem; }
+@media (min-width: 768px) { .lf-mas > summary { display: none; } .lf-mas-campos { margin-top: 0; } }
+/* La barra de lote queda a la vista al bajar por la lista */
+.lote-barra { position: sticky; bottom: 0; z-index: 5; background: #F5F8FB; padding: .75rem 0; border-top: 1px solid transparent; }
+@media (max-width: 900px) {
+  .lote-barra { flex-direction: column; align-items: stretch; gap: .5rem; padding: .75rem; margin: 0 0 1rem; background: #fff; border: 1px solid #C7D6E3; border-radius: 14px; box-shadow: 0 -6px 18px rgba(15, 42, 68, .08); }
+  .lote-barra .acciones { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+  .lote-barra .acciones .btn-enlace { grid-column: 1 / -1; justify-self: center; }
+  .lote-barra .acciones button { width: 100%; padding-inline: .5rem; }
+  .lote-estado { font-size: .92rem; text-align: center; }
+  .tabla td.td-sel { justify-content: space-between; align-items: center; font-weight: 600; }
+  .tabla td.td-sel::before { color: #0F2A44; font-size: .92rem; }
+  .celda-sel input { width: 24px; height: 24px; }
+  .tabla td.td-acciones .acciones { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+  .tabla td.td-acciones .acciones button { width: 100%; min-height: 44px; }
+  .tabla td.td-acciones::before { content: none; }
+}
+/* Visor en el celular: barra compacta en dos filas, sin ocupar media pantalla */
+@media (max-width: 640px) {
+  .visor-barra { padding: .5rem .6rem; gap: .4rem; }
+  .visor-info { flex-basis: 100%; }
+  .visor-detalle { -webkit-line-clamp: 1; font-size: .82rem; }
+  .visor-nav { order: 2; }
+  .visor-nav button { min-height: 38px; padding: 0 .7rem; font-size: .9rem; }
+  .visor-ctrl { order: 3; margin-left: auto; gap: .3rem; flex-wrap: nowrap; }
+  .visor-ctrl button { min-width: 38px; min-height: 38px; padding: 0 .55rem; font-size: .9rem; }
+  .visor-ctrl [data-a=ajustar] { display: none; }
+  .visor-nivel { display: none; }
+  .visor-barra { flex-wrap: wrap; }
+  .visor-etiquetas { max-height: 26vh; padding: .6rem .75rem; gap: .3rem; }
+  .visor-pie { padding: .5rem; }
+  .visor-acciones { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+  .visor-accion { width: 100%; }
+}
