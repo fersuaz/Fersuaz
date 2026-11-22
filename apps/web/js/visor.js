@@ -5,7 +5,7 @@
  */
 const MIN = 1; const MAX = 8;
 let dlg; let img; let marco; let pdf; let titulo; let nivel; let btnMenos; let btnMas; let btnAnt; let btnSig; let posicion; let detalle;
-let galeria = []; let actual = 0; let turno = 0; let alCerrar = null; let etiquetas; let acciones;
+let galeria = []; let actual = 0; let turno = 0; let alCerrar = null; let etiquetas; let acciones; let panel; let conPanel = null;
 let z = 1; let x = 0; let y = 0; let giro = 0;
 const punteros = new Map(); let pellizco = null; let arrastre = null;
 
@@ -34,10 +34,11 @@ function crear() {
       <div class="visor-marco" tabindex="0" aria-label="Foto. Usa + y − para acercar o alejar, y las flechas para moverla."><img alt="" draggable="false"></div>
       <iframe class="visor-pdf" title="Documento" hidden></iframe>
       <aside class="visor-etiquetas" aria-label="Lo que cargó el usuario" hidden></aside>
+      <section class="visor-panel" aria-label="Datos de esta foto" hidden></section>
     </div>
     <div class="visor-pie">
       <div class="visor-acciones" hidden></div>
-      <p class="visor-ayuda">Rueda o pellizco para acercar. Arrastra para mover. Doble clic para acercar o volver. Flechas ← → para pasar de foto.</p>
+      <p class="visor-ayuda">Rueda o pellizco para acercar. Arrastra para mover. Doble clic para acercar o volver. Flechas ← → para pasar de foto (cuando no estás escribiendo en un campo).</p>
     </div>`;
   document.body.append(dlg);
   img = dlg.querySelector('img'); marco = dlg.querySelector('.visor-marco'); pdf = dlg.querySelector('.visor-pdf');
@@ -45,7 +46,7 @@ function crear() {
   btnMenos = dlg.querySelector('[data-a=menos]'); btnMas = dlg.querySelector('[data-a=mas]');
   btnAnt = dlg.querySelector('[data-a=ant]'); btnSig = dlg.querySelector('[data-a=sig]');
   posicion = dlg.querySelector('.visor-pos'); detalle = dlg.querySelector('.visor-detalle');
-  etiquetas = dlg.querySelector('.visor-etiquetas'); acciones = dlg.querySelector('.visor-acciones');
+  etiquetas = dlg.querySelector('.visor-etiquetas'); acciones = dlg.querySelector('.visor-acciones'); panel = dlg.querySelector('.visor-panel');
   dlg.querySelector('.visor-nav').addEventListener('click', (e) => { const a = e.target.closest('button')?.dataset.a; if (a === 'ant') ir(actual - 1); else if (a === 'sig') ir(actual + 1); });
 
   dlg.querySelector('.visor-ctrl').addEventListener('click', (e) => {
@@ -56,7 +57,7 @@ function crear() {
   });
   // clic en el fondo oscuro (fuera de la foto) cierra
   marco.addEventListener('click', (e) => { if (e.target === marco && z === 1 && !movio) dlg.close(); });
-  dlg.addEventListener('close', () => { img.removeAttribute('src'); pdf.removeAttribute('src'); document.body.classList.remove('visor-abierto'); galeria = []; const f = alCerrar; alCerrar = null; f?.(); });
+  dlg.addEventListener('close', () => { img.removeAttribute('src'); pdf.removeAttribute('src'); document.body.classList.remove('visor-abierto'); soltarPanel(); galeria = []; const f = alCerrar; alCerrar = null; f?.(); });
 
   marco.addEventListener('wheel', (e) => { e.preventDefault(); zoomEn(z * (e.deltaY < 0 ? 1.2 : 1 / 1.2), e.clientX, e.clientY); }, { passive: false });
   marco.addEventListener('dblclick', (e) => { if (z > 1) reiniciar(); else zoomEn(2.5, e.clientX, e.clientY); });
@@ -130,7 +131,7 @@ async function ir(i) {
   posicion.textContent = galeria.length > 1 ? `${i + 1} de ${galeria.length}` : '';
   dlg.querySelector('.visor-nav').hidden = galeria.length < 2;
   btnAnt.disabled = i === 0; btnSig.disabled = i === galeria.length - 1;
-  pintarEtiquetas(g); pintarAcciones(g);
+  pintarEtiquetas(g); pintarAcciones(g); ponerPanel(g);
   let { url, tipo } = g;
   if (!url && g.cargar) {
     img.removeAttribute('src'); titulo.textContent = `${g.nombre ?? 'Foto'} (cargando…)`;
@@ -151,6 +152,20 @@ async function ir(i) {
   if (esPdf) { img.removeAttribute('src'); pdf.src = url; } else { pdf.removeAttribute('src'); img.src = url; img.alt = g.nombre ?? 'Foto'; pintar(); }
   // la siguiente se va preparando para que pasar sea inmediato
   const sig = galeria[i + 1]; if (sig && !sig.url && sig.cargar && !sig.precarga) sig.precarga = sig.cargar().then((r) => Object.assign(sig, r)).catch(() => {});
+}
+
+/**
+ * Panel para editar junto a la foto (por ejemplo, medicamentos y médico de un voucher que se está cargando).
+ * g.panel = { nodo: () => elemento, devolver: () => void }: el elemento se presta al visor y se devuelve al pasar de foto o cerrar.
+ */
+function soltarPanel() { if (conPanel) { conPanel.panel.devolver(); conPanel = null; } panel.replaceChildren(); }
+function ponerPanel(g) {
+  soltarPanel();
+  dlg.classList.toggle('con-panel', Boolean(g.panel));
+  panel.hidden = !g.panel;
+  if (!g.panel) return;
+  panel.append(g.panel.nodo()); conPanel = g;
+  panel.oninput = panel.onchange = () => { detalle.textContent = (typeof g.detalle === 'function' ? g.detalle() : g.detalle) ?? ''; };
 }
 
 /** La foto no se pudo traer: se dice por qué y se puede reintentar sin cerrar. */

@@ -93,10 +93,14 @@ function mejorar(sel) {
     if (abierto && abierto !== cerrar) abierto(false);
     abierto = cerrar;
     panel.hidden = false; caja.classList.add('dsp-abierto'); boton.setAttribute('aria-expanded', 'true');
-    // abre hacia arriba si no cabe abajo
+    // abre hacia arriba si no cabe abajo (dentro de la caja con desplazamiento que lo contiene, o de la ventana)
     const r = boton.getBoundingClientRect();
-    caja.classList.toggle('dsp-arriba', window.innerHeight - r.bottom < 300 && r.top > window.innerHeight - r.bottom);
-    buscar.value = ''; filtrar(); buscar.focus();
+    const cont = caja.closest('.visor-panel');
+    const lim = cont ? cont.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+    // dentro del visor siempre abre hacia abajo: la caja de datos se desplaza para mostrar la lista entera
+    caja.classList.toggle('dsp-arriba', !cont && lim.bottom - r.bottom < 300 && r.top - lim.top > lim.bottom - r.bottom);
+    buscar.value = ''; filtrar(); buscar.focus({ preventScroll: true });
+    if (cont) requestAnimationFrame(() => panel.scrollIntoView({ block: 'nearest' }));
   }
   function cerrar(devolverFoco) {
     if (panel.hidden) return;
