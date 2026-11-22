@@ -971,3 +971,25 @@ tr.fila-sel td { background: #E9F0F6; }
 .cv-form .med-nuevo label { display: grid; gap: .25rem; }
 .cv-linea .btn-enlace { margin-bottom: .7rem; }
 .cv-linea label:first-child { grid-column: 1 / -1; }
+.meta-calculo { display: block; color: #52677A; font-size: .8rem; line-height: 1.35; margin-top: .15rem; }
+/* Selección múltiple */
+.ms { position: relative; }
+.ms-boton { width: 100%; min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .6rem .9rem; font: inherit; color: #0F2A44; background: #fff; border: 1px solid #C7D6E3; border-radius: 12px; cursor: pointer; text-align: left; }
+.ms-boton:focus-visible { outline: 3px solid #246C8E; outline-offset: 2px; }
+.ms-texto { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-flecha { width: .55rem; height: .55rem; border-right: 2px solid #003463; border-bottom: 2px solid #003463; transform: rotate(45deg) translateY(-2px); flex: none; }
+.ms-boton[aria-expanded="true"] .ms-flecha { transform: rotate(-135deg); }
+.ms-panel { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; width: max(100%, 280px); background: #fff; border: 1px solid #C7D6E3; border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 42, 68, .18); padding: .6rem; display: grid; gap: .4rem; }
+.ms-panel[hidden] { display: none; }
+.ms-panel input[type=search] { font: inherit; width: 100%; padding: .5rem .7rem; border: 1px solid #C7D6E3; border-radius: 8px; }
+.ms-acc { display: flex; gap: 1rem; }
+.ms-lista { max-height: 280px; overflow: auto; display: grid; }
+.ms-op { display: flex; gap: .55rem; align-items: center; padding: .45rem .4rem; border-radius: 8px; cursor: pointer; color: #0F2A44; font-size: .95rem; }
+.ms-op:hover { background: #E9F0F6; }
+.ms-op input { width: 18px; height: 18px; accent-color: #003463; flex: none; }
+.ms-grupo { font-size: .78rem; font-weight: 600; color: #52677A; padding: .5rem .4rem .2rem; }
+.ms-pie { display: flex; justify-content: flex-end; }
+.lf-campo.ms-campo > label { font-size: .85rem; color: #52677A; }
+.lf-campo .ms-op input, .ms-op input { width: 18px; height: 18px; min-height: 0; padding: 0; border-radius: 4px; flex: none; }
+.lf-campo .ms-op { display: flex; gap: .55rem; align-items: center; }
+.lf-campo .ms-op span { color: #0F2A44; font-size: .95rem; }

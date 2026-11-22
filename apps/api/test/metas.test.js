@@ -6,7 +6,7 @@ import { MemoryData } from '../src/data.js';
 import { MemoryFiles } from '../src/files.js';
 import { createApp } from '../src/server.js';
 import { hashPassword } from '../src/security.js';
-import { valoresDelMes, metaEfectiva } from '../src/metas.js';
+import { valoresDelMes, metaEfectiva, metaVisitas, lugaresCubiertos, METRICAS_POSICION } from '../src/metas.js';
 
 test('valores del mes: solo visitas hechas; recetas, promedio, volumen y pacientes', () => {
   const jornadas = [
@@ -19,6 +19,14 @@ test('valores del mes: solo visitas hechas; recetas, promedio, volumen y pacient
   const cfg = { porPosicion: { Visitador: { visitasFarmacias: 60, visitasCentros: 20 } }, porRep: { r1: { visitasCentros: 30 } } };
   assert.deepEqual(metaEfectiva(cfg, { id: 'r1', position: 'Visitador' }), { visitasFarmacias: { meta: 60, fuente: 'posicion' }, visitasCentros: { meta: 30, fuente: 'representante' } });
   assert.deepEqual(metaEfectiva(cfg, { id: 'r2', position: 'Vendedor' }), { visitasFarmacias: { meta: null, fuente: null } });
+});
+
+test('metas de visitas: veces por lugar × lugares de la zona; PVC mide farmacias y centros', () => {
+  assert.equal(metaVisitas(2, 100), 200, '2 veces × 100 farmacias = 200 visitas');
+  assert.equal(metaVisitas(null, 100), null); assert.equal(metaVisitas(2, 0), 0);
+  const paradas = [{ refTipo: 'farmacia', refId: 'a', hecha: true }, { refTipo: 'farmacia', refId: 'a', hecha: true }, { refTipo: 'farmacia', refId: 'b', hecha: true }, { refTipo: 'farmacia', refId: 'c', hecha: false }];
+  assert.equal(lugaresCubiertos(paradas, 'farmacia', 2), 1); assert.equal(lugaresCubiertos(paradas, 'farmacia', 1), 2);
+  assert.deepEqual(METRICAS_POSICION.PVC, ['visitasFarmacias', 'visitasCentros']);
 });
 
 test('metas: la gerencia fija por posición y por representante; las visitas cuentan al marcarlas', async () => {
@@ -34,7 +42,12 @@ test('metas: la gerencia fija por posición y por representante; las visitas cue
     }
     assert.equal((await call('POST', '/api/metas/posicion', { posicion: 'Visitador', valores: { visitasFarmacias: 60 } }, tok.vis)).status, 403);
     assert.equal((await call('POST', '/api/metas/posicion', { posicion: 'Visitador', valores: { visitasFarmacias: 6.5 } }, tok.ger)).status, 422, 'visitas enteras');
-    await call('POST', '/api/metas/posicion', { posicion: 'Visitador', valores: { visitasFarmacias: 60, visitasCentros: 20 } }, tok.ger);
+    await call('POST', '/api/metas/posicion', { posicion: 'Visitador', valores: { visitasFarmacias: 2, visitasCentros: 1 } }, tok.ger);
+    // Zona del visitador: 3 farmacias y 1 centro
+    await data.insert('zonas', { representanteId: ids.vis, provincias: ['Espaillat'], municipios: {} });
+    for (const n of [1, 2, 3]) await data.insert('farmacias', { nombre: `Farmacia Ejemplo ${n}`, provincia: 'Espaillat', municipio: 'Moca', estado: 'validada' });
+    await data.insert('establecimientos', { nombre: 'Hospital Ejemplo', tipo: 'hospital', provincia: 'Espaillat', municipio: 'Moca', estado: 'validado' });
+    await data.insert('farmacias', { nombre: 'Farmacia Ejemplo Fuera', provincia: 'Santiago', municipio: 'Tamboril', estado: 'validada' });
     await call('POST', '/api/metas/posicion', { posicion: 'Promotora', valores: { recetas: 100, medicamentosPorReceta: 2.5, volumen: '150,000', pacientes: 80 } }, tok.ger);
     await call('POST', `/api/metas/representante/${ids.vis2}`, { valores: { visitasCentros: 30 } }, tok.ger);
     const cfg = (await call('GET', '/api/metas', null, tok.ger)).body.item;
@@ -57,7 +70,7 @@ test('metas: la gerencia fija por posición y por representante; las visitas cue
     const av = (await call('GET', '/api/metas/avance?mes=2026-11', null, tok.ger)).body;
     assert.equal(av.items.length, 3);
     const vis = av.items.find((x) => x.representante.id === ids.vis);
-    assert.deepEqual(vis.metricas.map((m) => [m.clave, m.valor, m.meta, m.porcentaje]), [['visitasFarmacias', 1, 60, 2], ['visitasCentros', 1, 20, 5]]);
+    assert.deepEqual(vis.metricas.map((m) => [m.clave, m.valor, m.vecesPorLugar, m.lugares, m.meta, m.porcentaje, m.cubiertos]), [['visitasFarmacias', 1, 2, 3, 6, 17, 0], ['visitasCentros', 1, 1, 1, 1, 100, 1]]);
     assert.equal(av.items.find((x) => x.representante.id === ids.vis2).metricas[1].fuente, 'representante');
     const pro = av.items.find((x) => x.representante.id === ids.pro);
     assert.deepEqual(pro.metricas.map((m) => m.valor), [2, 1.5, 3000, 2]);

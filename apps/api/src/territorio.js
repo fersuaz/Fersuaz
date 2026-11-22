@@ -246,11 +246,14 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
   async function listarEstablecimientos(actor, { provincia, municipio, tipo, q, ver = 'activos' } = {}) {
     permitir(activo(actor));
     const zona = await zonaActor(actor);
+    // Cada filtro acepta varios valores separados por coma (varias provincias, municipios o tipos a la vez).
+    const lista = (v) => (v ? String(v).split(',').map((x) => x.trim()).filter(Boolean) : []);
+    const [provs, muns, tipos] = [lista(provincia), lista(municipio), lista(tipo)];
     const filtro = {};
-    if (municipio) filtro.municipio = municipio;
+    if (muns.length === 1) filtro.municipio = muns[0];
     let xs = await data.list('establecimientos', filtro);
     const descartados = ver === 'descartados' && rol(actor, GESTION);
-    xs = xs.filter((x) => (!zona || dentroDeZona(zona, x.provincia, x.municipio)) && (!provincia || x.provincia === provincia) && (!tipo || x.tipo === tipo) && (descartados ? x.estado === 'inactivo' : x.estado !== 'inactivo'));
+    xs = xs.filter((x) => (!zona || dentroDeZona(zona, x.provincia, x.municipio)) && (!provs.length || provs.includes(x.provincia)) && (!muns.length || muns.includes(x.municipio)) && (!tipos.length || tipos.includes(x.tipo)) && (descartados ? x.estado === 'inactivo' : x.estado !== 'inactivo'));
     if (q) { const k = sinAcentos(q); xs = xs.filter((x) => sinAcentos(`${x.nombre} ${x.sector ?? ''} ${x.direccion ?? ''}`).includes(k)); }
     xs = xs.map((x) => ({ ...x, revisar: x.estado !== 'inactivo' && posibleError(x.nombre) }));
     if (ver === 'revisar') xs = xs.filter((x) => x.revisar);
@@ -266,10 +269,18 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     let n = 0;
     for (const id of lista) {
       const x = await data.get('establecimientos', id);
-      if (!x || x.estado === 'inactivo') continue;
-      await data.update('establecimientos', id, { estado: 'inactivo', descarteMotivo: m, descartadoPor: actor.id });
-      await audit({ actorId: actor.id, action: 'establecimiento_descartado', entity: 'establecimiento', entityId: id, before: { estado: x.estado, nombre: x.nombre }, after: { estado: 'inactivo', motivo: m } });
-      n++;
+      if (x && x.estado !== 'inactivo') {
+        await data.update('establecimientos', id, { estado: 'inactivo', descarteMotivo: m, descartadoPor: actor.id });
+        await audit({ actorId: actor.id, action: 'establecimiento_descartado', entity: 'establecimiento', entityId: id, before: { estado: x.estado, nombre: x.nombre }, after: { estado: 'inactivo', motivo: m } });
+        n++; continue;
+      }
+      // También farmacias (desde "Lugares de su zona"): salen de las zonas y cronogramas; el historial se conserva.
+      const f = x ? null : await data.get('farmacias', id);
+      if (f && f.estado !== 'inactiva') {
+        await data.update('farmacias', id, { estado: 'inactiva' });
+        await audit({ actorId: actor.id, action: 'farmacia_descartada', entity: 'farmacia', entityId: id, before: { estado: f.estado, nombre: f.nombre }, after: { estado: 'inactiva', motivo: m } });
+        n++;
+      }
     }
     return { descartados: n };
   }
