@@ -3823,32 +3823,44 @@ function leerPunto(t) {
  * Las coordenadas hacen exacto el cálculo de km; el nombre es solo para reconocerlo.
  */
 function campoPuntoSalida(valor, res) {
-  const coords = h('input', { id: 'res-coord', name: 'residencia.coordenadas', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Ejemplo: 19.4517, -70.6970', value: valor?.lat != null ? `${valor.lat}, ${valor.lng}` : '' });
+  const coords = h('input', { id: 'res-coord', name: 'residencia.coordenadas', autocomplete: 'off', placeholder: '19.4517, -70.6970 o https://maps.app.goo.gl/…', value: valor?.lat != null ? `${valor.lat}, ${valor.lng}` : '' });
   const nombre = h('input', { id: 'res-dir', name: 'residencia.direccion', autocomplete: 'off', maxlength: 160, value: valor?.direccion ?? '', placeholder: 'Ejemplo: Calle 5, Los Jardines, Tamboril' });
   const buscar = h('button', { type: 'button', class: 'btn-sec' }, 'Buscar el lugar');
   const aqui = 'geolocation' in navigator ? h('button', { type: 'button', class: 'btn-sec btn-suave' }, 'Usar mi ubicación actual') : null;
   const res0 = h('div', { class: 'punto-resultado', 'aria-live': 'polite' });
   const mapa = (lat, lng) => h('a', { href: `https://www.google.com/maps?q=${lat},${lng}`, target: '_blank', rel: 'noopener' }, 'Ver en el mapa');
   const pintarGuardado = () => { const p = leerPunto(coords.value); if (p.lat != null) res0.replaceChildren(h('span', {}, 'Punto guardado. '), mapa(p.lat, p.lng)); };
+  const esEnlace = (t) => /^\s*https?:\/\//i.test(t);
+  const mostrar = (r, lat, lng, nota) => {
+    if (!r.item) { res0.replaceChildren(h('span', {}, nota ?? '', r.motivo ?? 'No se encontró un nombre; escríbelo abajo.'), ' ', mapa(lat, lng)); nombre.focus(); return; }
+    nombre.value = r.item.nombre;
+    // Si Google reconoce la provincia y el municipio, se eligen solos (se pueden cambiar).
+    if (r.item.provincia && res.sp.value !== r.item.provincia) { res.sp.value = r.item.provincia; res.sp.dispatchEvent(new Event('change', { bubbles: true })); }
+    if (r.item.municipio) { res.sm.value = r.item.municipio; res.sm.dispatchEvent(new Event('change', { bubbles: true })); }
+    res0.replaceChildren(h('span', {}, nota ?? '', h('strong', {}, r.item.fuente === 'cercano' ? 'Lugar conocido más cercano: ' : 'Google lo nombra así: '), r.item.nombre, '. Si no es correcto, corrige el nombre abajo. '), mapa(lat, lng));
+  };
   const consultar = async () => {
-    const p = leerPunto(coords.value); const err = coords.closest('.field').querySelector('.error');
-    err.textContent = p.error ?? ''; coords.toggleAttribute('aria-invalid', !!p.error);
-    if (p.lat == null) { if (!p.error) err.textContent = 'Escribe las coordenadas primero.'; return; }
+    const err = coords.closest('.field').querySelector('.error');
+    const marcar = (t) => { err.textContent = t ?? ''; coords.toggleAttribute('aria-invalid', !!t); };
+    const texto = coords.value.trim();
+    if (!texto) { marcar('Escribe las coordenadas o pega el enlace.'); return; }
     buscar.disabled = true; const t0 = buscar.textContent; buscar.textContent = 'Buscando…';
     try {
-      const r = await api('GET', `/api/territorio/ubicacion?lat=${p.lat}&lng=${p.lng}`);
-      if (!r.item) { res0.replaceChildren(h('span', {}, r.motivo ?? 'No se encontró un nombre; escríbelo abajo.'), ' ', mapa(p.lat, p.lng)); nombre.focus(); return; }
-      nombre.value = r.item.nombre;
-      // Si Google reconoce la provincia y el municipio, se eligen solos (se pueden cambiar).
-      if (r.item.provincia && res.sp.value !== r.item.provincia) { res.sp.value = r.item.provincia; res.sp.dispatchEvent(new Event('change', { bubbles: true })); }
-      if (r.item.municipio) { res.sm.value = r.item.municipio; res.sm.dispatchEvent(new Event('change', { bubbles: true })); }
-      res0.replaceChildren(h('span', {}, h('strong', {}, r.item.fuente === 'cercano' ? 'Lugar conocido más cercano: ' : 'Google lo nombra así: '), r.item.nombre, '. Si no es correcto, corrige el nombre abajo. '), mapa(p.lat, p.lng));
-    } catch (e) { res0.replaceChildren(h('span', {}, `${e.message} Escribe el nombre abajo.`)); }
+      if (esEnlace(texto)) {
+        const r = await api('GET', `/api/territorio/ubicacion-enlace?url=${encodeURIComponent(texto)}`);
+        coords.value = `${r.lat}, ${r.lng}`; marcar(null);
+        mostrar(r, r.lat, r.lng, h('span', { class: 'punto-desde' }, `Del enlace: ${r.lat}, ${r.lng}${r.aproximado ? ' (centro del mapa; revisa en el mapa)' : ''}. `));
+        return;
+      }
+      const p = leerPunto(texto); marcar(p.error);
+      if (p.lat == null) return;
+      mostrar(await api('GET', `/api/territorio/ubicacion?lat=${p.lat}&lng=${p.lng}`), p.lat, p.lng);
+    } catch (e) { if (e.fields?.['residencia.coordenadas']) marcar(e.fields['residencia.coordenadas']); else res0.replaceChildren(h('span', {}, `${e.message} Escribe el nombre abajo.`)); }
     finally { buscar.disabled = false; buscar.textContent = t0; }
   };
   buscar.addEventListener('click', consultar);
   coords.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); consultar(); } });
-  coords.addEventListener('paste', () => setTimeout(() => { if (leerPunto(coords.value).lat != null) consultar(); }, 0));
+  coords.addEventListener('paste', () => setTimeout(() => { if (esEnlace(coords.value) || leerPunto(coords.value).lat != null) consultar(); }, 0));
   aqui?.addEventListener('click', () => {
     aqui.disabled = true;
     navigator.geolocation.getCurrentPosition((pos) => { aqui.disabled = false; coords.value = `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`; consultar(); },
@@ -3856,12 +3868,12 @@ function campoPuntoSalida(valor, res) {
   });
   pintarGuardado();
   const nodo = h('div', { class: 'punto-salida' },
-    h('div', { class: 'field' }, h('label', { for: 'res-coord' }, 'Punto exacto desde donde sale ', h('small', {}, '(latitud, longitud; opcional)')),
+    h('div', { class: 'field' }, h('label', { for: 'res-coord' }, 'Punto exacto desde donde sale ', h('small', {}, '(coordenadas o enlace de Google Maps; opcional)')),
       h('div', { class: 'punto-fila' }, coords, buscar, aqui), h('p', { class: 'error', dataset: { for: 'residencia.coordenadas' } }),
-      h('p', { class: 'hint' }, 'En Google Maps, mantén presionado el punto de salida y copia los números que aparecen. Con el punto exacto, los km de cada día se calculan desde ahí.')),
+      h('p', { class: 'hint' }, 'Pega el enlace del lugar (en Google Maps: Compartir → Copiar enlace, o el que te enviaron por WhatsApp), o mantén presionado el punto y copia los números. Con el punto exacto, los km de cada día se calculan desde ahí.')),
     res0,
     h('div', { class: 'field' }, h('label', { for: 'res-dir' }, 'Nombre del lugar de salida ', h('small', {}, '(se puede editar; solo lo ven la gerencia y el representante)')), nombre, h('p', { class: 'error', dataset: { for: 'residencia.direccion' } })));
-  return { nodo, leer: () => leerPunto(coords.value) };
+  return { nodo, leer: () => (esEnlace(coords.value) ? { error: 'Pulsa «Buscar el lugar» para leer el enlace.' } : leerPunto(coords.value)) };
 }
 /** Editar un hotel: nombre, teléfono, dirección, precio por noche, requisitos y notas. Devuelve true si se guardó. */
 async function editarHotel(x, reqs) {

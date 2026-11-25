@@ -74,3 +74,42 @@ test('Perfil: guarda latitud y longitud de donde sale; el endpoint nombra el pun
     assert.equal((await call('POST', `/api/viaticos/perfiles/${id.rep}`, { ...perfil, residencia: { provincia: 'Santiago', municipio: 'Tamboril' } }, t.gerente)).status, 200);
   } finally { server.close(); }
 });
+
+import { coordsDeEnlace, abrirEnlace } from '../src/enlace-mapa.js';
+
+test('Enlaces de Google Maps: lee el punto del lugar, ?q=, /search/ y el centro del mapa', () => {
+  assert.deepEqual(coordsDeEnlace('https://www.google.com/maps/place/Farmacia+Ejemplo/@19.45,-70.69,17z/data=!3m1!4b1!4m6!3m5!1s0x0:0x0!8m2!3d19.4517123!4d-70.6970456'), { lat: 19.4517123, lng: -70.6970456 });
+  assert.deepEqual(coordsDeEnlace('https://maps.google.com/?q=18.4861,-69.9312'), { lat: 18.4861, lng: -69.9312 });
+  assert.deepEqual(coordsDeEnlace('https://www.google.com/maps/search/19.4517,+-70.6970?entry=tts'), { lat: 19.4517, lng: -70.697 });
+  assert.deepEqual(coordsDeEnlace('https://www.google.com/maps/place/Parque+Central+(Ejemplo)/@19.39,-70.52,15z'), { lat: 19.39, lng: -70.52, aproximado: true, nombre: 'Parque Central (Ejemplo)' });
+  assert.deepEqual(coordsDeEnlace('https://consent.google.com/ml?continue=https://www.google.com/maps?q%3D19.1,-70.2'), { lat: 19.1, lng: -70.2 });
+  assert.equal(coordsDeEnlace('https://ejemplo.com/maps/@19.4,-70.6'), null); // no es Google
+  assert.equal(coordsDeEnlace('no es un enlace'), null);
+});
+
+test('Enlace corto: sigue redirecciones solo dentro de Google', async () => {
+  const saltos = { 'https://maps.app.goo.gl/Ejemplo123': 'https://www.google.com/maps/place/X/data=!3d19.2!4d-70.5' };
+  const f = async (url) => (saltos[url] ? new Response(null, { status: 302, headers: { location: saltos[url] } }) : new Response('ok', { status: 200 }));
+  assert.equal(await abrirEnlace('https://maps.app.goo.gl/Ejemplo123', f), 'https://www.google.com/maps/place/X/data=!3d19.2!4d-70.5');
+  const fuera = async () => new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/latest' } });
+  assert.equal(await abrirEnlace('https://maps.app.goo.gl/Malo', fuera), null);
+  assert.equal(await abrirEnlace('https://otro-sitio.com/x', f), null);
+});
+
+test('Endpoint de enlace: corto → punto → nombre del lugar; rechaza enlaces que no son de Google', async () => {
+  const store = new MemoryStore(); const data = new MemoryData();
+  const lugares = { activo: true, ubicacion: async () => ({ nombre: 'Calle 5 (Ejemplo), Moca', provincia: 'Espaillat', municipio: 'Moca', sector: null, fuente: 'direccion' }), coordsDe: async () => null };
+  const enlaceFetch = async (url) => (url.includes('goo.gl') ? new Response(null, { status: 301, headers: { location: 'https://www.google.com/maps/place/Ejemplo/data=!3d19.3926!4d-70.5258' } }) : new Response('', { status: 200 }));
+  const server = createServer(createApp({ store, data, files: new MemoryFiles(), sessionSecret: SECRET, lugares, enlaceFetch })).listen(0);
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const call = async (p, tk) => { const r = await fetch(url + p, { headers: { authorization: `Bearer ${tk}` } }); return { status: r.status, body: await r.json() }; };
+  await store.createUser({ fullName: 'g', email: 'g@x.do', phone: null, status: 'activo', role: 'gerencia', passwordHash: await hashPassword('claveg12345') });
+  const tk = (await (await fetch(url + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'g@x.do', password: 'claveg12345' }) })).json()).token;
+  try {
+    const r = await call(`/api/territorio/ubicacion-enlace?url=${encodeURIComponent('https://maps.app.goo.gl/Ejemplo123')}`, tk);
+    assert.equal(r.status, 200);
+    assert.deepEqual([r.body.lat, r.body.lng, r.body.item.nombre, r.body.item.municipio, r.body.desdeEnlace], [19.3926, -70.5258, 'Calle 5 (Ejemplo), Moca', 'Moca', true]);
+    assert.equal((await call(`/api/territorio/ubicacion-enlace?url=${encodeURIComponent('https://ejemplo.com/@19.4,-70.6')}`, tk)).status, 422);
+    assert.equal((await call(`/api/territorio/ubicacion-enlace?url=${encodeURIComponent('https://www.google.com/maps/@40.7,-74.0,15z')}`, tk)).status, 422); // fuera de RD
+  } finally { server.close(); }
+});
