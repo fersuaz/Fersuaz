@@ -5,7 +5,7 @@ import { AuthError as HttpError } from './auth.js';
 import { STATUS, POSITIONS } from './roles.js';
 import { calcularCombustible, calcularAlimentacion, calcularHospedaje, calcularPresupuesto, detectarDuplicados, aplicarTope, calcularTransportePublico, semanasDelMes } from './calculos.js';
 import { esFechaISO, hoyRD } from './periodos.js';
-import { normalizeName } from './validation.js';
+import { normalizeName, leerCoordenadas } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
 import { dentroDeZona } from './territorio.js';
 import { proponer, diasLaborables, copiarFechas } from './propuesta-cronograma.js';
@@ -60,13 +60,21 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
   }
 
   // ------------------------------------------------------------ perfiles
+  /** Latitud y longitud exactas de donde sale (opcionales, ambas o ninguna, dentro de República Dominicana). */
+  function coordenadasResidencia(res, e) {
+    const vacio = (x) => x == null || String(x).trim() === '';
+    if (vacio(res.lat) && vacio(res.lng)) return { lat: null, lng: null };
+    const { lat, lng, error } = leerCoordenadas(res.lat, res.lng);
+    if (error) { e['residencia.coordenadas'] = error; return { lat: null, lng: null }; }
+    return { lat, lng };
+  }
   const TIPOS_VEHICULO = ['carro', 'jeepeta', 'camioneta', 'motocicleta'];
   const TARIFAS_PUBLICO = ['transporteDentro', 'comidaDentro', 'transporteFuera', 'comidaFuera'];
   /** Valida un perfil sin guardarlo. Sin vehículo (propiedad "ninguno") se usa transporte público. */
   function prepararPerfil(input) {
     const e = {};
     const res = input.residencia ?? {};
-    const residencia = { provincia: normalizeName(res.provincia), municipio: normalizeName(res.municipio), direccion: normalizeName(res.direccion) || null };
+    const residencia = { provincia: normalizeName(res.provincia), municipio: normalizeName(res.municipio), direccion: normalizeName(res.direccion) || null, ...coordenadasResidencia(res, e) };
     if (!residencia.provincia) e['residencia.provincia'] = 'Escribe la provincia de residencia.';
     if (!residencia.municipio) e['residencia.municipio'] = 'Escribe el municipio de residencia.';
     const v = input.vehiculo ?? {};
@@ -596,7 +604,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
   }
 
   // ------------------------------------------------------------ días del mes: jornadas y cronograma aprobado
-  const claveOrigen = (r) => [r?.provincia, r?.municipio, r?.direccion ?? ''].join('|');
+  const claveOrigen = (r) => [r?.provincia, r?.municipio, r?.direccion ?? '', r?.lat ?? '', r?.lng ?? ''].join('|');
   /** Km por carretera de un día aprobado del cronograma: residencia → lugares → residencia. Se calcula una vez. */
   async function kmDeCronograma(c, perfil) {
     const origen = claveOrigen(perfil.residencia);

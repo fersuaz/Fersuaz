@@ -3527,11 +3527,13 @@ async function pasoRep(paso, ctx) {
   }
   if (paso === 'zona') {
     const res = residenciaCampos(div, nuevo ? B.residencia : pf?.residencia);
+    const puntoSalida = campoPuntoSalida(nuevo ? B.residencia : pf?.residencia, res);
     const provs = h('div', { class: 'provincias provincias-zona' }, filasZona(div, nuevo ? B.zona : zona));
     const posicion = nuevo ? B.posicion : r.position;
     const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Dónde vive y dónde trabaja'),
       h('h3', { class: 'subtitulo-form' }, 'Dónde vive'), h('p', { class: 'hint' }, 'De aquí sale y aquí regresa cada día: con esto se calculan los km.'),
-      h('div', { class: 'form-fila' }, res.fp, res.fm, campo('residencia.direccion', 'Dirección desde donde sale', { value: (nuevo ? B.residencia?.direccion : pf?.residencia?.direccion) ?? '' }, '(opcional, restringida)')),
+      h('div', { class: 'form-fila' }, res.fp, res.fm),
+      puntoSalida.nodo,
       h('h3', { class: 'subtitulo-form' }, 'Provincias y municipios que trabajará'),
       h('p', { class: 'hint' }, `Con esto se conectan sus farmacias, hospitales, clínicas, UNAP y hoteles. Si solo trabaja algunos municipios, abre la provincia y márcalos. Lo marcado en gris ya lo cubre otro ${posicion ?? 'representante'} de la misma posición.`),
       h('p', { class: 'error', dataset: { for: 'provincias' } }), h('p', { class: 'error', dataset: { for: 'municipios' } }), provs);
@@ -3540,8 +3542,10 @@ async function pasoRep(paso, ctx) {
     if (nuevo && B.errores) { const e0 = B.errores; delete B.errores; setTimeout(() => errPaso(f, e0, 'Revisa los campos marcados.'), 0); }
     f.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const z = zonaDeForm(f); const residencia = { provincia: res.sp.value, municipio: res.sm.value, direccion: f.elements['residencia.direccion'].value.trim() };
+      const z = zonaDeForm(f); const pto = puntoSalida.leer();
+      const residencia = { provincia: res.sp.value, municipio: res.sm.value, direccion: f.elements['residencia.direccion'].value.trim(), lat: pto.lat ?? null, lng: pto.lng ?? null };
       const err = {};
+      if (pto.error) err['residencia.coordenadas'] = pto.error;
       if (!residencia.provincia) err['residencia.provincia'] = 'Elige la provincia donde vive.'; else if (!residencia.municipio) err['residencia.municipio'] = 'Elige el municipio donde vive.';
       if (!z.provincias.length) err.provincias = 'Elige al menos una provincia que trabajará.';
       if (Object.keys(err).length) { errPaso(f, err); return; }
@@ -3697,6 +3701,60 @@ async function pasoRep(paso, ctx) {
     h('a', { class: 'btn', href: `#viatico?rep=${rep}&mes=${mes}` }, p && !['borrador', 'rechazado'].includes(p.estado) ? 'Ver sus viáticos' : 'Asignar viáticos del mes'),
     h('button', { class: 'btn-sec', type: 'button', onclick: () => print() }, 'Imprimir resumen')));
   return bloques;
+}
+/** Lee "19.4517, -70.6970", "19.4517 -70.6970" o un enlace de Google Maps con "@19.45,-70.69". */
+function leerPunto(t) {
+  const x = String(t ?? '').trim(); if (!x) return {};
+  const m = x.match(/(-?\d{1,3}\.\d+)\s*[,;\s]\s*(-?\d{1,3}\.\d+)/);
+  if (!m) return { error: 'Escribe la latitud y la longitud separadas por una coma, por ejemplo 19.4517, -70.6970.' };
+  const lat = Number(m[1]); const lng = Number(m[2]);
+  if (lat < 17.3 || lat > 20.1 || lng < -72.1 || lng > -68.1) return { error: 'Ese punto no está en República Dominicana. La latitud va primero (cerca de 18 o 19) y la longitud después (negativa, cerca de -70).' };
+  return { lat, lng };
+}
+/**
+ * Punto exacto desde donde sale: coordenadas, el nombre que da Google y el nombre editable.
+ * Las coordenadas hacen exacto el cálculo de km; el nombre es solo para reconocerlo.
+ */
+function campoPuntoSalida(valor, res) {
+  const coords = h('input', { id: 'res-coord', name: 'residencia.coordenadas', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Ejemplo: 19.4517, -70.6970', value: valor?.lat != null ? `${valor.lat}, ${valor.lng}` : '' });
+  const nombre = h('input', { id: 'res-dir', name: 'residencia.direccion', autocomplete: 'off', maxlength: 160, value: valor?.direccion ?? '', placeholder: 'Ejemplo: Calle 5, Los Jardines, Tamboril' });
+  const buscar = h('button', { type: 'button', class: 'btn-sec' }, 'Buscar el lugar');
+  const aqui = 'geolocation' in navigator ? h('button', { type: 'button', class: 'btn-sec btn-suave' }, 'Usar mi ubicación actual') : null;
+  const res0 = h('div', { class: 'punto-resultado', 'aria-live': 'polite' });
+  const mapa = (lat, lng) => h('a', { href: `https://www.google.com/maps?q=${lat},${lng}`, target: '_blank', rel: 'noopener' }, 'Ver en el mapa');
+  const pintarGuardado = () => { const p = leerPunto(coords.value); if (p.lat != null) res0.replaceChildren(h('span', {}, 'Punto guardado. '), mapa(p.lat, p.lng)); };
+  const consultar = async () => {
+    const p = leerPunto(coords.value); const err = coords.closest('.field').querySelector('.error');
+    err.textContent = p.error ?? ''; coords.toggleAttribute('aria-invalid', !!p.error);
+    if (p.lat == null) { if (!p.error) err.textContent = 'Escribe las coordenadas primero.'; return; }
+    buscar.disabled = true; const t0 = buscar.textContent; buscar.textContent = 'Buscando…';
+    try {
+      const r = await api('GET', `/api/territorio/ubicacion?lat=${p.lat}&lng=${p.lng}`);
+      if (!r.item) { res0.replaceChildren(h('span', {}, r.motivo ?? 'No se encontró un nombre; escríbelo abajo.'), ' ', mapa(p.lat, p.lng)); nombre.focus(); return; }
+      nombre.value = r.item.nombre;
+      // Si Google reconoce la provincia y el municipio, se eligen solos (se pueden cambiar).
+      if (r.item.provincia && res.sp.value !== r.item.provincia) { res.sp.value = r.item.provincia; res.sp.dispatchEvent(new Event('change', { bubbles: true })); }
+      if (r.item.municipio) { res.sm.value = r.item.municipio; res.sm.dispatchEvent(new Event('change', { bubbles: true })); }
+      res0.replaceChildren(h('span', {}, h('strong', {}, r.item.fuente === 'cercano' ? 'Lugar conocido más cercano: ' : 'Google lo nombra así: '), r.item.nombre, '. Si no es correcto, corrige el nombre abajo. '), mapa(p.lat, p.lng));
+    } catch (e) { res0.replaceChildren(h('span', {}, `${e.message} Escribe el nombre abajo.`)); }
+    finally { buscar.disabled = false; buscar.textContent = t0; }
+  };
+  buscar.addEventListener('click', consultar);
+  coords.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); consultar(); } });
+  coords.addEventListener('paste', () => setTimeout(() => { if (leerPunto(coords.value).lat != null) consultar(); }, 0));
+  aqui?.addEventListener('click', () => {
+    aqui.disabled = true;
+    navigator.geolocation.getCurrentPosition((pos) => { aqui.disabled = false; coords.value = `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`; consultar(); },
+      () => { aqui.disabled = false; res0.replaceChildren(h('span', {}, 'No se pudo leer tu ubicación. Permite el acceso a la ubicación o escribe las coordenadas.')); }, { enableHighAccuracy: true, timeout: 15000 });
+  });
+  pintarGuardado();
+  const nodo = h('div', { class: 'punto-salida' },
+    h('div', { class: 'field' }, h('label', { for: 'res-coord' }, 'Punto exacto desde donde sale ', h('small', {}, '(latitud, longitud; opcional)')),
+      h('div', { class: 'punto-fila' }, coords, buscar, aqui), h('p', { class: 'error', dataset: { for: 'residencia.coordenadas' } }),
+      h('p', { class: 'hint' }, 'En Google Maps, mantén presionado el punto de salida y copia los números que aparecen. Con el punto exacto, los km de cada día se calculan desde ahí.')),
+    res0,
+    h('div', { class: 'field' }, h('label', { for: 'res-dir' }, 'Nombre del lugar de salida ', h('small', {}, '(se puede editar; solo lo ven la gerencia y el representante)')), nombre, h('p', { class: 'error', dataset: { for: 'residencia.direccion' } })));
+  return { nodo, leer: () => leerPunto(coords.value) };
 }
 /** Errores de un paso: cada campo marcado y un aviso general. */
 function errPaso(f, fields, msg = 'Completa este paso para seguir.') {

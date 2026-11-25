@@ -7,7 +7,7 @@ const CONSULTA = {
 };
 const CAMPOS = 'places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.businessStatus,places.rating,places.websiteUri';
 
-export class SinLugares { activo = false; async buscar() { return []; } async pagina() { return { items: [], siguiente: null }; } async detalle() { return null; } }
+export class SinLugares { activo = false; async buscar() { return []; } async pagina() { return { items: [], siguiente: null }; } async detalle() { return null; } async ubicacion() { return null; } }
 
 export class GooglePlaces {
   activo = true;
@@ -51,7 +51,36 @@ export class GooglePlaces {
     });
     return p?.id ? GooglePlaces.#lugar(p) : null;
   }
+  /**
+   * Nombre del lugar en unas coordenadas: primero la dirección (Geocoding inverso) y, si esa API no está
+   * habilitada, el lugar conocido más cercano (Places, búsqueda cercana). Devuelve null si no hay nada.
+   */
+  async ubicacion(lat, lng) {
+    try {
+      const r = await this.fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&language=es&region=do&key=${encodeURIComponent(this.apiKey)}`, { signal: AbortSignal.timeout(15000) });
+      const d = await r.json().catch(() => ({}));
+      const x = d.status === 'OK' ? d.results?.[0] : null;
+      if (x) return { nombre: sinPais(x.formatted_address), ...zonaDeComponentes(x.address_components), fuente: 'direccion' };
+      if (d.status === 'ZERO_RESULTS') return null;
+    } catch { /* se intenta con Places */ }
+    const d = await this.#pedir('https://places.googleapis.com/v1/places:searchNearby', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-Goog-Api-Key': this.apiKey, 'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.addressComponents' },
+      body: JSON.stringify({ locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius: 300 } }, maxResultCount: 1, rankPreference: 'DISTANCE', languageCode: 'es', regionCode: 'DO' }),
+    });
+    const p = d.places?.[0]; if (!p) return null;
+    return { nombre: `Cerca de ${p.displayName?.text ?? ''}, ${sinPais(p.formattedAddress)}`.replace(/,\s*$/, ''), ...zonaDeComponentes(p.addressComponents), fuente: 'cercano' };
+  }
 }
+
+/** Quita "Provincia", "Province", "Municipio" y el país de un nombre de Google. */
+const limpiarZona = (t) => String(t ?? '').replace(/^(Provincia|Municipio)( de)?\s+/i, '').replace(/\s+Province$/i, '').trim() || null;
+/** Lee provincia, municipio y sector de los componentes de una dirección (Geocoding o Places). */
+export function zonaDeComponentes(cs = []) {
+  const de = (...tipos) => { for (const t of tipos) { const c = cs.find((x) => (x.types ?? []).includes(t)); if (c) return c.long_name ?? c.longText ?? null; } return null; };
+  return { provincia: limpiarZona(de('administrative_area_level_1')), municipio: limpiarZona(de('administrative_area_level_2', 'locality')), sector: de('sublocality_level_1', 'sublocality', 'neighborhood') };
+}
+const sinPais = (t) => String(t ?? '').replace(/,?\s*(República Dominicana|Dominican Republic)\s*$/i, '').trim();
 
 export function crearLugares(env = process.env) {
   return env.MAPS_API_KEY ? new GooglePlaces(env.MAPS_API_KEY) : new SinLugares();

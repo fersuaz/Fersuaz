@@ -8,7 +8,7 @@ import { createComercial } from './comercial.js';
 import { createViaticos, COMBUSTIBLE_LABEL } from './viaticos.js';
 import { SinMapas, crearMapas } from './mapas.js';
 import { createTerritorio, provinciaOficial, municipioOficial } from './territorio.js';
-import { normalizeName } from './validation.js';
+import { normalizeName, leerCoordenadas } from './validation.js';
 import { createNotificaciones } from './notificaciones.js';
 import { SinCorreo, crearCorreo, bienvenida } from './correo.js';
 import { canApprove } from './roles.js';
@@ -89,6 +89,20 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     const existentes = await data.list(col, { municipio });
     const ids = new Set(existentes.map((x) => x.placeId).filter(Boolean)); const nombres = new Set(existentes.map((x) => sinAcento(x.nombre)));
     return { items: res.map((r) => ({ ...r, registrado: ids.has(r.placeId) || nombres.has(sinAcento(r.nombre)) })) };
+  }
+  /** Nombre del lugar en unas coordenadas exactas (para la dirección desde donde sale un representante). */
+  async function ubicacionGoogle(me, q) {
+    if (!me || me.status !== 'activo' || !GESTION_LUGARES.includes(me.role)) throw new AuthError(403, 'No tienes permiso para esta acción.');
+    const c = leerCoordenadas(q.get('lat'), q.get('lng'));
+    if (c.error) throw new AuthError(422, c.error, { 'residencia.coordenadas': c.error });
+    if (!lugares.activo || typeof lugares.ubicacion !== 'function') return { item: null, ...c, motivo: 'La búsqueda en Google Maps no está conectada; escribe el nombre del lugar.' };
+    let x;
+    try { x = await lugares.ubicacion(c.lat, c.lng); } catch (err) { return { item: null, ...c, motivo: `${err.message} Escribe el nombre del lugar.` }; }
+    const { provincias, municipios } = t.division();
+    const base = (s) => sinAcento(s).replace(/^(provincia|municipio)( de)? /, '').replace(/ province$/, '');
+    const prov = x?.provincia ? provincias.find((p) => base(p) === base(x.provincia)) ?? null : null;
+    const mun = prov && x?.municipio ? municipios[prov].find((m) => base(m) === base(x.municipio)) ?? null : null;
+    return { item: x ? { ...x, provincia: prov, municipio: mun } : null, ...c, motivo: x ? null : 'Google no encontró un nombre para ese punto; escríbelo.' };
   }
   async function agregarGoogle(me, body) {
     if (!me || me.status !== 'activo' || !GESTION_LUGARES.includes(me.role)) throw new AuthError(403, 'No tienes permiso para esta acción.');
@@ -441,6 +455,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', /^\/api\/catalogo\/medicamentos\/([\w-]+)\/precios$/, async ({ me, p }) => ({ items: await t.historialPrecio(me, p[1]) }));
   // Búsqueda en Google Maps (solo gestión, cuesta por consulta)
   ruta('GET', '/api/territorio/google/estado', () => ({ activo: lugares.activo }));
+  ruta('GET', '/api/territorio/ubicacion', async ({ me, q }) => ubicacionGoogle(me, q));
   ruta('GET', '/api/territorio/google/buscar', async ({ me, q }) => buscarGoogle(me, q));
   ruta('POST', '/api/territorio/google/agregar', async ({ me, body }) => [201, await agregarGoogle(me, body)]);
   ruta('GET', '/api/territorio/google/barrido', async ({ me }) => { puedeBarrido(me); return { item: await barrido.estado() }; });

@@ -1056,3 +1056,10 @@ tr.fila-sel td { background: #E9F0F6; }
 @media (max-width: 1180px) { .asis-paso .asis-txt { display: none; } .asis-paso[aria-selected="true"] { flex: 3 1 auto; } .asis-paso[aria-selected="true"] .asis-txt { display: inline; } }
 @media (prefers-reduced-motion: reduce) { .asis-riel span { transition: none; } }
 @media print { .asis-barra, .asis-nav, #menu, .panel-lateral, .topbar { display: none !important; } }
+/* Punto exacto de salida del representante */
+.punto-salida { display: grid; gap: .5rem; margin-top: .5rem; }
+.punto-fila { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
+.punto-fila input { flex: 1 1 240px; min-width: 0; }
+.punto-resultado:empty { display: none; }
+.punto-resultado { background: var(--panel); border-radius: 12px; padding: .75rem 1rem; color: var(--tinta); line-height: 1.5; }
+.punto-resultado a { color: var(--celeste-texto); font-weight: 600; white-space: nowrap; }
