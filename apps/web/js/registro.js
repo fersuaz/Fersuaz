@@ -147,8 +147,7 @@ function localValidate(d) {
 
 function setStatus(kind, text) { statusEl.dataset.kind = kind; statusEl.textContent = text; }
 
-form.addEventListener('submit', async (ev) => {
-  ev.preventDefault();
+function leerDatos() {
   const fd = new FormData(form);
   const data = {
     role: fd.get('role') ?? '', fullName: fd.get('fullName') ?? '', email: fd.get('email') ?? '',
@@ -157,9 +156,17 @@ form.addEventListener('submit', async (ev) => {
   };
   if (data.role !== 'dependiente') { delete data.farmaciaId; delete data.municipio; data.province = ''; }
   if (data.role === 'medico') { data.especialidad = mEsp.value; data.lugares = [...lugares.values()].map((l) => (l.establecimientoId ? { establecimientoId: l.establecimientoId } : l)); }
+  return data;
+}
+
+form.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  // En los pasos anteriores, Enter o Enviar solo avanzan.
+  if (pasoActual < pasosVisibles().length - 1) { siguiente(); return; }
+  const data = leerDatos();
   const errors = localValidate(data);
   showErrors(errors);
-  if (Object.keys(errors).length) { setStatus('error', 'Revisa los campos marcados.'); return; }
+  if (Object.keys(errors).length) { irAlPasoDe(errors); setStatus('error', 'Revisa los campos marcados.'); return; }
 
   const base = apiBase() || (['localhost', '127.0.0.1'].includes(location.hostname) ? 'http://localhost:8080' : '');
   if (!base) { setStatus('error', 'El registro todavía no está conectado al servidor. Configura la URL de la API en el despliegue.'); return; }
@@ -171,11 +178,11 @@ form.addEventListener('submit', async (ev) => {
     });
     const body = await res.json().catch(() => ({}));
     if (res.ok) {
-      form.reset(); syncRoleFields(); showErrors(); resultados.replaceChildren(); elegida = null; manual.hidden = true; resultados.hidden = false;
+      form.reset(); syncRoleFields(); showErrors(); pasoMax = 0; irA(0, false); resultados.replaceChildren(); elegida = null; manual.hidden = true; resultados.hidden = false;
       lugares.clear(); provs.clear(); muns.clear(); pintarElegidos(); mListo = false;
       setStatus('ok', body.message ?? 'Solicitud enviada. Te avisaremos cuando sea aprobada.');
     } else {
-      showErrors(body.fields);
+      showErrors(body.fields); irAlPasoDe(body.fields ?? {});
       setStatus('error', body.error ?? 'No pudimos enviar tu solicitud. Revisa los datos e intenta de nuevo.');
     }
   } catch {
@@ -184,3 +191,85 @@ form.addEventListener('submit', async (ev) => {
     submit.disabled = false; submit.textContent = 'Enviar solicitud';
   }
 });
+
+
+// ---- Registro por pasos: barra de progreso; no se ve ni se pasa al siguiente sin completar el actual.
+const PASOS = [
+  { id: 'funcion', titulo: 'Tu función', campos: ['role'] },
+  { id: 'datos', titulo: 'Tus datos', campos: ['fullName', 'email', 'phone', 'position'] },
+  { id: 'lugar', titulo: 'Dónde trabajas', campos: ['province', 'municipio', 'farmaciaId', 'pharmacy', 'especialidad', 'lugares'], solo: ['dependiente', 'medico'] },
+  { id: 'acceso', titulo: 'Tu acceso', campos: ['password', 'acceptsPrivacy'] },
+];
+let pasoActual = 0; let pasoMax = 0;
+const cajas = {};
+(function armarPasos() {
+  const hijos = [...form.children].filter((el) => el.id !== 'status');
+  const de = (el) => {
+    if (el.querySelector?.('input[name="role"]')) return 'funcion';
+    if (el.matches('[data-for="dependiente"], [data-for="medico"]')) return 'lugar';
+    if (el.querySelector?.('#password') || el.querySelector?.('#acceptsPrivacy') || el.id === 'acceptsPrivacy-error' || el.matches('.check') || el.id === 'submit' || el.matches('.acceso-nota')) return 'acceso';
+    return 'datos';
+  };
+  for (const p of PASOS) { cajas[p.id] = document.createElement('div'); cajas[p.id].className = 'paso'; cajas[p.id].dataset.paso = p.id; cajas[p.id].setAttribute('role', 'group'); cajas[p.id].setAttribute('aria-label', p.titulo); }
+  for (const el of hijos) cajas[de(el)].append(el);
+  const barra = document.createElement('div'); barra.className = 'pasos-barra';
+  barra.innerHTML = '<p class="pasos-texto" aria-live="polite"></p><div class="pasos-riel" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span></span></div><ol class="pasos-lista"></ol>';
+  const nav = document.createElement('div'); nav.className = 'pasos-nav';
+  nav.innerHTML = '<button type="button" class="btn-paso atras">Atrás</button><button type="button" class="btn btn-acceso adelante">Siguiente</button>';
+  for (const p of PASOS) cajas[p.id].hidden = true;
+  form.prepend(barra, ...PASOS.map((p) => cajas[p.id]));
+  form.insertBefore(nav, document.getElementById('status'));
+  nav.querySelector('.atras').addEventListener('click', () => irA(pasoActual - 1));
+  nav.querySelector('.adelante').addEventListener('click', siguiente);
+})();
+function pasosVisibles() { const r = form.role.value; return PASOS.filter((p) => !p.solo || !r || p.solo.includes(r)); }
+function pintarPasos() {
+  const vis = pasosVisibles(); const p = vis[pasoActual];
+  for (const x of PASOS) cajas[x.id].hidden = x !== p;
+  const pct = Math.round(((pasoActual + 1) / vis.length) * 100);
+  form.querySelector('.pasos-texto').textContent = `Paso ${pasoActual + 1} de ${vis.length}: ${p.titulo}`;
+  const riel = form.querySelector('.pasos-riel'); riel.setAttribute('aria-valuenow', String(pct)); riel.setAttribute('aria-valuetext', `Paso ${pasoActual + 1} de ${vis.length}`); riel.querySelector('span').style.width = `${pct}%`;
+  const ol = form.querySelector('.pasos-lista'); ol.replaceChildren(...vis.map((x, i) => {
+    const li = document.createElement('li'); li.className = i < pasoActual ? 'hecho' : i === pasoActual ? 'actual' : 'pendiente';
+    if (i === pasoActual) li.setAttribute('aria-current', 'step');
+    // Se puede volver a un paso ya completado; los siguientes no se abren hasta completar el actual.
+    if (i < pasoActual || (i <= pasoMax && i !== pasoActual)) { const b = document.createElement('button'); b.type = 'button'; b.textContent = x.titulo; b.addEventListener('click', () => (i < pasoActual ? irA(i) : null)); b.disabled = i > pasoActual; li.append(b); }
+    else { const sp2 = document.createElement('span'); sp2.textContent = x.titulo; li.append(sp2); }
+    return li;
+  }));
+  const ultimo = pasoActual === vis.length - 1;
+  form.querySelector('.pasos-nav .atras').hidden = pasoActual === 0;
+  form.querySelector('.pasos-nav .adelante').hidden = ultimo;
+  document.getElementById('submit').hidden = !ultimo;
+  form.querySelector('.acceso-nota')?.toggleAttribute('hidden', !ultimo);
+}
+function irA(i, enfocar = true) {
+  const vis = pasosVisibles(); pasoActual = Math.max(0, Math.min(i, vis.length - 1));
+  pintarPasos(); setStatus('', '');
+  if (enfocar) {
+    const caja = cajas[vis[pasoActual].id];
+    (caja.querySelector('input:not([type=hidden]):not([disabled]), select:not([disabled])') ?? caja).focus({ preventScroll: true });
+    form.querySelector('.pasos-barra').scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
+}
+function erroresDelPaso(p) {
+  const todos = localValidate(leerDatos());
+  return Object.fromEntries(Object.entries(todos).filter(([k]) => p.campos.includes(k)));
+}
+function siguiente() {
+  const vis = pasosVisibles(); const p = vis[pasoActual];
+  const e = erroresDelPaso(p); showErrors(e);
+  if (Object.keys(e).length) { setStatus('error', 'Completa este paso para seguir.'); return; }
+  pasoMax = Math.max(pasoMax, pasoActual + 1);
+  irA(pasoActual + 1);
+}
+/** Un error del servidor puede ser de un paso anterior (por ejemplo, el correo ya existe): se vuelve a ese paso. */
+function irAlPasoDe(errores) {
+  const vis = pasosVisibles();
+  const i = vis.findIndex((p) => p.campos.some((c) => errores[c] || Object.keys(errores).some((k) => k.startsWith(`${c}.`))));
+  if (i >= 0 && i !== pasoActual) { irA(i); showErrors(errores); }
+}
+// Al elegir la función se avanza solo.
+form.addEventListener('change', (e) => { if (e.target.name === 'role' && pasoActual === 0) { pasoMax = 1; setTimeout(() => irA(1), 180); } });
+if (presetInput) { pasoMax = 1; pasoActual = 1; }
+pintarPasos();
