@@ -118,3 +118,25 @@
 .lista-marcas .marca { font-weight: 500; color: var(--tinta); }
 #med-m-agregar { justify-self: start; font: inherit; font-weight: 600; color: var(--marino); background: #fff; border: 1.5px solid var(--marino); border-radius: 999px; padding: .6rem 1.2rem; cursor: pointer; }
 #med-m-agregar:focus-visible { outline: 3px solid var(--celeste); outline-offset: 2px; }
+/* Registro por pasos */
+.pasos-barra { display: grid; gap: .55rem; margin: 0 0 1.4rem; }
+.pasos-texto { margin: 0; font-weight: 600; color: var(--marino); font-family: Poppins, sans-serif; }
+.pasos-riel { height: 8px; border-radius: 999px; background: var(--linea); overflow: hidden; }
+.pasos-riel span { display: block; height: 100%; width: 0; background: var(--marino); border-radius: inherit; transition: width .35s ease; }
+.pasos-lista { list-style: none; margin: 0; padding: 0; display: flex; gap: .4rem; flex-wrap: wrap; font-size: .85rem; }
+.pasos-lista li { display: flex; align-items: center; gap: .35rem; color: var(--texto-2); }
+.pasos-lista li + li::before { content: ''; width: .9rem; height: 1px; background: var(--linea); }
+.pasos-lista li.actual { color: var(--marino); font-weight: 600; }
+.pasos-lista li.hecho button { font: inherit; color: var(--celeste-texto, #246C8E); background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; }
+.pasos-lista li.hecho button::before { content: '✓ '; text-decoration: none; display: inline-block; margin-right: .15rem; }
+.pasos-lista button:focus-visible { outline: 3px solid var(--celeste); outline-offset: 2px; border-radius: 4px; }
+.paso[hidden] { display: none !important; }
+.paso { animation: paso-entra .25s ease; }
+@keyframes paso-entra { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.pasos-nav { display: flex; gap: .75rem; align-items: center; margin-top: 1rem; }
+.pasos-nav .adelante { flex: 1; }
+.pasos-nav .adelante[hidden], .pasos-nav .atras[hidden] { display: none; }
+.btn-paso { font: inherit; font-weight: 600; color: var(--marino); background: #fff; border: 1.5px solid var(--marino); border-radius: 999px; padding: .85rem 1.4rem; cursor: pointer; }
+.btn-paso:focus-visible { outline: 3px solid var(--celeste); outline-offset: 2px; }
+#submit[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .paso { animation: none; } .pasos-riel span { transition: none; } }
