@@ -3254,7 +3254,8 @@ function importarPaquete() {
         const ok = await api('POST', '/api/representantes/importar-paquete', { ...leido, confirmar: true });
         cache = {};
         const [{ items: reps }] = await Promise.all([api('GET', '/api/viaticos/representantes')]);
-        const zonas = await Promise.all(ok.items.map((x) => api('GET', `/api/territorio/zonas/${x.id}`).then((z) => z.item).catch(() => null)));
+        const zPor = new Map((await api('GET', '/api/territorio/zonas').then((x) => x.items).catch(() => [])).map((z) => [z.representanteId, z]));
+        const zonas = ok.items.map((x) => zPor.get(x.id) ?? null);
         const conClave = ok.items.some((x) => x.claveTemporal);
         const global = ok.items.some((x) => x.claveInicialGlobal);
         const sinZona = ok.items.filter((x, i) => !zonas[i]?.provincias?.length).length;
@@ -3380,8 +3381,11 @@ V.representantes = async () => {
       lz.resumen.length && yo.role === 'administrador' ? h('div', { class: 'acciones' }, h('a', { class: 'btn', href: `#cronogramas?rep=${id}` }, 'Programar su cronograma')) : null, detalle);
     return vistaS('representantes', ['zona', 'lugares'], 'Zona del representante', `${r?.fullName ?? ''}: posición, provincias y municipios que visita. De aquí salen sus lugares, su cronograma, los km, el combustible y sus viáticos.`, S('zona', 'Zona y posición', f), S('lugares', `Lugares de su zona (${fmtN.format(lz.farmacias.length + lz.establecimientos.length)})`, lugares));
   }
-  const zonas = await Promise.all(reps.map((r) => api('GET', `/api/territorio/zonas/${r.id}`).then((z) => z.item).catch(() => ({ provincias: [], municipios: {} }))));
-  const planes = ES_GER() ? await Promise.all(reps.map((r) => api('GET', `/api/representantes/${r.id}/plan-dias`).then((x) => x.item).catch(() => null))) : [];
+  // Todas las zonas y los planes en dos pedidos (antes era uno por representante y la sección tardaba).
+  const [zTodas, pTodos] = await Promise.all([api('GET', '/api/territorio/zonas').then((x) => x.items).catch(() => []), ES_GER() ? api('GET', '/api/representantes/plan-dias').then((x) => x.items).catch(() => []) : []]);
+  const zPor = new Map(zTodas.map((z) => [z.representanteId, z])); const pPor = new Map(pTodos.map((x) => [x.representanteId, x]));
+  const zonas = reps.map((r) => zPor.get(r.id) ?? { provincias: [], municipios: {} });
+  const planes = ES_GER() ? reps.map((r) => pPor.get(r.id) ?? null) : [];
   const nuevaClave = async (r) => {
     if (!(await confirmar('Nueva contraseña temporal', `${r.fullName} volverá a la contraseña inicial (la global, si está configurada, o una temporal nueva). La actual dejará de funcionar y deberá cambiarla al entrar.`, { okTexto: 'Generar' }))) return;
     try {
@@ -3650,8 +3654,8 @@ async function pasoRep(paso, ctx) {
           tabla(cols, vs, activos ? ['Ningún lugar con estos filtros', 'Cambia o limpia los filtros.'] : ['', ''], { porPagina: 15 }));
       }) : h('div', { class: 'tarjeta vacio' }, h('strong', {}, fuera.length ? 'Quitaste todos los lugares de su ruta' : 'Su zona no tiene lugares'), fuera.length ? 'Vuelve a agregar los que visitará en "Quitados de su ruta" o búscalos abajo.' : 'Búscalos abajo en Google Maps.');
       const quitados = fuera.length ? h('details', { class: 'tarjeta asis-quitados', open: abierto || !todos.length, ontoggle: (e) => { abierto = e.target.open; } }, h('summary', {}, `Quitados de su ruta (${fmtN.format(fuera.length)})`),
-        h('p', { class: 'hint' }, 'No entran en su cronograma ni en su meta de visitas. Siguen en el catálogo.'),
-        h('div', { class: 'acciones', style: 'margin-top:0' }, h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver(fuera.map((x) => x.id)) }, `Volver a agregar todos (${fmtN.format(fuera.length)})`)),
+        h('div', { class: 'asis-quitados-cabeza' }, h('p', { class: 'hint' }, 'No entran en su cronograma ni en su meta de visitas. Siguen en el catálogo.'),
+          h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver(fuera.map((x) => x.id)) }, `Volver a agregar todos (${fmtN.format(fuera.length)})`)),
         tabla([{ t: 'Lugar', v: (x) => x.nombre }, { t: 'Tipo', v: (x) => TIP[x.tipo] ?? x.tipo }, { t: 'Municipio', v: (x) => x.municipio },
           { t: '', v: (x) => h('button', { class: 'btn btn-peq', type: 'button', onclick: () => volver([x.id]) }, 'Volver a agregar') }], fuera, ['', ''], { porPagina: 10 })) : null;
       cont.replaceChildren(
@@ -3729,7 +3733,8 @@ async function pasoRep(paso, ctx) {
           tabla(cols, vs, activos ? ['Ningún hotel con estos filtros', 'Cambia o limpia los filtros.'] : ['', ''], { porPagina: 10 }));
       }) : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay hoteles en uso en su zona'), 'Si nunca duerme fuera, puedes seguir. Para agregar uno, búscalo abajo.');
       const quitados = fuera.length && puedeEditar ? h('details', { class: 'tarjeta asis-quitados', open: abierto, ontoggle: (e) => { abierto = e.target.open; } }, h('summary', {}, `Hoteles que no se usan (${fmtN.format(fuera.length)})`),
-        h('div', { class: 'acciones', style: 'margin-top:0' }, h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver(fuera.map((x) => x.id)) }, `Volver a usar todos (${fmtN.format(fuera.length)})`)),
+        h('div', { class: 'asis-quitados-cabeza' }, h('p', { class: 'hint' }, 'No se usan para las noches fuera. Su historial se conserva.'),
+          h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver(fuera.map((x) => x.id)) }, `Volver a usar todos (${fmtN.format(fuera.length)})`)),
         tabla([{ t: 'Hotel', v: (x) => x.nombre }, { t: 'Municipio', v: (x) => x.municipio }, { t: 'Precio', num: true, v: (x) => (Number(x.precioNoche) > 0 ? RD(x.precioNoche) : '') },
           { t: '', v: (x) => h('button', { class: 'btn btn-peq', type: 'button', onclick: () => volver([x.id]) }, 'Volver a usar') }], fuera, ['', ''], { porPagina: 10 })) : null;
       cont.replaceChildren(
@@ -4254,17 +4259,32 @@ function iniciarMenu() {
 function abrirPerfil() { $('#perfil-menu').hidden = false; $('#perfil').setAttribute('aria-expanded', 'true'); $('#salir').focus(); }
 function cerrarPerfil() { $('#perfil-menu').hidden = true; $('#perfil').setAttribute('aria-expanded', 'false'); }
 let secciones;
+let rutaPintada = null; let turnoRouter = 0;
+/**
+ * Cambia de sección sin parpadeo: deja la vista anterior en pantalla (atenuada y con una barra de carga arriba
+ * si tarda más de 150 ms) y la reemplaza de una sola vez cuando la nueva está lista. Si se hace clic en otra
+ * sección mientras tanto, la respuesta vieja se descarta.
+ */
 async function router() {
   const ruta = location.hash.slice(1).split('?')[0];
   const permitidas = [...secciones.flatMap(([, i]) => i.map(([id]) => id)), 'cuenta']; // Mi cuenta: para todos, desde el menú del perfil
   const id = permitidas.includes(ruta) ? ruta : permitidas[0];
   if (id !== ruta) { history.replaceState(null, '', `#${id}`); }
   pintarMenu(secciones, id);
-  const cont = $('#vista');
-  cont.replaceChildren(h('p', { class: 'cargando' }, 'Cargando…'));
-  try { cont.replaceChildren(...(await V[id]()).filter(Boolean)); }
-  catch (e) { cont.replaceChildren(h('h1', {}, 'No pudimos cargar esta sección'), h('div', { class: 'aviso error' }, e.message), h('button', { class: 'btn-sec', onclick: router }, 'Intentar de nuevo')); }
-  cont.focus({ preventScroll: true });
+  const cont = $('#vista'); const turno = ++turnoRouter;
+  const vacia = !cont.querySelector('h1');
+  if (vacia) cont.replaceChildren(h('p', { class: 'cargando' }, 'Cargando…'));
+  const espera = setTimeout(() => { if (turno === turnoRouter) document.body.classList.add('vista-cargando'); }, 150);
+  cont.setAttribute('aria-busy', 'true');
+  let nodos;
+  try { nodos = (await V[id]()).filter(Boolean); }
+  catch (e) { nodos = [h('h1', {}, 'No pudimos cargar esta sección'), h('div', { class: 'aviso error' }, e.message), h('button', { class: 'btn-sec', onclick: router }, 'Intentar de nuevo')]; }
+  if (turno !== turnoRouter) return; // ya se pidió otra sección
+  clearTimeout(espera); document.body.classList.remove('vista-cargando'); cont.removeAttribute('aria-busy');
+  if (!nodos.length) return; // la vista redirigió a otra dirección
+  const otraSeccion = rutaPintada !== id; rutaPintada = id;
+  cont.replaceChildren(...nodos);
+  if (otraSeccion) { scrollTo({ top: 0 }); cont.focus({ preventScroll: true }); }
   document.title = `${cont.querySelector('h1')?.textContent ?? 'Panel'} | FERSUAZ`;
 }
 

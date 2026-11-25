@@ -1076,3 +1076,13 @@ tr.fila-sel td { background: #E9F0F6; }
 .precio-celda:focus { border-color: var(--celeste-texto); outline: 2px solid var(--celeste-texto); outline-offset: 1px; }
 .precio-ok { color: var(--celeste-texto); font-weight: 600; flex-basis: 100%; }
 .precio-ok:empty { display: none; }
+/* Cambio de sección sin parpadeo: la vista anterior se queda atenuada y una barra fina avisa que carga */
+.vista { transition: opacity .15s ease; }
+body.vista-cargando .vista { opacity: .55; pointer-events: none; }
+body.vista-cargando::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 100; background: linear-gradient(90deg, transparent, var(--celeste), var(--marino), transparent); background-size: 50% 100%; background-repeat: no-repeat; animation: barra-carga 1s linear infinite; }
+@keyframes barra-carga { from { background-position: -50% 0; } to { background-position: 150% 0; } }
+@media (prefers-reduced-motion: reduce) { .vista { transition: none; } body.vista-cargando::before { animation: none; background: var(--celeste); } }
+/* Quitados de su ruta / hoteles que no se usan: texto a la izquierda y botón a la derecha, con aire */
+.asis-quitados-cabeza { display: flex; align-items: center; justify-content: space-between; gap: .75rem 1.5rem; flex-wrap: wrap; margin: 0 0 1.25rem; }
+.asis-quitados-cabeza .hint { margin: 0; flex: 1 1 260px; }
+.asis-quitados .tabla, .asis-quitados .lf-tabla { margin-top: .25rem; }
