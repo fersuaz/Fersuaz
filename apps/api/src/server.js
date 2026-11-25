@@ -67,7 +67,9 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     await store.addAudit({ action: 'farmacia_creada', entity: 'farmacia', entityId: f.id, after: { nombre: n, municipio: m, fuente: 'registro_dependiente' } });
     return { farmacia: f };
   };
-  const auth = createAuthService(store, { preregistro: { buscar: t.buscarPreregistro, confirmar: t.confirmarPreregistro }, farmaciaPara: farmaciaActiva, farmaciaNueva });
+  // El servicio de médicos se crea más abajo; el registro lo usa al llamar (después de crearse).
+  const auth = createAuthService(store, { preregistro: { buscar: t.buscarPreregistro, confirmar: t.confirmarPreregistro }, farmaciaPara: farmaciaActiva, farmaciaNueva,
+    registroMedico: { validar: (i) => medicos.validarRegistro(i), crear: (u, d) => medicos.crearDesdeRegistro(u, d), alDecidir: (u, ok) => medicos.alDecidirCuenta(u, ok) } });
   const c = createComercial({ data, users: store, files, audit: (e) => store.addAudit(e), now });
   const hoteles = createHoteles({ data, audit: (e) => store.addAudit(e), now: now ?? (() => new Date()) });
   const v = createViaticos({ data, users: store, files, mapas, hoteles, notificar: n.notificar, notificarRoles: n.notificarRoles, audit: (e) => store.addAudit(e), now });
@@ -177,6 +179,14 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   }, { auth: false });
   // Público (registro de dependientes): división territorial y farmacias del catálogo, solo datos de la farmacia.
   ruta('GET', '/api/publico/division', () => { const d = t.division(); return { provincias: d.provincias, municipios: d.municipios }; }, { auth: false });
+  // Público (registro de médicos): clínicas, hospitales y consultorios de las provincias y municipios elegidos.
+  ruta('GET', '/api/publico/establecimientos', async ({ q }) => {
+    const lista = (k) => String(q.get(k) ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+    const provincias = lista('provincia'); const municipios = lista('municipio');
+    if (!provincias.length) throw new AuthError(422, 'Elige al menos una provincia.');
+    return { items: (await medicos.lugaresParaRegistro({ provincias, municipios })).slice(0, 800) };
+  }, { auth: false });
+  ruta('GET', '/api/publico/especialidades', () => ({ items: medicos.especialidades().filter((x) => x !== 'Por confirmar') }), { auth: false });
   ruta('GET', '/api/publico/farmacias', async ({ q }) => {
     const provincia = q.get('provincia'); const municipio = q.get('municipio'); const texto = String(q.get('q') ?? '').trim();
     if (!provincia || !municipio) throw new AuthError(422, 'Elige la provincia y el municipio.');
@@ -355,7 +365,25 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   // Promotoras: operativos, recetas, inventario y alertas
   ruta('GET', '/api/operativos', async ({ me, q }) => ({ items: await c.promotoras.listarOperativos(me, { fecha: q.get('fecha') || undefined }) }));
   ruta('POST', '/api/operativos', async ({ me, body }) => [201, { item: await c.promotoras.crearOperativo(me, body) }]);
-  ruta('GET', '/api/recetas', async ({ me, q }) => ({ items: await c.promotoras.listarRecetas(me, { mes: q.get('mes') || undefined }) }));
+  ruta('GET', '/api/recetas', async ({ me, q }) => ({ items: await c.promotoras.listarRecetas(me, { mes: q.get('mes') || undefined, estado: q.get('estado') || undefined }) }));
+  // Revisión de recetas (promotoras y médicos): aprobar, rechazar, en lote. Aviso a quien la cargó.
+  const avisoReceta = (id) => avisar(async () => {
+    const r = await data.get('recetas', id); if (!r) return;
+    const est = r.estado === 'aprobada' ? 'aprobada' : 'rechazada';
+    await n.notificar(r.cargadoPor ?? r.promotoraId, { tipo: 'receta', titulo: `Receta ${est}`, texto: `Tu receta del ${r.fecha} fue ${est}${r.motivo ? `: ${r.motivo}` : '.'}`, enlace: '#misRecetas' });
+  });
+  ruta('POST', /^\/api\/recetas\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p, body }) => {
+    const item = await c.promotoras.decidirReceta(me, p[1], p[2] === 'aprobar', body?.motivo, { corregible: body?.corregible });
+    avisoReceta(item.id); return { item };
+  });
+  ruta('POST', '/api/recetas/decidir', async ({ me, body }) => {
+    const r = await c.promotoras.decidirRecetasLote(me, body ?? {});
+    for (const id of r.ids) avisoReceta(id);
+    return { hechos: r.hechos, errores: r.errores };
+  }, { limite: 512 * 1024 });
+  // Médico: su ficha (especialidad y lugares de trabajo)
+  ruta('GET', '/api/medico/perfil', async ({ me }) => { if (me.role !== 'medico') throw new AuthError(403, 'Solo para médicos.'); return { item: await medicos.deCuenta(me.id), especialidades: medicos.especialidades() }; });
+  ruta('POST', '/api/medico/perfil', async ({ me, body }) => ({ item: await medicos.actualizarMiPerfil(me, body ?? {}) }));
   ruta('GET', '/api/ventas/estado', async () => ({ ia: ventas.iaActiva() }));
   ruta('POST', '/api/ventas/leer', async ({ me, body }) => ventas.leer(me, body?.archivo), { limite: MAX_BODY_ADJUNTO + 1024 * 1024 });
   ruta('POST', '/api/ventas/confirmar', async ({ me, body }) => [201, await ventas.confirmar(me, body ?? {})], { limite: 4 * 1024 * 1024 });

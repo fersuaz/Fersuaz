@@ -7,6 +7,7 @@ export const ROLES = Object.freeze({
   REPRESENTANTE: 'representante',
   FINANZAS: 'finanzas',
   DEPENDIENTE: 'dependiente', // dependiente de farmacia (vouchers y comisiones)
+  MEDICO: 'medico', // médico que carga sus propias recetas
 });
 
 export const ROLE_LABELS = Object.freeze({
@@ -16,6 +17,7 @@ export const ROLE_LABELS = Object.freeze({
   representante: 'Representante',
   finanzas: 'Finanzas',
   dependiente: 'Dependiente de farmacia',
+  medico: 'Médico',
 });
 
 // Posiciones comerciales aprobadas (solo aplican al rol representante).
@@ -23,7 +25,7 @@ export const POSITIONS = Object.freeze(['Visitador', 'PVC', 'Vendedor', 'Promoto
 
 // Roles que pueden solicitarse en el registro público. Administrador nunca.
 export const SELF_REGISTERABLE = Object.freeze([
-  ROLES.GERENCIA, ROLES.SUPERVISOR, ROLES.REPRESENTANTE, ROLES.FINANZAS, ROLES.DEPENDIENTE,
+  ROLES.GERENCIA, ROLES.SUPERVISOR, ROLES.REPRESENTANTE, ROLES.FINANZAS, ROLES.DEPENDIENTE, ROLES.MEDICO,
 ]);
 
 // Quién puede aprobar una solicitud de cada rol.
@@ -33,6 +35,7 @@ const APPROVERS = Object.freeze({
   supervisor: [ROLES.ADMINISTRADOR, ROLES.GERENCIA],
   representante: [ROLES.ADMINISTRADOR, ROLES.GERENCIA, ROLES.SUPERVISOR],
   dependiente: [ROLES.ADMINISTRADOR, ROLES.GERENCIA, ROLES.SUPERVISOR],
+  medico: [ROLES.ADMINISTRADOR, ROLES.GERENCIA, ROLES.SUPERVISOR],
 });
 
 export function canApprove(approverRole, requestedRole) {

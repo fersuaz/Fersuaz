@@ -132,6 +132,12 @@ export function createInicio({ data, users, v, c, t, now = () => new Date() }) {
     const base = { usuario: { nombre: me.fullName, rol: me.role, posicion: me.position ?? null }, hoy: hoy() };
     if (me.role === 'representante') return { ...base, ...(await representante(me, m)) };
     if (me.role === 'dependiente') return { ...base, ...(await dependiente(me)) };
+    if (me.role === 'medico') {
+      const ficha = (await data.list('medicos')).find((x) => x.usuarioId === me.id) ?? null;
+      const rs = (await c.promotoras.listarRecetas(me, { mes: m }));
+      return { ...base, tipo: 'medico', mes: m, ficha: ficha && { nombre: ficha.nombre, especialidad: ficha.especialidad, lugares: ficha.lugares ?? [] },
+        recetas: contar(rs, (r) => r.estado), total: rs.length };
+    }
     if (GESTION.includes(me.role)) return { ...base, ...(await gestion(me, m)) };
     return { ...base, tipo: 'vacio' };
   }

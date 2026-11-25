@@ -9,7 +9,7 @@ export class AuthError extends Error {
 const publicUser = ({ passwordHash, ...u }) => u;
 
 /** `preregistro`: { buscar(email, role), confirmar(user, p) } — opcional, para representantes cargados por Excel. */
-export function createAuthService(store, { preregistro, farmaciaPara, farmaciaNueva } = {}) {
+export function createAuthService(store, { preregistro, farmaciaPara, farmaciaNueva, registroMedico } = {}) {
   return {
     async register(input) {
       // Dependiente que elige su farmacia del catálogo: queda ligada y activa de inmediato.
@@ -26,6 +26,12 @@ export function createAuthService(store, { preregistro, farmaciaPara, farmaciaNu
         nueva = r.farmacia;
       }
       const { ok, errors, data } = validateRegistration(input);
+      // Médico: especialidad y lugares de trabajo (varias provincias, municipios y establecimientos).
+      let medico = null;
+      if (String(input?.role ?? '').toLowerCase() === 'medico' && registroMedico) {
+        medico = await registroMedico.validar(input);
+        if (medico.errores) throw new AuthError(422, 'Revisa los campos marcados.', { ...(errors ?? {}), ...medico.errores });
+      }
       if (!ok) throw new AuthError(422, 'Revisa los campos marcados.', errors);
       if (await store.findUserByEmail(data.email)) {
         throw new AuthError(409, 'Ya existe una cuenta con ese correo.', { email: 'Este correo ya está registrado. Inicia sesión.' });
@@ -38,6 +44,7 @@ export function createAuthService(store, { preregistro, farmaciaPara, farmaciaNu
       });
       await store.addAudit({ action: pre ? 'registro_preaprobado' : farmacia ? 'registro_dependiente_farmacia' : 'registro_solicitado', entity: 'user', entityId: user.id, after: { role: user.role, ...(pre ? { position: user.position } : {}), ...(farmacia ? { farmaciaId: farmacia.id, farmacia: farmacia.nombre } : {}), ...(nueva ? { farmaciaId: nueva.id, farmaciaNueva: nueva.nombre } : {}) } });
       if (pre) await preregistro.confirmar(user, pre);
+      if (medico) await registroMedico.crear(user, medico.datos);
       return publicUser(user);
     },
 
@@ -75,6 +82,7 @@ export function createAuthService(store, { preregistro, farmaciaPara, farmaciaNu
       if (approver.id === target.id) throw new AuthError(403, 'No puedes aprobar tu propia cuenta.');
       const status = approve ? STATUS.ACTIVO : STATUS.RECHAZADO;
       const updated = await store.updateUser(userId, { status, approvedBy: approver.id });
+      if (target.role === 'medico') await registroMedico?.alDecidir(target, approve);
       await store.addAudit({
         actorId: approver.id, action: approve ? 'registro_aprobado' : 'registro_rechazado',
         entity: 'user', entityId: userId, before: { status: target.status }, after: { status },

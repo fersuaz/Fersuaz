@@ -14,6 +14,9 @@ import { provinciaOficial, municipioOficial, dentroDeZona } from './territorio.j
 const GESTION = ['administrador', 'gerencia', 'supervisor', 'finanzas'];
 const esActivo = (u) => u && u.status === STATUS.ACTIVO;
 export const esPromotora = (u) => esActivo(u) && u.role === 'representante' && u.position === 'Promotora';
+export const esMedico = (u) => esActivo(u) && u.role === 'medico';
+/** Solo las recetas aprobadas cuentan en metas, reportes y alertas. Las de antes de la revisión quedaron aprobadas. */
+export const recetaAprobada = (r) => (r.estado ?? 'aprobada') === 'aprobada';
 export const esVendedor = (u) => esActivo(u) && u.role === 'representante' && u.position === 'Vendedor';
 export const esDependiente = (u) => esActivo(u) && u.role === 'dependiente';
 /** Vendedor o PVC: también cargan vouchers a nombre de una dependiente de su zona. */
@@ -311,6 +314,8 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
   /** Dependientes cuya farmacia está en la zona del Vendedor o PVC. */
   /** Pacientes que puede ver la promotora: los que registró ella o los que tienen recetas en su zona. */
   async function pacientesVisibles(actor, recetas) {
+    // El médico ve los pacientes que registró él o los de sus propias recetas.
+    if (esMedico(actor)) { const suyos = new Set(recetas.filter((r) => r.cargadoPor === actor.id).map((r) => r.pacienteId)); return (p) => p.creadoPor === actor.id || suyos.has(p.id); }
     if (!esPromotora(actor)) return () => true;
     const zona = (await data.list('zonas', { representanteId: actor.id }))[0] ?? null;
     const enZona = new Set(recetas.filter((r) => r.promotoraId === actor.id || (zona && dentroDeZona(zona, r.provincia, r.municipio))).map((r) => r.pacienteId));
@@ -519,23 +524,44 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       permitir(tieneRol(actor, GESTION));
       return data.list('operativos', fecha ? { fecha } : {});
     },
+    /**
+     * Receta de una promotora (en un operativo) o de un médico (en uno de sus lugares de trabajo).
+     * El médico queda puesto solo: es quien la prescribió; si fue otro médico, puede elegirlo. El paciente
+     * es obligatorio para la promotora y opcional para el médico. Todas quedan pendientes de revisión.
+     */
     async crearReceta(actor, input) {
-      permitir(esPromotora(actor), 'Solo las promotoras registran recetas.');
+      const promotora = esPromotora(actor); const medicoCuenta = esMedico(actor);
+      permitir(promotora || medicoCuenta, 'Solo las promotoras y los médicos registran recetas.');
       const e = {};
-      const op = input.operativoId && (await data.get('operativos', input.operativoId));
-      if (!op || op.promotoraId !== actor.id) e.operativoId = 'Elige uno de tus operativos.';
-      const med = input.medicoId && (await data.get('medicos', input.medicoId));
-      if (!med) e.medicoId = 'Elige el médico que prescribió.';
+      let op = null; let lugar = null; let fecha = null; let med = null;
+      if (promotora) {
+        op = input.operativoId && (await data.get('operativos', input.operativoId));
+        if (!op || op.promotoraId !== actor.id) e.operativoId = 'Elige uno de tus operativos.';
+        else fecha = op.fecha;
+        med = input.medicoId && (await data.get('medicos', input.medicoId));
+        if (!med) e.medicoId = 'Elige el médico que prescribió.';
+      } else {
+        const ficha = (await data.list('medicos')).find((m) => m.usuarioId === actor.id);
+        if (!ficha) throw new HttpError(409, 'Tu cuenta de médico no tiene ficha. Pide a la gerencia que la revise.');
+        const lugares = ficha.lugares ?? [];
+        lugar = (input.establecimientoId ? lugares.find((l) => l.establecimientoId === input.establecimientoId) : lugares[0]) ?? null;
+        if (!lugar) e.establecimientoId = 'Elige uno de tus lugares de trabajo.';
+        fecha = input.fecha ?? hoy();
+        if (!esFechaISO(fecha)) e.fecha = 'Elige la fecha de la receta.'; else if (fecha > hoy()) e.fecha = 'La fecha no puede ser futura.';
+        if (input.medicoId && input.medicoId !== ficha.id) { med = await data.get('medicos', String(input.medicoId)); if (!med || med.estado === 'inactivo') e.medicoId = 'Ese médico no está registrado. Elígelo de la lista o agrégalo.'; }
+        else med = ficha;
+      }
       const items = Array.isArray(input.items) ? input.items : [];
       if (!items.length) e.items = 'Agrega al menos un medicamento.';
       // Paciente: el teléfono lo identifica. Si ya existe, se usa el mismo (no se duplica su contacto).
       // También se puede elegir por nombre un paciente ya registrado (su teléfono queda guardado, no se reescribe).
       let paciente = null; let tel = null;
-      if (input.paciente?.id) {
+      const conPaciente = promotora || input.paciente?.id || String(input.paciente?.telefono ?? '').replace(/\D/g, '') || normalizeName(input.paciente?.nombre);
+      if (conPaciente && input.paciente?.id) {
         const p = await data.get('pacientes', String(input.paciente.id));
         if (!p || !(await pacientesVisibles(actor, await data.list('recetas')))(p)) e['paciente.nombre'] = 'Ese paciente no está en tu zona. Escribe su teléfono.';
         else { paciente = p; tel = p.telefono; }
-      } else {
+      } else if (conPaciente) {
         tel = telefonoRD(input.paciente?.telefono);
         if (!tel) e['paciente.telefono'] = 'Escribe el teléfono del paciente (809, 829 u 849 y 7 dígitos).';
         else paciente = (await data.list('pacientes', { telefono: tel }))[0] ?? null;
@@ -554,26 +580,51 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       let huella = null;
       if (input.adjunto) huella = esHuella(input.fotoHuella) ? input.fotoHuella : createHash('sha256').update(Buffer.from(String(input.adjunto.base64 ?? ''), 'base64')).digest('hex');
       const dhash = input.adjunto && esDhash(input.fotoDhash) ? input.fotoDhash : null;
+      if (medicoCuenta && !input.adjunto) e.adjunto = 'Sube la foto de la receta.';
       if (Object.keys(e).length) invalido(e);
-      const repetida = (huella || dhash) && buscarRepetida(await data.list('recetas'), { huella, dhash });
+      const repetida = (huella || dhash) && buscarRepetida((await data.list('recetas')).filter((r) => r.estado !== 'rechazada'), { huella, dhash });
       if (repetida) throw new HttpError(409, textoRepetida(repetida, 'receta', actor.id), { adjunto: 'Foto repetida.' });
       const adjunto = await guardarAdjunto(files, actor, input.adjunto, 'receta');
       let pacienteNuevo = false;
-      if (!paciente) {
+      if (tel && !paciente) {
         try { paciente = await data.insert('pacientes', { telefono: tel, nombre: nombrePaciente, creadoPor: actor.id }); pacienteNuevo = true; }
-        catch { paciente = (await data.list('pacientes', { telefono: tel }))[0]; } // otra promotora lo registró en ese instante
+        catch { paciente = (await data.list('pacientes', { telefono: tel }))[0]; } // otro usuario lo registró en ese instante
       }
       const r = await data.insert('recetas', {
-        promotoraId: actor.id, operativoId: op.id, medicoId: med.id, fecha: op.fecha,
-        provincia: op.provincia, municipio: op.municipio, items: lineas, adjunto, pacienteId: paciente.id, fotoHuella: huella, fotoDhash: dhash,
+        promotoraId: promotora ? actor.id : null, cargadoPor: actor.id, operativoId: op?.id ?? null, establecimientoId: lugar?.establecimientoId ?? null,
+        medicoId: med.id, fecha, provincia: op?.provincia ?? lugar.provincia, municipio: op?.municipio ?? lugar.municipio,
+        items: lineas, adjunto, pacienteId: paciente?.id ?? null, fotoHuella: huella, fotoDhash: dhash, estado: 'pendiente',
       });
-      await audit({ actorId: actor.id, action: 'receta_registrada', entity: 'receta', entityId: r.id, after: { items: lineas.length, pacienteNuevo } });
-      const alertas = await promotoras.alertasZona(op.provincia, op.municipio, op.fecha.slice(0, 7), lineas.map((l) => l.medicamentoId));
-      return { receta: r, alertas, paciente: { id: paciente.id, nombre: paciente.nombre, nuevo: pacienteNuevo } };
+      await audit({ actorId: actor.id, action: 'receta_registrada', entity: 'receta', entityId: r.id, after: { items: lineas.length, pacienteNuevo, por: promotora ? 'promotora' : 'medico' } });
+      const alertas = promotora ? await promotoras.alertasZona(op.provincia, op.municipio, op.fecha.slice(0, 7), lineas.map((l) => l.medicamentoId)) : [];
+      return { receta: r, alertas, paciente: paciente ? { id: paciente.id, nombre: paciente.nombre, nuevo: pacienteNuevo } : null };
+    },
+    /** Revisión de recetas: la gestión aprueba o rechaza (con motivo). Solo las aprobadas cuentan. */
+    async decidirReceta(actor, id, aprobar, motivo, { corregible = false } = {}) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor']), 'No tienes permiso para revisar recetas.');
+      const r = await data.get('recetas', String(id));
+      if (!r) throw new HttpError(404, 'La receta no existe.');
+      if (r.estado && r.estado !== 'pendiente') throw new HttpError(409, 'Esta receta ya fue revisada.');
+      const m = normalizeName(motivo);
+      if (!aprobar && m.length < 3) throw new HttpError(422, 'Explica por qué se rechaza.', { motivo: 'Escribe el motivo del rechazo.' });
+      const estado = aprobar ? 'aprobada' : 'rechazada';
+      const out = await data.update('recetas', r.id, { estado, decididoPor: actor.id, decididoAt: now().toISOString(), motivo: aprobar ? null : m, nota: aprobar ? (m || null) : null, corregible: !aprobar && Boolean(corregible) });
+      await audit({ actorId: actor.id, action: `receta_${estado}`, entity: 'receta', entityId: r.id, before: { estado: r.estado ?? 'pendiente' }, after: { estado, motivo: m || null } });
+      return out;
+    },
+    async decidirRecetasLote(actor, { ids, aprobar, motivo, corregible } = {}) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor']), 'No tienes permiso para revisar recetas.');
+      if (!Array.isArray(ids) || !ids.length || ids.length > 1000) invalido({ ids: 'Elige de 1 a 1,000 recetas.' });
+      if (!aprobar && normalizeName(motivo).length < 3) throw new HttpError(422, 'Explica por qué se rechazan.', { motivo: 'Escribe el motivo del rechazo.' });
+      let hechos = 0; const errores = []; const hechosIds = [];
+      for (const id of [...new Set(ids.map(String))]) {
+        try { await this.decidirReceta(actor, id, Boolean(aprobar), motivo, { corregible }); hechos++; hechosIds.push(id); } catch (e) { errores.push({ id, error: e.message }); }
+      }
+      return { hechos, errores, ids: hechosIds };
     },
     /** Al escribir el teléfono completo, la promotora ve si el paciente ya existe y su nombre se completa solo. */
     async buscarPaciente(actor, telefono) {
-      permitir(esPromotora(actor) || tieneRol(actor, ['administrador', 'gerencia']));
+      permitir(esPromotora(actor) || esMedico(actor) || tieneRol(actor, ['administrador', 'gerencia']));
       const tel = telefonoRD(telefono);
       if (!tel) return { paciente: null };
       const p = (await data.list('pacientes', { telefono: tel }))[0];
@@ -586,7 +637,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
      * los que ella registró o los que tienen recetas en su zona; el teléfono va oculto salvo los 4 últimos.
      */
     async buscarPacientesPorNombre(actor, nombre) {
-      permitir(esPromotora(actor) || tieneRol(actor, ['administrador', 'gerencia']));
+      permitir(esPromotora(actor) || esMedico(actor) || tieneRol(actor, ['administrador', 'gerencia']));
       const sin = (t) => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
       const q = sin(nombre);
       if (q.length < 3) return { pacientes: [] };
@@ -604,18 +655,23 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       }
       return { pacientes: out.sort((a, b) => b.recetas - a.recetas || a.nombre.localeCompare(b.nombre, 'es')).slice(0, 6) };
     },
-    async listarRecetas(actor, { mes } = {}) {
+    async listarRecetas(actor, { mes, estado } = {}) {
       let rs;
-      if (esPromotora(actor)) rs = await data.list('recetas', { promotoraId: actor.id });
+      if (esPromotora(actor) || esMedico(actor)) rs = (await data.list('recetas')).filter((r) => (r.cargadoPor ?? r.promotoraId) === actor.id);
       else { permitir(tieneRol(actor, GESTION)); rs = await data.list('recetas'); }
       if (mes) rs = rs.filter((r) => r.fecha.startsWith(mes));
+      if (estado) rs = rs.filter((r) => (r.estado ?? 'aprobada') === estado);
+      const nombres = Object.fromEntries((await users.listUsers()).map((u) => [u.id, { nombre: u.fullName, rol: u.role, posicion: u.position }]));
+      const lugaresE = Object.fromEntries((await data.list('establecimientos')).map((x) => [x.id, x.nombre]));
       const medicos = Object.fromEntries((await data.list('medicos')).map((m) => [m.id, m]));
       const pacientes = Object.fromEntries((await data.list('pacientes')).map((p) => [p.id, p]));
       // El teléfono completo lo ven la promotora, la administración y la gerencia; la supervisión, oculto.
-      const completo = esPromotora(actor) || tieneRol(actor, ['administrador', 'gerencia']);
+      const completo = esPromotora(actor) || esMedico(actor) || tieneRol(actor, ['administrador', 'gerencia']);
       return rs.map((r) => {
         const p = pacientes[r.pacienteId];
-        return { ...r, medico: medicos[r.medicoId]?.nombre ?? '', especialidad: medicos[r.medicoId]?.especialidad ?? '',
+        const quien = nombres[r.cargadoPor ?? r.promotoraId];
+        return { ...r, estado: r.estado ?? 'aprobada', cargadoPorNombre: quien?.nombre ?? '', cargadoPorRol: quien?.rol === 'medico' ? 'Médico' : quien?.posicion ?? '', lugar: lugaresE[r.establecimientoId] ?? null,
+          medico: medicos[r.medicoId]?.nombre ?? '', especialidad: medicos[r.medicoId]?.especialidad ?? '',
           paciente: p ? { nombre: p.nombre, telefono: completo ? telefonoVisible(p.telefono) : telefonoOculto(p.telefono) } : null };
       });
     },
@@ -649,7 +705,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
     async alertasZona(provincia, municipio, mes, medicamentoIds) {
       const umbral = await promotoras.umbral();
       const zona = (x) => x.provincia.toLowerCase() === provincia.toLowerCase() && x.municipio.toLowerCase() === municipio.toLowerCase();
-      const recetas = (await data.list('recetas')).filter((r) => zona(r) && r.fecha.startsWith(mes));
+      const recetas = (await data.list('recetas')).filter((r) => r.estado !== 'rechazada' && zona(r) && r.fecha.startsWith(mes)); // aviso de operación: pendientes y aprobadas
       const farmacias = (await data.list('farmacias')).filter(zona);
       const inv = await data.list('inventario');
       const meds = Object.fromEntries((await data.list('medicamentos')).map((m) => [m.id, m.nombre]));
@@ -689,7 +745,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
     permitir(tieneRol(actor, GESTION));
     if (!AGRUPAR.includes(agrupar)) throw new HttpError(422, 'Agrupación no válida.');
     if (!/^\d{4}-\d{2}$/.test(String(mes))) throw new HttpError(422, 'Elige el mes.');
-    const rs = (await data.list('recetas')).filter((r) => r.fecha.startsWith(mes));
+    const rs = (await data.list('recetas')).filter((r) => recetaAprobada(r) && r.fecha.startsWith(mes));
     const medicos = Object.fromEntries((await data.list('medicos')).map((m) => [m.id, m]));
     const ops = Object.fromEntries((await data.list('operativos')).map((o) => [o.id, o]));
     const nombres = Object.fromEntries((await users.listUsers()).map((u) => [u.id, u.fullName]));
@@ -701,7 +757,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
     for (const r of rs) {
       for (const it of r.items) {
         const k = {
-          promotora: nombres[r.promotoraId] ?? 'Sin nombre', medicamento: it.medicamento, linea: it.linea ?? 'Sin línea',
+          promotora: nombres[r.cargadoPor ?? r.promotoraId] ?? 'Sin nombre', medicamento: it.medicamento, linea: it.linea ?? 'Sin línea',
           medico: medicos[r.medicoId]?.nombre ?? 'Sin médico', especialidad: medicos[r.medicoId]?.especialidad ?? 'Sin especialidad',
           provincia: r.provincia, municipio: `${r.municipio}, ${r.provincia}`, centro: ops[r.operativoId]?.centro ?? 'Sin centro',
         }[agrupar];
@@ -713,11 +769,11 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
 
   /** Antes de enviar: cuáles de estas fotos ya están cargadas (exactas o muy parecidas). */
   async function verificarFotos(actor, { tipo, fotos } = {}) {
-    if (tipo === 'receta') permitir(esPromotora(actor), 'Solo las promotoras cargan recetas.');
+    if (tipo === 'receta') permitir(esPromotora(actor) || esMedico(actor), 'Solo las promotoras y los médicos cargan recetas.');
     else if (tipo === 'voucher') permitir(esDependiente(actor) || cargaPorDependiente(actor), 'No tienes permiso para cargar vouchers.');
     else invalido({ tipo: 'Tipo no válido.' });
     if (!Array.isArray(fotos) || fotos.length > 1000) invalido({ fotos: 'Envía hasta 1,000 fotos por vez.' });
-    const registros = tipo === 'receta' ? await data.list('recetas') : (await data.list('vouchers')).filter((v) => !['anulado', 'rechazado'].includes(v.estado));
+    const registros = tipo === 'receta' ? (await data.list('recetas')).filter((r) => r.estado !== 'rechazada') : (await data.list('vouchers')).filter((v) => !['anulado', 'rechazado'].includes(v.estado));
     const repetidas = [];
     fotos.forEach((f, indice) => {
       const huella = esHuella(f?.huella) ? f.huella : null; const dhash = esDhash(f?.dhash) ? f.dhash : null;

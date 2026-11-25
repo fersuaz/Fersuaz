@@ -13,8 +13,8 @@ const RD = (n) => `RD$ ${fmtRD.format(Number(n) || 0)}`;
 const hoy = () => new Date(Date.now() - 4 * 3600e3).toISOString().slice(0, 10);
 const mesActual = () => hoy().slice(0, 7);
 const fecha = (s) => (s ? new Date(`${String(s).slice(0, 10)}T12:00:00`).toLocaleDateString('es-DO', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
-const ROLES = { administrador: 'Administrador', gerencia: 'Gerencia', supervisor: 'Supervisor', representante: 'Representante', finanzas: 'Finanzas', dependiente: 'Dependiente de farmacia' };
-const ESTADOS = { pendiente: 'Pendiente', aprobado: 'Aprobado', rechazado: 'Rechazado', anulado: 'Anulado', alerta: 'Alerta', ok: 'Cubierto', sin_inventario: 'Sin inventario', validada: 'Validada', validado: 'Validado', recibido: 'Recibido', confirmado: 'Confirmado', despachado: 'Despachado', entregado: 'Entregado', cancelado: 'Cancelado' };
+const ROLES = { administrador: 'Administrador', gerencia: 'Gerencia', supervisor: 'Supervisor', representante: 'Representante', finanzas: 'Finanzas', dependiente: 'Dependiente de farmacia', medico: 'Médico' };
+const ESTADOS = { pendiente: 'Pendiente', aprobado: 'Aprobado', rechazado: 'Rechazado', aprobada: 'Aprobada', rechazada: 'Rechazada', anulado: 'Anulado', alerta: 'Alerta', ok: 'Cubierto', sin_inventario: 'Sin inventario', validada: 'Validada', validado: 'Validado', recibido: 'Recibido', confirmado: 'Confirmado', despachado: 'Despachado', entregado: 'Entregado', cancelado: 'Cancelado' };
 
 /** Crea elementos sin innerHTML: todo texto entra como textContent. */
 function h(tag, attrs = {}, ...kids) {
@@ -377,7 +377,7 @@ async function prepararFoto(file) {
 // Médico de una foto (voucher o receta): se elige de la lista; si no está, se escribe nombre, apellido y
 // especialidad, y queda registrado para todos. La próxima vez solo se elige.
 const NUEVO_MED = '__nuevo';
-function selectorMedico(catalogo, { requerido = false, ubicacion = () => ({}), preferir = null } = {}) {
+function selectorMedico(catalogo, { requerido = false, ubicacion = () => ({}), preferir = null, yo: textoYo = null } = {}) {
   const etiq = (m) => `${m.nombre}${m.especialidad ? `, ${m.especialidad}` : ''}${m.municipio ? ` (${m.municipio})` : ''}`;
   const ordenados = () => {
     const p = preferir?.() ?? {};
@@ -387,7 +387,7 @@ function selectorMedico(catalogo, { requerido = false, ubicacion = () => ({}), p
   const sel = h('select', { 'aria-label': 'Médico que prescribió', 'data-medicos': '1' });
   const llenar = () => {
     const v = sel.value;
-    sel.replaceChildren(h('option', { value: '' }, requerido ? 'Elige el médico' : 'Elige el médico (opcional)'), h('option', { value: NUEVO_MED }, '+ No está en la lista: agregar médico'), ...ordenados().map((m) => h('option', { value: m.id }, etiq(m))));
+    sel.replaceChildren(h('option', { value: '' }, textoYo ?? (requerido ? 'Elige el médico' : 'Elige el médico (opcional)')), h('option', { value: NUEVO_MED }, '+ No está en la lista: agregar médico'), ...ordenados().map((m) => h('option', { value: m.id }, etiq(m))));
     sel.value = v;
   };
   llenar();
@@ -504,7 +504,7 @@ function cargaMasiva(cfg) {
       f.num = h('strong', {});
       f.msg = h('p', { class: 'cm-msg', role: 'status' });
       f.cajaLineas = h('div', { class: 'cm-lineas' });
-      f.fecha = cfg.nombre === 'voucher' ? h('input', { type: 'date', value: hoy(), max: hoy(), 'aria-label': 'Fecha del voucher' }) : null;
+      f.fecha = cfg.nombre === 'voucher' || cfg.fechaReceta ? h('input', { type: 'date', value: hoy(), max: hoy(), 'aria-label': `Fecha ${cfg.nombre === 'voucher' ? 'del voucher' : 'de la receta'}` }) : null;
       f.totalEl = cfg.conPrecio ? h('strong', {}, RD(0)) : null;
       f.extras = cfg.extras ? cfg.extras(f) : null;
       const vista = file.type === 'application/pdf' ? h('span', { class: 'cm-pdf' }, 'PDF') : h('img', { src: f.url, alt: `Foto ${file.name}`, loading: 'lazy' });
@@ -1184,6 +1184,7 @@ function buscadorPaciente(inTel, inNom, nota) {
 }
 
 V.receta = async () => {
+  if (yo.role === 'medico') return recetaMedico();
   const [ops, meds] = await Promise.all([api('GET', '/api/operativos'), api('GET', '/api/catalogo/medicos')]);
   const recientes = ops.items.filter((o) => o.fecha >= new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10)).reverse();
   if (!recientes.length) return vista('Cargar receta', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Primero registra tu operativo'), 'Cada receta va ligada al centro donde la registras. ', h('a', { href: '#operativo' }, 'Registrar operativo')));
@@ -1265,15 +1266,159 @@ V.receta = async () => {
   return vistaS('receta', ['fotos', 'una'], 'Cargar recetas', 'Sube todas las fotos de las prescripciones de una vez, o regístralas una por una. Cada receta lleva su médico, su paciente y los medicamentos de FERSUAZ que se recetaron.',
     S('fotos', 'Varias por foto', cmR.el), S('una', 'Una por una', alertas, form));
 };
+/**
+ * Cargar recetas del médico: el médico de cada receta es él (nombre, apellido y especialidad, sin buscarlo).
+ * Solo si la prescribió otro médico lo cambia. El paciente es opcional. Todas van a revisión.
+ */
+async function recetaMedico() {
+  const [perfil, cat, meds] = await Promise.all([api('GET', '/api/medico/perfil'), api('GET', '/api/catalogo/medicos').catch(() => ({ items: [], especialidades: [] })), medicamentos()]);
+  const yoMed = perfil.item;
+  if (!yoMed) return vista('Cargar recetas', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Tu ficha de médico no está lista'), 'Pide a la gerencia que revise tu cuenta.'));
+  const lugares = yoMed.lugares ?? [];
+  const catMed = { items: cat.items.filter((m) => m.estado !== 'inactivo' && m.estado !== 'rechazado' && m.id !== yoMed.id), especialidades: cat.especialidades ?? perfil.especialidades ?? [] };
+  const yoTxt = `${yoMed.nombre}, ${yoMed.especialidad}`;
+  const selLugar = campo('lugarMed', 'Lugar donde recetaste', { options: lugares.map((l) => ({ value: l.establecimientoId, label: `${l.nombre}, ${l.municipio}` })), value: lugares[0]?.establecimientoId });
+  const lugarElegido = () => lugares.find((l) => l.establecimientoId === selLugar.querySelector('select').value) ?? lugares[0] ?? {};
+  const extras = () => {
+    // El médico es él; solo se despliega para elegir a otro si la receta no fue suya.
+    const med = selectorMedico(catMed, { yo: `Yo: ${yoTxt}`, ubicacion: () => ({ provincia: lugarElegido().provincia, municipio: lugarElegido().municipio }), preferir: lugarElegido });
+    const otro = h('details', { class: 'med-otro' }, h('summary', {}, `Médico: ${yoTxt}. ¿La prescribió otro médico? Cámbialo`), ...med.nodos);
+    const tel = h('input', { type: 'tel', inputmode: 'tel', autocomplete: 'off', placeholder: '809-000-0000', 'aria-label': 'Teléfono del paciente' });
+    const nom = h('input', { autocomplete: 'off', placeholder: 'Nombre del paciente', 'aria-label': 'Nombre del paciente' });
+    const nota = h('small', { class: 'hint pac-nota' }, 'Paciente: opcional.');
+    const nodos = h('div', { class: 'cm-extras' }, otro, h('label', {}, h('span', {}, 'Teléfono del paciente (opcional)'), tel), h('label', {}, h('span', {}, 'Nombre del paciente (opcional)'), nom), nota);
+    const pac = buscadorPaciente(tel, nom, nota);
+    const conPac = () => pac.valor().id || String(tel.value).replace(/\D/g, '') || nom.value.trim();
+    return {
+      nodos,
+      valores: () => ({ medico: med, paciente: conPac() ? pac.valor() : null }),
+      valido: () => med.valido() ?? (!conPac() || pac.valor().id ? null : String(tel.value).replace(/\D/g, '').length < 10 ? 'Escribe el teléfono completo del paciente, o deja los dos campos del paciente vacíos.' : !pac.conocido() && nom.value.trim().length < 3 ? 'Escribe el nombre del paciente.' : null),
+    };
+  };
+  const cm = cargaMasiva({
+    nombre: 'receta', meds, conPrecio: false, etiquetaCant: 'Unidades', extras, fechaReceta: true,
+    arriba: h('div', {}, h('div', { class: 'form-fila' }, selLugar), h('p', { class: 'hint' }, `Cada receta lleva tu nombre y especialidad (${yoTxt}). Si alguna la prescribió otro médico, cámbialo en esa fila. Todas pasan a revisión antes de contar.`)),
+    enviar: async ({ items, foto, huella, dhash, fecha: f, extras: x }) => api('POST', '/api/recetas', { establecimientoId: lugarElegido().establecimientoId, fecha: f, medicoId: (await x.medico.valor()) || undefined, ...(x.paciente ? { paciente: x.paciente } : {}), items, adjunto: foto, fotoHuella: huella, fotoDhash: dhash }),
+  });
+  return vista('Cargar recetas', 'Sube todas las fotos de tus prescripciones de una vez. Por cada foto elige los medicamentos de FERSUAZ y las unidades.', cm.el);
+}
+const ESTADO_RECETA = { pendiente: 'Pendiente', aprobada: 'Aprobada', rechazada: 'Rechazada' };
+
 V.misRecetas = async () => {
   const mes = new URLSearchParams(location.hash.split('?')[1]).get('mes') || mesActual();
   const { items } = await api('GET', `/api/recetas?mes=${mes}`);
-  return vista('Recetas', null, filtroMes(mes, 'recetas'), tabla([
-    { t: 'Fecha', v: (r) => fecha(r.fecha) }, { t: 'Paciente', v: (r) => r.paciente ? [r.paciente.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, r.paciente.telefono)] : h('span', { style: 'color:var(--texto-2)' }, 'Sin registrar') },
-    { t: 'Médico', v: (r) => `${r.medico}, ${r.especialidad}` }, { t: 'Zona', v: (r) => `${r.municipio}, ${r.provincia}` },
-    { t: 'Medicamentos', v: (r) => r.items.map((i) => `${i.medicamento} ×${i.unidades}`).join(', ') },
-    { t: 'Foto', v: (r) => r.adjunto ? h('button', { class: 'btn-sec btn-peq', onclick: () => verAdjunto(r.adjunto.clave, items.filter((x) => x.adjunto).reverse().map((x) => ({ clave: x.adjunto.clave, nombre: `Receta del ${fecha(x.fecha)}`, detalle: `${x.medico}, ${x.especialidad} · ${x.items.map((i) => `${i.medicamento} ×${i.unidades}`).join(', ')}` }))) }, 'Ver') : 'Sin foto' },
-  ], items.slice().reverse(), ['No hay recetas en este mes', 'Las recetas que registres aparecerán aquí.']));
+  const propio = ['medico', 'representante'].includes(yo.role);
+  const sub = (x) => h('small', { style: 'display:block;color:var(--texto-2)' }, x);
+  const uni = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  const filas = items.slice().reverse();
+  let vistos = filas;
+  const meds = (r) => r.items.map((i) => `${i.medicamento} ×${i.unidades}`).join(', ');
+  const campos = [
+    { id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Medicamento, médico, paciente…', valor: (r) => [meds(r), r.medico, r.paciente?.nombre, r.cargadoPorNombre, r.lugar].join(' ') },
+    { id: 'estado', etiqueta: 'Estado', tipo: 'opciones', opciones: Object.entries(ESTADO_RECETA).filter(([k]) => items.some((r) => r.estado === k)).map(([value, label]) => ({ value, label })), valor: (r) => r.estado },
+    { id: 'med', etiqueta: 'Medicamento', tipo: 'opciones', plural: 'medicamentos', opciones: uni(items.flatMap((r) => r.items.map((i) => i.medicamento))), valor: (r) => r.items.map((i) => i.medicamento) },
+    { id: 'medico', etiqueta: 'Médico', tipo: 'opciones', plural: 'médicos', opciones: uni(items.map((r) => r.medico)), valor: (r) => r.medico },
+    { id: 'mun', etiqueta: 'Municipio', tipo: 'opciones', plural: 'municipios', opciones: uni(items.map((r) => r.municipio)), valor: (r) => r.municipio },
+    ...(!propio ? [{ id: 'por', etiqueta: 'Cargada por', tipo: 'opciones', opciones: uni(items.map((r) => r.cargadoPorNombre)), valor: (r) => r.cargadoPorNombre }] : []),
+  ];
+  const cols = [
+    { t: 'Fecha', v: (r) => fecha(r.fecha) },
+    { t: 'Médico', v: (r) => [r.medico, sub(r.especialidad)] },
+    ...(!propio ? [{ t: 'Cargada por', v: (r) => [r.cargadoPorNombre, sub(r.cargadoPorRol)] }] : []),
+    { t: 'Paciente', v: (r) => r.paciente ? [r.paciente.nombre, sub(r.paciente.telefono)] : h('span', { style: 'color:var(--texto-2)' }, 'Sin registrar') },
+    { t: 'Lugar', v: (r) => [r.lugar ?? r.municipio, sub(`${r.municipio}, ${r.provincia}`)] },
+    { t: 'Medicamentos', v: (r) => meds(r) },
+    { t: 'Estado', v: (r) => [chip(r.estado), r.motivo ? sub(r.motivo) : null, r.nota ? sub(`Nota: ${r.nota}`) : null] },
+    { t: 'Foto', v: (r) => r.adjunto ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => verAdjunto(r.adjunto.clave, vistos.filter((x) => x.adjunto).map((x) => ({ clave: x.adjunto.clave, nombre: `Receta del ${fecha(x.fecha)}`, detalle: `${x.medico} · ${meds(x)} · ${ESTADO_RECETA[x.estado] ?? x.estado}` }))) }, 'Ver foto') : 'Sin foto' },
+  ];
+  const resumen = (vs) => Object.entries(ESTADO_RECETA).map(([k, l]) => `${fmtN.format(vs.filter((r) => r.estado === k).length)} ${l.toLowerCase()}(s)`).join(' · ');
+  return vista(propio ? 'Mis recetas' : 'Recetas', propio ? 'Cada receta pasa por revisión. Solo las aprobadas cuentan en metas y reportes.' : null, filtroMes(mes, 'misRecetas'),
+    listaFiltrada(`recetas-${mes}`, filas, campos, (vs, activos) => { vistos = vs; return tabla(cols, vs, activos ? ['Ninguna receta con estos filtros', 'Cambia o limpia los filtros.'] : ['No hay recetas en este mes', 'Las recetas que se carguen aparecerán aquí.'], { porPagina: 25 }); }, resumen));
+};
+
+/** Recetas por revisar: las de promotoras y médicos. Aprobar o rechazar, una por una, desde la foto o todas. */
+V.revisarRecetas = async () => {
+  const { items } = await api('GET', '/api/recetas?estado=pendiente');
+  const sub = (x) => h('small', { style: 'display:block;color:var(--texto-2)' }, x);
+  const uni = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  const meds = (r) => r.items.map((i) => `${i.medicamento} ×${i.unidades}`).join(', ');
+  const filas = items.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || String(a.createdAt).localeCompare(String(b.createdAt)));
+  let vistos = filas; let cambios = false;
+  const SUG_R = [
+    { texto: 'El medicamento cargado no coincide con la prescripción.' }, { texto: 'Las unidades no coinciden con la prescripción.' },
+    { texto: 'La fecha de la receta no pertenece al mes.' }, { texto: 'El médico no coincide con la prescripción.' },
+    { texto: 'La foto no se ve clara. Vuelve a cargarla.' }, { texto: 'Receta repetida.' }, { texto: 'No incluye medicamentos de FERSUAZ.' },
+  ];
+  const SUG_A = [{ texto: 'Todo coincide con la prescripción.' }, { texto: 'Verificado: medicamentos, unidades y médico correctos.' }];
+  async function decidir(r, aprobar) {
+    const quien = `${r.cargadoPorNombre}${r.cargadoPorRol ? ` (${r.cargadoPorRol})` : ''}`;
+    const m = aprobar ? await confirmar('Aprobar receta', `¿Aprobar la receta del ${fecha(r.fecha)} cargada por ${quien}? Contará en metas y reportes.`, { okTexto: 'Sí, aprobar', pedirMotivo: true, etiquetaMotivo: 'Nota (opcional)', sugerencias: SUG_A })
+      : await confirmar('Rechazar receta', `¿Rechazar la receta del ${fecha(r.fecha)} cargada por ${quien}? Elige o escribe el motivo: lo verá.`, { okTexto: 'Sí, rechazar', pedirMotivo: true, sugerencias: SUG_R });
+    if (m == null || m === false) return null;
+    try { await api('POST', `/api/recetas/${r.id}/${aprobar ? 'aprobar' : 'rechazar'}`, { motivo: m }); cambios = true; return aprobar ? 'Aprobada' : 'Rechazada'; } catch (e) { alert(e.message); return null; }
+  }
+  const etiquetas = (r) => ({ titulo: 'Lo que cargó', lineas: r.items.map((i) => ({ texto: i.medicamento, extra: `${fmtN.format(i.unidades)} unidad(es)` })),
+    notas: [`Médico: ${r.medico}${r.especialidad ? `, ${r.especialidad}` : ''}`, `Fecha: ${fecha(r.fecha)}`, r.paciente ? `Paciente: ${r.paciente.nombre}` : 'Sin paciente', `Cargada por ${r.cargadoPorNombre}${r.cargadoPorRol ? ` (${r.cargadoPorRol})` : ''}`] });
+  const abrir = (r) => verAdjunto(r.adjunto.clave, vistos.filter((x) => x.adjunto).map((x) => ({ clave: x.adjunto.clave, nombre: `${x.cargadoPorNombre} · ${x.lugar ?? x.municipio}`, detalle: `${x.municipio}, ${x.provincia} · ${meds(x)}`,
+    etiquetas: () => etiquetas(x), acciones: [{ texto: 'Aprobar', clase: 'ok', accion: () => decidir(x, true) }, { texto: 'Rechazar', clase: 'no', accion: () => decidir(x, false) }] })), { onClose: () => { if (cambios) router(); } });
+  const sel = new Set();
+  const elegidos = () => vistos.filter((r) => sel.has(r.id));
+  const marcaTodos = h('input', { type: 'checkbox', 'aria-label': 'Seleccionar todas las recetas que se ven con los filtros' });
+  marcaTodos.addEventListener('change', () => { if (marcaTodos.checked) vistos.forEach((r) => sel.add(r.id)); else sel.clear(); document.querySelectorAll('input[data-sel-receta]').forEach((c) => { c.checked = sel.has(c.dataset.selReceta); c.closest('tr')?.classList.toggle('fila-sel', c.checked); }); pintarLote(); });
+  const loteCaja = h('div', { class: 'lote-barra' });
+  async function todos(aprobar) {
+    const rs = elegidos().length ? elegidos() : vistos; if (!rs.length) return;
+    const que = elegidos().length ? 'Son las que seleccionaste.' : 'Son todas las que se ven con los filtros de ahora.';
+    const m = aprobar ? await confirmar(`Aprobar ${fmtN.format(rs.length)} receta(s)`, `¿Seguro que quieres aprobar ${fmtN.format(rs.length)} receta(s)? ${que}`, { okTexto: `Sí, aprobar ${fmtN.format(rs.length)}`, pedirMotivo: true, etiquetaMotivo: 'Nota (opcional)', sugerencias: SUG_A })
+      : await confirmar(`Rechazar ${fmtN.format(rs.length)} receta(s)`, `¿Seguro que quieres rechazar ${fmtN.format(rs.length)} receta(s)? ${que} Elige o escribe el motivo.`, { okTexto: `Sí, rechazar ${fmtN.format(rs.length)}`, pedirMotivo: true, sugerencias: SUG_R });
+    if (m == null || m === false) return;
+    try { const out = await api('POST', '/api/recetas/decidir', { ids: rs.map((r) => r.id), aprobar, motivo: m }); aviso(out.errores.length ? `${fmtN.format(out.hechos)} listas; ${out.errores.length} no se pudieron: ${out.errores[0].error}` : `Listo: ${fmtN.format(out.hechos)} receta(s) ${aprobar ? 'aprobada(s)' : 'rechazada(s)'}.`, out.errores.length ? 'error' : 'ok'); } catch (e) { alert(e.message); }
+    router();
+  }
+  function pintarLote() {
+    const n = elegidos().length;
+    marcaTodos.checked = n > 0 && n === vistos.length; marcaTodos.indeterminate = n > 0 && n < vistos.length;
+    loteCaja.replaceChildren(...(vistos.length < 2 && !n ? [] : [
+      h('span', { class: 'lote-estado' }, n ? `${fmtN.format(n)} seleccionada(s)` : `Ninguna seleccionada. Los botones actúan sobre las ${fmtN.format(vistos.length)} que se ven.`),
+      h('div', { class: 'acciones', style: 'margin:0' },
+        h('button', { class: 'btn', type: 'button', onclick: () => todos(true) }, n ? `Aprobar seleccionadas (${fmtN.format(n)})` : `Aprobar todas (${fmtN.format(vistos.length)})`),
+        h('button', { class: 'btn-sec btn-peligro', type: 'button', onclick: () => todos(false) }, n ? `Rechazar seleccionadas (${fmtN.format(n)})` : `Rechazar todas (${fmtN.format(vistos.length)})`),
+        n ? h('button', { class: 'btn-enlace', type: 'button', onclick: () => { marcaTodos.checked = false; marcaTodos.indeterminate = false; marcaTodos.dispatchEvent(new Event('change')); } }, 'Quitar selección') : null),
+    ]));
+  }
+  const campos = [
+    { id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Medicamento, médico, quién la cargó…', valor: (r) => [meds(r), r.medico, r.cargadoPorNombre, r.paciente?.nombre, r.lugar].join(' ') },
+    { id: 'rol', etiqueta: 'Cargada por (tipo)', tipo: 'opciones', opciones: uni(items.map((r) => r.cargadoPorRol)), valor: (r) => r.cargadoPorRol },
+    { id: 'por', etiqueta: 'Cargada por', tipo: 'opciones', opciones: uni(items.map((r) => r.cargadoPorNombre)), valor: (r) => r.cargadoPorNombre },
+    { id: 'prov', etiqueta: 'Provincia', tipo: 'opciones', plural: 'provincias', opciones: uni(items.map((r) => r.provincia)), valor: (r) => r.provincia },
+    { id: 'mun', etiqueta: 'Municipio', tipo: 'opciones', plural: 'municipios', opciones: uni(items.map((r) => r.municipio)), valor: (r) => r.municipio },
+    { id: 'medico', etiqueta: 'Médico', tipo: 'opciones', plural: 'médicos', opciones: uni(items.map((r) => r.medico)), valor: (r) => r.medico },
+    { id: 'med', etiqueta: 'Medicamento', tipo: 'opciones', plural: 'medicamentos', opciones: uni(items.flatMap((r) => r.items.map((i) => i.medicamento))), valor: (r) => r.items.map((i) => i.medicamento) },
+    { id: 'desde', etiqueta: 'Desde', tipo: 'desde', valor: (r) => r.fecha }, { id: 'hasta', etiqueta: 'Hasta', tipo: 'hasta', valor: (r) => r.fecha },
+  ];
+  const cols = [
+    { t: marcaTodos, etiqueta: 'Seleccionar esta receta', clase: 'td-sel', v: (r) => { const c = h('input', { type: 'checkbox', 'data-sel-receta': r.id, 'aria-label': `Seleccionar receta del ${fecha(r.fecha)} de ${r.cargadoPorNombre}` }); c.checked = sel.has(r.id); c.addEventListener('change', () => { c.checked ? sel.add(r.id) : sel.delete(r.id); c.closest('tr')?.classList.toggle('fila-sel', c.checked); pintarLote(); }); return h('span', { class: 'celda-sel' }, c); } },
+    { t: 'Cargada por', v: (r) => [r.cargadoPorNombre, sub(r.cargadoPorRol)] },
+    { t: 'Foto', v: (r) => (r.adjunto ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => abrir(r) }, 'Ver foto') : 'Sin foto') },
+    { t: 'Fecha', v: (r) => fecha(r.fecha) },
+    { t: 'Médico', v: (r) => [r.medico, sub(r.especialidad)] },
+    { t: 'Lugar', v: (r) => [r.lugar ?? r.municipio, sub(`${r.municipio}, ${r.provincia}`)] },
+    { t: 'Medicamentos', v: (r) => meds(r) },
+    { t: '', clase: 'td-acciones', v: (r) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' }, h('button', { class: 'btn btn-peq', onclick: async () => { if (await decidir(r, true)) router(); } }, 'Aprobar'), h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await decidir(r, false)) router(); } }, 'Rechazar')) },
+  ];
+  return vista('Recetas por revisar', 'Todas las pendientes: de promotoras y de médicos. Solo las aprobadas cuentan en metas y reportes. En la foto puedes comparar lo cargado y aprobar o rechazar sin cerrarla.',
+    listaFiltrada('revisarRecetas', filas, campos, (vs, activos) => { vistos = vs; for (const id of [...sel]) if (!vs.some((r) => r.id === id)) sel.delete(id); pintarLote(); return h('div', {}, loteCaja, tabla(cols, vs, activos ? ['Ninguna receta pendiente con estos filtros', 'Cambia o limpia los filtros.'] : ['No hay recetas pendientes', 'Cuando una promotora o un médico cargue una, aparecerá aquí.'], { porPagina: 25 })); }));
+};
+
+/** Perfil del médico: especialidad y lugares de trabajo. */
+V.miPerfilMedico = async () => {
+  const p = await api('GET', '/api/medico/perfil');
+  const m = p.item;
+  if (!m) return vista('Mi perfil', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Tu ficha de médico no está lista'), 'Pide a la gerencia que revise tu cuenta.'));
+  return vista('Mi perfil', 'Tu nombre y especialidad van en cada receta que cargas.', h('div', { class: 'tarjeta' },
+    h('h2', {}, m.nombre), h('p', {}, m.especialidad),
+    h('h3', {}, 'Dónde trabajas'), h('ul', {}, ...(m.lugares ?? []).map((l) => h('li', {}, `${l.nombre}, ${l.municipio}, ${l.provincia}`))),
+    h('p', { class: 'hint' }, 'Para cambiar tus lugares de trabajo o tu especialidad, escribe a la gerencia.')));
 };
 const adjuntosCache = new Map();
 /** Descarga un adjunto con la sesión y lo deja listo para el visor (se guarda mientras la página esté abierta). */
@@ -3518,9 +3663,15 @@ async function inicioGestion(r) {
   ];
 }
 
+function inicioMedico(r) {
+  const n = (k) => fmtN.format(r.recetas?.[k] ?? 0);
+  return vista(`Hola, ${r.usuario.nombre.split(' ')[0]}`, r.ficha ? `${r.ficha.especialidad}. Tus recetas de este mes.` : 'Tus recetas de este mes.',
+    h('dl', { class: 'rejilla' }, kpi('Recetas cargadas', fmtN.format(r.total ?? 0), null, { destacada: true, enlace: '#misRecetas' }), kpi('Aprobadas', n('aprobada')), kpi('Por revisar', n('pendiente')), kpi('Rechazadas', n('rechazada'))),
+    h('div', { class: 'acciones' }, h('a', { class: 'btn', href: '#receta' }, 'Cargar recetas'), h('a', { class: 'btn-sec', href: '#misRecetas' }, 'Ver mis recetas')));
+}
 V.inicio = async () => {
   const r = await api('GET', `/api/inicio?mes=${mesDe()}`);
-  const partes = r.tipo === 'representante' ? await inicioRepresentante(r) : r.tipo === 'dependiente' ? await inicioDependiente(r) : r.tipo === 'gestion' ? await inicioGestion(r) : vista('Tu panel', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay módulos para tu rol todavía'), 'Pide a la gerencia que revise los permisos de tu cuenta.'));
+  const partes = r.tipo === 'medico' ? inicioMedico(r) : r.tipo === 'representante' ? await inicioRepresentante(r) : r.tipo === 'dependiente' ? await inicioDependiente(r) : r.tipo === 'gestion' ? await inicioGestion(r) : vista('Tu panel', null, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay módulos para tu rol todavía'), 'Pide a la gerencia que revise los permisos de tu cuenta.'));
   return [h('div', { class: 'inicio' }, partes)];
 };
 
@@ -3528,6 +3679,8 @@ V.inicio = async () => {
 let yo;
 // Íconos de trazo simple (24×24, esquinas redondeadas), dibujados para FERSUAZ.
 const ICONOS = {
+  revisarRecetas: '<path d="M7 3.5h10a.5.5 0 0 1 .5.5v16a.5.5 0 0 1-.5.5H7a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5Z"/><path d="M9.5 8h3a2 2 0 0 1 0 4h-3V8Zm0 4v4M12 12l3 4"/>',
+  miPerfilMedico: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/><path d="M12 14.5v3M10.5 16h3"/>',
   inicio: '<path d="M4 11.5 12 5l8 6.5"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/>',
   cronogramas: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4M16 3v4M4 10h16"/><path d="M8.5 14h2M13.5 14h2M8.5 17h2"/>',
   viaticos: '<rect x="3.5" y="6.5" width="17" height="11" rx="2.5"/><circle cx="12" cy="12" r="2.4"/><path d="M7 9.5v.01M17 14.5v.01"/>',
@@ -3566,6 +3719,7 @@ const icono = (id) => { const sp = h('span', { class: 'menu-icono', 'aria-hidden
  */
 function menuPara(u) {
   const G = ['administrador', 'gerencia', 'supervisor', 'finanzas'].includes(u.role);
+  if (u.role === 'medico') return [[null, [['inicio', 'Inicio'], ['receta', 'Cargar recetas'], ['misRecetas', 'Mis recetas'], ['miPerfilMedico', 'Mi perfil']]]];
   if (u.role === 'dependiente') return [[null, [['inicio', 'Inicio'], ['voucher', 'Cargar vouchers'], ['misVouchers', 'Mis vouchers'], ['comision', 'Mi comisión'], ['banco', 'Mi cuenta de banco']]], ['Tienda', [['pedidos', 'Mis pedidos']]]];
   if (u.role === 'representante') {
     const s = [];
@@ -3582,7 +3736,7 @@ function menuPara(u) {
   }
   if (!G) return [[null, [['inicio', 'Inicio']]]];
   return [
-    [null, [['inicio', 'Inicio'], ...(u.role !== 'finanzas' ? [['tareas', 'Tareas sugeridas']] : []), ['cronogramas', 'Cronogramas'], ['viaticos', 'Presupuestos'], ['revisar', 'Vouchers por revisar'], ['viatico', null]]],
+    [null, [['inicio', 'Inicio'], ...(u.role !== 'finanzas' ? [['tareas', 'Tareas sugeridas']] : []), ['cronogramas', 'Cronogramas'], ['viaticos', 'Presupuestos'], ['revisar', 'Vouchers por revisar'], ...(u.role !== 'finanzas' ? [['revisarRecetas', 'Recetas por revisar']] : []), ['viatico', null]]],
     ['Territorio', [...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : []), ['establecimientos', 'Establecimientos'], ['hoteles', 'Hoteles'], ['catalogo', 'Catálogo'], ['metas', 'Metas']]],
     ['Ventas y recetas', [['territorio', 'Movimiento por territorio'], ['comisiones', 'Comisiones'], ['reportes', 'Reporte de recetas'], ['misRecetas', 'Recetas'], ['alertas', 'Alertas'], ['inventario', 'Inventario']]],
     ['Viáticos', [['perfiles', 'Perfiles de viático'], ['precios', 'Precios de combustible']]],

@@ -78,7 +78,9 @@ test('vouchers y recetas por foto: sin número, sin fotos repetidas; promotora c
     const r2 = await call('POST', '/api/recetas', receta, tok.pro);
     assert.equal(r2.status, 409); assert.match(r2.body.error, /^Ya cargaste esta foto el .*\(receta con fecha/);
 
-    // Reporte por territorio
+    // Reporte por territorio (solo recetas aprobadas)
+    assert.equal((await call('GET', '/api/reportes/territorio?mes=2026-11', null, tok.ger)).body.filas[0]?.recetadas ?? 0, 0, 'pendiente: aún no cuenta');
+    assert.equal((await call('POST', `/api/recetas/${r1.body.receta.id}/aprobar`, { motivo: 'Todo coincide' }, tok.ger)).status, 200);
     assert.equal((await call('GET', '/api/reportes/territorio?mes=2026-11', null, tok.pro)).status, 403);
     const rpt = (await call('GET', '/api/reportes/territorio?mes=2026-11', null, tok.ger)).body;
     assert.equal(rpt.filas.length, 1);

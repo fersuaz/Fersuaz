@@ -68,6 +68,7 @@
             <div class="role-pick" id="roles">
               <label><input type="radio" name="role" value="representante" required><span>Representante</span><small>Visitador, PVC, vendedor o promotora</small></label>
               <label><input type="radio" name="role" value="dependiente"><span>Dependiente</span><small>Trabajo en una farmacia</small></label>
+              <label><input type="radio" name="role" value="medico"><span>Médico</span><small>Cargo mis recetas</small></label>
               <label><input type="radio" name="role" value="supervisor"><span>Supervisor</span><small>Superviso representantes</small></label>
               <label><input type="radio" name="role" value="gerencia"><span>Gerencia</span><small>Dirección comercial</small></label>
               <label><input type="radio" name="role" value="finanzas"><span>Finanzas</span><small>Desembolsos y liquidaciones</small></label>
@@ -128,6 +129,45 @@
               <p class="hint">La gerencia revisará tu solicitud y la agregará al catálogo.</p>
             </div>
           </fieldset>
+          <fieldset class="farmacia-buscar medico-reg" data-for="medico" hidden>
+            <legend>Tu especialidad y dónde trabajas</legend>
+            <div class="field">
+              <label for="med-especialidad">Especialidad</label>
+              <select id="med-especialidad" aria-describedby="especialidad-error"><option value="">Elige tu especialidad</option></select>
+              <p class="error" id="especialidad-error"></p>
+            </div>
+            <p class="hint">Si trabajas en varios lugares, elige todas las provincias y municipios, y marca cada clínica u hospital.</p>
+            <div class="row2">
+              <div class="field">
+                <span class="etq">Provincias</span>
+                <div id="med-provincias" class="lista-marcas" role="group" aria-label="Provincias donde trabajas"></div>
+              </div>
+              <div class="field">
+                <span class="etq">Municipios</span>
+                <div id="med-municipios" class="lista-marcas" role="group" aria-label="Municipios donde trabajas"><p class="hint">Elige primero la provincia.</p></div>
+              </div>
+            </div>
+            <div class="field">
+              <label for="med-buscar">Buscar clínica u hospital</label>
+              <input id="med-buscar" type="search" autocomplete="off" placeholder="Escribe parte del nombre" disabled>
+            </div>
+            <div id="med-resultados" class="farmacia-resultados" role="group" aria-label="Clínicas y hospitales encontrados"></div>
+            <div id="med-elegidos" class="chips-elegidos" aria-live="polite"></div>
+            <p class="error" id="lugares-error"></p>
+            <label class="check"><input type="checkbox" id="med-no-esta"> <span>No encuentro un lugar donde trabajo</span></label>
+            <div id="med-manual" class="med-manual" hidden>
+              <div class="row2">
+                <div class="field"><label for="med-m-nombre">Nombre del lugar</label><input id="med-m-nombre" type="text" autocomplete="off"></div>
+                <div class="field"><label for="med-m-tipo">Tipo</label><select id="med-m-tipo"><option value="clinica">Clínica</option><option value="hospital">Hospital</option><option value="consultorio">Consultorio</option><option value="diagnostico">Centro diagnóstico</option></select></div>
+              </div>
+              <div class="row2">
+                <div class="field"><label for="med-m-prov">Provincia</label><select id="med-m-prov"></select></div>
+                <div class="field"><label for="med-m-mun">Municipio</label><select id="med-m-mun"></select></div>
+              </div>
+              <button type="button" class="btn-sec" id="med-m-agregar">Agregar este lugar</button>
+              <p class="hint">Lo agregamos a la lista y la gerencia lo revisa.</p>
+            </div>
+          </fieldset>
           <div class="field">
             <label for="password">Contraseña</label>
             <div class="clave">
@@ -176,6 +216,7 @@
         <ul>
           <li><a href="registro.html?rol=representante">Representantes</a></li>
           <li><a href="registro.html?rol=dependiente">Dependientes de farmacia</a></li>
+          <li><a href="registro.html?rol=medico">Médicos</a></li>
           <li><a href="registro.html?rol=supervisor">Supervisores</a></li>
           <li><a href="registro.html?rol=gerencia">Gerencia y finanzas</a></li>
         </ul>
