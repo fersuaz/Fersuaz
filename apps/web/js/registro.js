@@ -70,9 +70,32 @@ let lugaresZona = []; let mListo = false;
 const TIPO_TXT = { hospital: 'Hospital', clinica: 'Clínica', consultorio: 'Consultorio', diagnostico: 'Centro diagnóstico', cpn: 'Primer nivel', unap: 'UNAP' };
 const nodo = (tag, props = {}, ...hijos) => { const e = Object.assign(document.createElement(tag), props); e.append(...hijos.filter((x) => x != null)); return e; };
 const marca = (valor, texto, marcado, alCambiar) => { const c = nodo('input', { type: 'checkbox', value: valor, checked: marcado }); c.addEventListener('change', () => alCambiar(c.checked)); return nodo('label', { className: 'marca' }, c, nodo('span', { textContent: texto })); };
+// Caja moderna para las listas de marcar: buscador arriba y cuántas van elegidas junto al título
+function cajaMarcas(lista, nombre, singular, plural) {
+  if (!lista || lista.closest('.marcas-caja')) return () => {};
+  const caja = nodo('div', { className: 'marcas-caja' });
+  const filtro = nodo('input', { type: 'search', className: 'marcas-filtro', placeholder: `Buscar ${nombre}`, autocomplete: 'off' });
+  filtro.setAttribute('aria-label', `Buscar ${nombre}`);
+  const vacio = nodo('p', { className: 'marcas-vacio', hidden: true, textContent: 'Sin coincidencias.' });
+  lista.before(caja); caja.append(filtro, lista, vacio);
+  const etq = caja.parentElement.querySelector('.etq'); const cuenta = nodo('span', { className: 'cuenta' }); etq?.append(cuenta);
+  const aplicar = () => {
+    const k = sinT(filtro.value.trim()); let vistos = 0;
+    lista.querySelectorAll('.marca').forEach((m) => { const ve = !k || sinT(m.textContent).includes(k); m.hidden = !ve; if (ve) vistos++; });
+    lista.querySelectorAll('.grupo').forEach((g) => { let n = g.nextElementSibling, alguno = false; while (n && !n.classList.contains('grupo')) { if (!n.hidden) alguno = true; n = n.nextElementSibling; } g.hidden = !alguno; });
+    vacio.hidden = !k || vistos > 0;
+    const n = lista.querySelectorAll('.marca input:checked').length;
+    cuenta.textContent = n ? `${n} ${n === 1 ? singular : plural}` : '';
+    filtro.hidden = !lista.querySelector('.marca');
+  };
+  filtro.addEventListener('input', aplicar); lista.addEventListener('change', aplicar);
+  new MutationObserver(aplicar).observe(lista, { childList: true });
+  aplicar(); return aplicar;
+}
 async function prepararMedico() {
   if (mListo || form.role.value !== 'medico' || !division) return; mListo = true;
   try { const r = await (await fetch(`${baseApi()}/api/publico/especialidades`)).json(); mEsp.append(...r.items.map((x) => opcion(x, x))); } catch { /* sin conexión */ }
+  cajaMarcas(mProv, 'provincia', 'elegida', 'elegidas'); cajaMarcas(mMun, 'municipio', 'elegido', 'elegidos');
   mProv.replaceChildren(...division.provincias.map((p) => marca(p, p, false, (si) => { si ? provs.add(p) : provs.delete(p); pintarMunicipios(); cargarLugares(); })));
 }
 function pintarMunicipios() {

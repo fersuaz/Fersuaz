@@ -101,12 +101,31 @@
 @media (max-width: 520px) { .farmacia-buscar { padding: 1rem 1rem 1.1rem; } }
 /* Registro de médico: varias provincias, municipios y lugares */
 .medico-reg .etq { display: block; font-weight: 600; color: var(--marino); margin-bottom: .35rem; }
-.lista-marcas { max-height: 220px; overflow: auto; border: 1.5px solid var(--linea); border-radius: 12px; padding: .4rem; background: #fff; display: grid; gap: .1rem; }
-.lista-marcas .grupo { font-size: .8rem; color: var(--texto-2); padding: .45rem .4rem .15rem; font-weight: 600; }
-.marca { display: flex; gap: .55rem; align-items: center; padding: .45rem .5rem; border-radius: 8px; cursor: pointer; }
-.marca:hover { background: rgba(48, 133, 172, .08); }
-.marca input { width: 1.1rem; height: 1.1rem; accent-color: var(--marino); flex: none; }
-.marca:has(input:focus-visible) { outline: 3px solid var(--celeste); outline-offset: 1px; }
+.medico-reg .etq { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.etq .cuenta { font-family: Figtree, sans-serif; font-size: .8rem; font-weight: 600; color: var(--celeste-texto); }
+.marcas-caja { border: 1.5px solid var(--linea); border-radius: 14px; background: #fff; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
+.marcas-caja:focus-within { border-color: var(--celeste); box-shadow: 0 0 0 4px rgba(48,133,172,.14); }
+.acceso .field .marcas-filtro { min-height: 42px; width: 100%; border: 0; border-bottom: 1px solid var(--linea); border-radius: 0; padding: 0 .9rem 0 2.2rem; font-size: .92rem; background: #F5F8FB url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%2352677A' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='5'/%3E%3Cpath d='m11 11 3.5 3.5'/%3E%3C/svg%3E") no-repeat .8rem center; box-shadow: none; }
+.acceso .field .marcas-filtro:focus { box-shadow: none; background-color: #fff; }
+.lista-marcas { max-height: 232px; overflow-y: auto; padding: .35rem; display: grid; gap: 2px; align-content: start; scrollbar-width: thin; scrollbar-color: var(--linea) transparent; overscroll-behavior: contain; }
+.lista-marcas::-webkit-scrollbar { width: 8px; }
+.lista-marcas::-webkit-scrollbar-thumb { background: var(--linea); border-radius: 99px; border: 2px solid #fff; }
+.lista-marcas > .hint { margin: 0; padding: .9rem .6rem; color: var(--texto-2); font-size: .9rem; }
+.lista-marcas .grupo { position: sticky; top: -.35rem; z-index: 1; background: #fff; font-family: Poppins, sans-serif; font-size: .78rem; font-weight: 600; color: var(--celeste-texto); letter-spacing: .01em; padding: .55rem .6rem .3rem; margin-top: .15rem; border-bottom: 1px solid var(--panel); }
+.lista-marcas .grupo:first-child { margin-top: 0; }
+.marca { display: flex; gap: .65rem; align-items: center; min-height: 40px; padding: .4rem .6rem; border-radius: 9px; cursor: pointer; line-height: 1.3; transition: background-color .15s; }
+.marca:hover { background: #F5F8FB; }
+.marca:has(input:checked) { background: var(--panel); color: var(--marino); }
+.marca:has(input:focus-visible) { outline: 2px solid var(--celeste-texto); outline-offset: -2px; }
+.marca[hidden] { display: none; }
+.acceso .field .marca input[type="checkbox"], .field .marca input[type="checkbox"] { appearance: none; -webkit-appearance: none; flex: none; width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; border: 1.5px solid #9AAEC0; border-radius: 5px; background: #fff; box-shadow: none; display: grid; place-content: center; cursor: pointer; transition: background-color .15s, border-color .15s; }
+.acceso .field .marca input[type="checkbox"]::after, .field .marca input[type="checkbox"]::after { content: ""; width: 10px; height: 6px; border: solid #fff; border-width: 0 0 2px 2px; transform: rotate(-45deg) translate(1px, -1px); opacity: 0; }
+.acceso .field .marca input[type="checkbox"]:checked, .field .marca input[type="checkbox"]:checked { background: var(--marino); border-color: var(--marino); }
+.acceso .field .marca input[type="checkbox"]:checked::after, .field .marca input[type="checkbox"]:checked::after { opacity: 1; }
+.lista-marcas .marca { font-weight: 400; color: var(--tinta); font-size: .94rem; }
+.lista-marcas .marca:has(input:checked) { color: var(--marino); font-weight: 600; }
+.marcas-vacio { padding: .8rem .6rem; color: var(--texto-2); font-size: .9rem; }
+@media (prefers-reduced-motion: reduce) { .marcas-caja, .marca, .marca input { transition: none; } }
 #med-resultados { max-height: 300px; overflow: auto; border: 1.5px solid var(--linea); border-radius: 12px; padding: .4rem; background: #fff; }
 #med-resultados:empty { display: none; }
 .chips-elegidos { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .5rem 0; }
@@ -114,8 +133,6 @@
 .chip-quitar:focus-visible { outline: 3px solid var(--celeste); outline-offset: 2px; }
 .med-manual { display: grid; gap: .6rem; padding: .8rem; border: 1.5px dashed var(--linea); border-radius: 12px; margin-top: .5rem; }
 .med-manual[hidden] { display: none; }
-.field .lista-marcas .marca input { width: 1.1rem; height: 1.1rem; padding: 0; border-radius: 4px; flex: none; }
-.lista-marcas .marca { font-weight: 500; color: var(--tinta); }
 #med-m-agregar { justify-self: start; font: inherit; font-weight: 600; color: var(--marino); background: #fff; border: 1.5px solid var(--marino); border-radius: 999px; padding: .6rem 1.2rem; cursor: pointer; }
 #med-m-agregar:focus-visible { outline: 3px solid var(--celeste); outline-offset: 2px; }
 /* Registro por pasos */
