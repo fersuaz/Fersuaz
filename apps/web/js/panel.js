@@ -1794,11 +1794,12 @@ function detalleCalculo(c, partes = false) {
     s.reembolsoPorKm ? `Combustible: reembolso de ${RD(s.reembolsoPorKm)} por km recorrido.` : `Combustible: ${fmtN.format(s.km)} km ÷ ${fmtN.format(s.rendimiento ?? 0)} km por galón = ${fmtN.format(s.galones)} galones${comb ? ` de ${comb}` : ''}${precios ? `, a ${precios}` : ''}.`,
     s.comidaFuera != null && s.comidaFuera !== s.comidaDentro
       ? `Comida: ${s.diasComidaDentro} día(s) dentro de su zona × ${RD(s.comidaDentro)} y ${s.diasComidaFuera} día(s) fuera × ${RD(s.comidaFuera)}${s.comidaFuente === 'posicion' ? ` (montos de la posición ${s.posicion})` : s.comidaFuente === 'global' ? ' (monto global)' : ''}.`
-      : `Comida: ${s.diasAlimentacion} día(s) de trabajo × ${RD(s.tarifaAlimentacion)} por día.`,
+      : `Comida: ${s.diasAlimentacion} día(s) de trabajo × ${RD(s.tarifaAlimentacion)} por día${s.comidaDesglose ? ` (desayuno ${RD(s.comidaDesglose.desayuno)} + almuerzo ${RD(s.comidaDesglose.almuerzo)} + cena ${RD(s.comidaDesglose.cena)})` : ''}.`,
   ];
   const FUENTE_NOCHE = { hotel: 'hotel elegido', verificado: 'hotel verificado', 'referencia-provincia': 'referencia de la provincia', 'referencia-global': 'referencia general' };
   const plan = (s.porDia ?? []).filter((d) => d.noche);
   const deJornada = (s.hospedajes ?? 0) - plan.length;
+  if (s.desayunos?.noches) como.push(`Desayuno incluido en el hotel: ${s.desayunos.noches} noche(s), se rebajan ${RD(s.desayunos.descuento)} de la comida (${s.desayunos.porDia.map((d) => `${fecha(d.fecha)}${d.hotel ? ` en ${d.hotel}` : ''}: ${RD(d.descuento)}`).join('; ')}). Comida sin descuento: ${RD(s.comidaBruta)}.`);
   if (plan.length) como.push(`Hotel planificado: ${plan.length} noche(s) fuera del cronograma, ${RD(plan.reduce((x, d) => x + d.noche.precio, 0))}. ${plan.map((d) => `${fecha(d.fecha)} en ${d.noche.municipio ?? ''}: ${RD(d.noche.precio)}${d.noche.hotel ? ` (${d.noche.hotel})` : ''}, ${FUENTE_NOCHE[d.noche.fuente]}`).join('; ')}. Cuando crea la jornada de ese día, cuenta el hotel real.`);
   if (deJornada > 0) como.push(`Hotel en jornadas: ${deJornada} noche(s); solo cuentan las autorizadas por la gerencia.`);
   if (!plan.length && deJornada <= 0) como.push('Hotel: no aplica este mes. Se agrega cuando un día del cronograma está marcado "duerme fuera" o cuando una jornada necesita dormir fuera y la gerencia lo autoriza.');
@@ -2905,13 +2906,14 @@ V.hoteles = async () => {
     const cajas = reqs.map((r) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: `req-${r.value}`, checked: x.requisitos?.[r.value] === true }), h('span', {}, r.label)));
     const notas = h('textarea', { id: 'h-notas', rows: 2 }, x.notas ?? '');
     const inactivo = h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'h-inactivo', checked: x.estado === 'inactivo' }), h('span', {}, 'No usar este hotel'));
+    const des = camposDesayuno(x);
     $('#dialogo-cuerpo').replaceChildren(h('p', { class: 'hint' }, `${x.municipio}, ${x.provincia}${x.telefono ? `. Teléfono ${x.telefono}` : ''}. Confirma el precio y marca solo lo que hayas verificado por llamada o visita.`),
-      h('label', { for: 'h-precio', class: 'hint' }, 'Precio por noche RD$'), precio, h('div', { class: 'dialogo-checks' }, cajas), h('label', { for: 'h-notas', class: 'hint' }, 'Notas'), notas, inactivo);
+      h('label', { for: 'h-precio', class: 'hint' }, 'Precio por noche RD$'), precio, des.nodo, h('div', { class: 'dialogo-checks' }, cajas), h('label', { for: 'h-notas', class: 'hint' }, 'Notas'), notas, inactivo);
     $('#dialogo-ok').textContent = 'Guardar'; d.showModal();
     const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
     if (!ok) return;
     const requisitos = Object.fromEntries(reqs.map((r) => [r.value, d.querySelector(`input[name="req-${r.value}"]`).checked]));
-    try { await api('POST', `/api/hoteles/${x.id}`, { precioNoche: precio.value || null, requisitos, notas: notas.value, estado: d.querySelector('input[name=h-inactivo]').checked ? 'inactivo' : 'activo' }); } catch (e) { alert(e.message); }
+    try { await api('POST', `/api/hoteles/${x.id}`, { precioNoche: precio.value || null, requisitos, notas: notas.value, ...des.leer(), estado: d.querySelector('input[name=h-inactivo]').checked ? 'inactivo' : 'activo' }); } catch (e) { alert(e.message); }
     router();
   };
   const bloques = [];
@@ -2922,7 +2924,7 @@ V.hoteles = async () => {
       { t: 'Hotel', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, [x.direccion, x.telefono].filter(Boolean).join('. '))] },
       { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` },
       { t: 'Calificación', num: true, v: (x) => x.calificacion != null ? `${fmtN.format(x.calificacion)} de 5` : '' },
-      { t: 'Por noche', num: true, v: (x) => x.precioNoche ? RD(x.precioNoche) : 'Sin confirmar' },
+      { t: 'Por noche', num: true, v: (x) => [x.precioNoche ? RD(x.precioNoche) : 'Sin confirmar', x.desayunoIncluido ? h('small', { style: 'display:block;color:var(--celeste-texto)' }, x.valorDesayuno ? `Con desayuno (${RD(x.valorDesayuno)})` : 'Con desayuno') : null] },
       { t: 'Requisitos', v: (x) => x.estado === 'inactivo' ? h('span', { class: 'chip anulado' }, 'No usar') : x.cumple ? h('span', { class: 'chip validado' }, 'Cumple todo') : h('span', { class: 'chip pendiente', title: x.faltan.map((k) => reqs.find((r) => r.value === k)?.label).join(', ') }, `Faltan ${x.faltan.length}`) },
       { t: '', v: (x) => ES_GER() ? h('button', { class: 'btn-sec btn-peq', onclick: () => editar(x) }, x.precioNoche ? 'Editar' : 'Confirmar') : '' },
     ], items, ['No hay hoteles con estos filtros', ES_GER() ? 'Tráelos de Google Maps en "Registro automático".' : 'La administración los registra y verifica.'], { exportar: { nombre: 'hoteles-fersuaz', titulo: 'Hoteles' } })));
@@ -3568,10 +3570,12 @@ async function pasoRep(paso, ctx) {
   if (paso === 'vehiculo') {
     const base = nuevo ? B.perfil ?? null : pf;
     const veh = formularioVehiculo(base, combs, globales, nuevo ? B.posicion : r.position);
+    const comida = camposComida(base);
     const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Vehículo, comida y tope'),
       veh.el,
-      h('h3', { class: 'subtitulo-form' }, 'Comida y tope'),
-      h('div', { class: 'form-fila' }, h('div', { class: 'solo-vehiculo' }, campo('tarifaAlimentacion', 'Comida por día RD$', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal', value: base?.tarifaAlimentacion ?? '' }, '(vacío = monto de su posición)')),
+      h('h3', { class: 'subtitulo-form' }, 'Comida por día'), comida.nodo,
+      h('h3', { class: 'subtitulo-form' }, 'Reembolso y tope'),
+      h('div', { class: 'form-fila' },
         h('div', { class: 'solo-vehiculo' }, campo('reembolsoPorKm', 'Reembolso por km RD$', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal', value: base?.reembolsoPorKm ?? '' }, '(solo vehículo propio; reemplaza al combustible)')),
         campo('topeCombustible', 'Tope mensual de combustible o transporte RD$', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal', value: base?.topeCombustible ?? '' }, '(vacío = tope global)')));
     const sincronizar = () => f.querySelectorAll('.solo-vehiculo').forEach((x) => { x.hidden = !veh.tiene(); });
@@ -3579,7 +3583,8 @@ async function pasoRep(paso, ctx) {
     const nav = navPasosRep('vehiculo', ir, { siguiente: 'submit', textoSiguiente: nuevo ? 'Crear representante y seguir' : 'Guardar y seguir' }); f.append(nav.nodo);
     f.addEventListener('submit', async (e) => {
       e.preventDefault(); const g = (k) => f.elements[k].value;
-      const extra = { tarifaAlimentacion: veh.tiene() ? g('tarifaAlimentacion') : '', reembolsoPorKm: veh.tiene() ? g('reembolsoPorKm') : '', topeCombustible: g('topeCombustible') };
+      const cm = comida.leer();
+      const extra = { tarifaAlimentacion: veh.tiene() && !cm.comidaDesglose ? cm.tarifaAlimentacion : '', comidaDesglose: cm.comidaDesglose, reembolsoPorKm: veh.tiene() ? g('reembolsoPorKm') : '', topeCombustible: g('topeCombustible') };
       if (nuevo) {
         const body = { nombre: B.nombre, apellido: B.apellido, posicion: B.posicion, telefono: B.telefono, correo: B.correo, residencia: B.residencia, ...B.zona, ...veh.valores(f), ...extra };
         let x = null; const txt = nav.boton.textContent; nav.boton.disabled = true; nav.boton.textContent = 'Creando…';
@@ -3715,7 +3720,7 @@ async function pasoRep(paso, ctx) {
           try { await api('POST', `/api/hoteles/${x.id}`, { precioNoche: i.value || null }); x.precioNoche = i.value ? Number(i.value) : null; ok.textContent = 'Guardado'; setTimeout(() => { ok.textContent = ''; }, 2500); }
           catch (e) { ok.textContent = ''; alert(e.message); i.value = x.precioNoche ?? ''; }
         });
-        return h('div', { class: 'precio-caja' }, h('span', { 'aria-hidden': 'true' }, 'RD$'), i, ok);
+        return h('div', { class: 'precio-caja' }, h('span', { 'aria-hidden': 'true' }, 'RD$'), i, ok, x.desayunoIncluido ? h('small', { class: 'precio-desayuno' }, x.valorDesayuno ? `Con desayuno (${RD(x.valorDesayuno)})` : 'Con desayuno') : null);
       };
       const estadoReq = (x) => x.cumple ? h('span', { class: 'chip validado' }, 'Cumple todo') : h('span', { class: 'chip pendiente', title: (x.faltan ?? []).map((k) => reqs.find((q) => q.value === k)?.label ?? k).join(', ') }, `Faltan ${fmtN.format(x.faltan?.length ?? reqs.length)} requisito(s)`);
       const cols = [
@@ -3806,7 +3811,7 @@ async function pasoRep(paso, ctx) {
       fila('Nombre', r.fullName), fila('Posición', r.position), fila('Teléfono', r.phone), fila('Correo', r.email),
       fila('Vive en', pf?.residencia ? `${pf.residencia.municipio}, ${pf.residencia.provincia}` : ''),
       fila('Vehículo', vehTxt), pub ? null : fila('Rendimiento', rend), pub ? null : fila('Combustible', COMB_NOMBRE[v.combustible] ?? ''),
-      fila('Comida por día', pub ? 'Por zona (dentro o fuera)' : pf?.tarifaAlimentacion ? RD(pf.tarifaAlimentacion) : 'Monto de su posición'),
+      fila('Comida por día', pf?.comidaDesglose ? `${RD(pf.tarifaAlimentacion)} (desayuno ${RD(pf.comidaDesglose.desayuno)}, almuerzo ${RD(pf.comidaDesglose.almuerzo)}, cena ${RD(pf.comidaDesglose.cena)})` : pub ? 'Por zona (dentro o fuera)' : pf?.tarifaAlimentacion ? RD(pf.tarifaAlimentacion) : 'Monto de su posición'),
       fila('Tope mensual', pf?.topeCombustible ? RD(pf.topeCombustible) : 'Tope global'))),
     h('div', { class: 'tarjeta' }, h('h2', {}, 'Territorio y ruta'), h('dl', { class: 'asis-ficha' },
       fila('Zona', zonaTxt), fila('Farmacias', fmtN.format(lz.farmacias.length)), fila('Centros de salud', fmtN.format(lz.establecimientos.length)),
@@ -3912,24 +3917,66 @@ function listaMarcable({ clave, filas, campos, cols, verbo, accion, porPagina = 
   }));
   return caja;
 }
+/**
+ * Comida por día: un solo monto, o desayuno + almuerzo + cena (la suma es la comida del día). Con el desglose,
+ * cuando el hotel incluye desayuno se rebaja exactamente su desayuno.
+ */
+function camposComida(base) {
+  const d = base?.comidaDesglose ?? null;
+  const modo = (v, t, det) => h('label', { class: 'opcion-tarjeta' }, h('input', { type: 'radio', name: 'comidaModo', value: v, checked: (v === 'desglose') === !!d }), h('span', {}, h('strong', {}, t), h('small', {}, det)));
+  const eleccion = h('div', { class: 'opciones-tarjeta', role: 'radiogroup', 'aria-label': 'Cómo se fija la comida' },
+    modo('monto', 'Un monto por día', 'Vehículo: vacío = monto de su posición. Sin vehículo: los montos de comida dentro y fuera de arriba.'),
+    modo('desglose', 'Desayuno, almuerzo y cena', 'La comida del día es la suma. Si el hotel incluye desayuno, se le rebaja el desayuno.'));
+  const monto = h('div', { class: 'solo-vehiculo' }, campo('tarifaAlimentacion', 'Comida por día RD$', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal', value: d ? '' : base?.tarifaAlimentacion ?? '' }, '(vacío = monto de su posición)'));
+  const total = h('p', { class: 'comida-total', 'aria-live': 'polite' });
+  const k3 = [['desayuno', 'Desayuno'], ['almuerzo', 'Almuerzo'], ['cena', 'Cena']];
+  const filas = h('div', { class: 'form-fila comida-desglose' }, k3.map(([k, l]) => campo(`comidaDesglose.${k}`, `${l} RD$`, { type: 'number', min: 0, step: 0.01, inputmode: 'decimal', value: d?.[k] ?? '' })));
+  const desglose = h('div', {}, filas, total);
+  const caja = h('div', { class: 'comida-caja' }, eleccion, monto, desglose);
+  const v = (k) => caja.querySelector(`[name="comidaDesglose.${k}"]`).value;
+  const sumar = () => { const t = k3.reduce((x, [k]) => x + (Number(v(k)) || 0), 0); total.textContent = t ? `Comida por día: ${RD(t)}` : 'Escribe al menos un monto.'; };
+  const pintar = () => { const des = caja.querySelector('[name=comidaModo]:checked').value === 'desglose'; desglose.hidden = !des; monto.classList.toggle('oculto-modo', des); if (des) sumar(); };
+  caja.addEventListener('change', pintar); caja.addEventListener('input', sumar); pintar();
+  return { nodo: caja, leer: () => {
+    const des = caja.querySelector('[name=comidaModo]:checked').value === 'desglose';
+    return des ? { comidaDesglose: Object.fromEntries(k3.map(([k]) => [k, v(k)])), tarifaAlimentacion: '' } : { comidaDesglose: null, tarifaAlimentacion: caja.querySelector('[name=tarifaAlimentacion]').value };
+  } };
+}
+/** Desayuno incluido en el hotel y su valor (se rebaja de la comida del día de esa noche). */
+function camposDesayuno(x) {
+  const valor0 = Number(x.valorDesayuno) || null;
+  const si = h('input', { type: 'checkbox', id: 'h-desayuno', checked: x.desayunoIncluido === true });
+  const op = (v, t) => h('label', { class: 'check' }, h('input', { type: 'radio', name: 'h-desayuno-valor', value: v, checked: v === 'otro' ? valor0 != null && ![300, 500].includes(valor0) : v === 'rep' ? x.desayunoIncluido === true && valor0 == null : valor0 === Number(v) }), h('span', {}, t));
+  const otro = h('input', { type: 'number', id: 'h-desayuno-otro', min: 1, step: 0.01, inputmode: 'decimal', placeholder: 'RD$', 'aria-label': 'Otro valor del desayuno en RD$', value: valor0 != null && ![300, 500].includes(valor0) ? valor0 : '' });
+  const opciones = h('div', { class: 'desayuno-opciones', role: 'radiogroup', 'aria-label': 'Cuánto se rebaja' }, op('rep', 'El desayuno del representante'), op('300', 'RD$300'), op('500', 'RD$500'), h('span', { class: 'desayuno-otro' }, op('otro', 'Otro:'), otro));
+  const caja = h('div', { class: 'desayuno-caja' }, h('label', { class: 'check desayuno-si' }, si, h('span', {}, h('strong', {}, 'Incluye desayuno'), h('small', {}, 'Se rebaja de la comida del día de esa noche fuera. Si el representante tiene desayuno en su comida (desayuno, almuerzo y cena), se rebaja ese; si no, el valor que elijas aquí.'))), opciones);
+  const pintar = () => { opciones.hidden = !si.checked; if (si.checked && !opciones.querySelector('input:checked')) opciones.querySelector('input[value="rep"]').checked = true; };
+  si.addEventListener('change', pintar); otro.addEventListener('focus', () => { opciones.querySelector('input[value="otro"]').checked = true; }); pintar();
+  return { nodo: caja, leer: () => {
+    if (!si.checked) return { desayunoIncluido: false };
+    const v = opciones.querySelector('input:checked')?.value;
+    return { desayunoIncluido: true, valorDesayuno: v === 'otro' ? otro.value : v === 'rep' ? null : v };
+  } };
+}
 /** Editar un hotel: nombre, teléfono, dirección, precio por noche, requisitos y notas. Devuelve true si se guardó. */
 async function editarHotel(x, reqs) {
   const d = $('#dialogo'); $('#dialogo-titulo').textContent = `Editar ${x.nombre}`;
   const inp = (id, label, props) => [h('label', { for: id, class: 'hint' }, label), h('input', { id, ...props })];
   const cajas = reqs.map((q) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: `req-${q.value}`, checked: x.requisitos?.[q.value] === true }), h('span', {}, q.label)));
   const notas = h('textarea', { id: 'eh-notas', rows: 2 }, x.notas ?? '');
+  const des = camposDesayuno(x);
   const err = h('p', { class: 'error', role: 'alert' });
   $('#dialogo-cuerpo').replaceChildren(h('p', { class: 'hint' }, `${x.municipio}, ${x.provincia}. Marca solo lo que hayas verificado por llamada o visita.`),
     ...inp('eh-nombre', 'Nombre', { value: x.nombre, maxlength: 160 }), ...inp('eh-tel', 'Teléfono', { value: x.telefono ?? '', inputmode: 'tel' }),
     ...inp('eh-dir', 'Dirección', { value: x.direccion ?? '', maxlength: 200 }), ...inp('eh-precio', 'Precio por noche RD$', { type: 'number', min: 1, step: 0.01, inputmode: 'decimal', value: x.precioNoche ?? '' }),
-    h('div', { class: 'dialogo-checks' }, cajas), h('label', { for: 'eh-notas', class: 'hint' }, 'Notas'), notas, err);
+    des.nodo, h('div', { class: 'dialogo-checks' }, cajas), h('label', { for: 'eh-notas', class: 'hint' }, 'Notas'), notas, err);
   $('#dialogo-ok').textContent = 'Guardar'; d.showModal();
   for (;;) {
     const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
     if (!ok) return false;
     const v = (id) => d.querySelector(`#${id}`).value;
     try {
-      await api('POST', `/api/hoteles/${x.id}`, { nombre: v('eh-nombre'), telefono: v('eh-tel'), direccion: v('eh-dir'), precioNoche: v('eh-precio') || null, notas: notas.value,
+      await api('POST', `/api/hoteles/${x.id}`, { nombre: v('eh-nombre'), telefono: v('eh-tel'), direccion: v('eh-dir'), precioNoche: v('eh-precio') || null, notas: notas.value, ...des.leer(),
         requisitos: Object.fromEntries(reqs.map((q) => [q.value, d.querySelector(`input[name="req-${q.value}"]`).checked])) });
       aviso('Hotel actualizado.', 'ok'); return true;
     } catch (e) { err.textContent = e.fields ? Object.values(e.fields).join(' ') : e.message; d.showModal(); }
@@ -3944,7 +3991,7 @@ function errPaso(f, fields, msg = 'Completa este paso para seguir.') {
 /** Cuerpo para guardar el perfil sin cambiar nada más que lo indicado. */
 function perfilBody(pf) {
   const v = pf.vehiculo ?? {};
-  return { vehiculo: v, publico: pf.publico ?? null, tarifaAlimentacion: pf.tarifaAlimentacion ?? '', reembolsoPorKm: pf.reembolsoPorKm ?? '', topeCombustible: pf.topeCombustible ?? '' };
+  return { vehiculo: v, publico: pf.publico ?? null, comidaDesglose: pf.comidaDesglose ?? null, tarifaAlimentacion: pf.tarifaAlimentacion ?? '', reembolsoPorKm: pf.reembolsoPorKm ?? '', topeCombustible: pf.topeCombustible ?? '' };
 }
 const MESES_L = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const nombreMesLargo = (m) => { const [y, n] = m.split('-').map(Number); return `${MESES_L[n - 1]} ${y}`; };

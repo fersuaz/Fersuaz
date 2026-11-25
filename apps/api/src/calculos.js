@@ -81,7 +81,7 @@ export function calcularTransportePublico({ jornadas, esDentro, residencia, tari
   const dentro = lista.filter((d) => !d.fuera); const fuera = lista.filter((d) => d.fuera);
   const transporte = dentro.length * tarifas.transporteDentro + fuera.length * tarifas.transporteFuera;
   const alimentacion = dentro.filter((d) => d.comida).length * tarifas.comidaDentro + fuera.filter((d) => d.comida).length * tarifas.comidaFuera;
-  return { diasDentro: dentro.length, diasFuera: fuera.length, transporte: round2(transporte), alimentacion: round2(alimentacion), dias: lista.map((d) => ({ fecha: d.fecha, fuera: d.fuera })) };
+  return { diasDentro: dentro.length, diasFuera: fuera.length, transporte: round2(transporte), alimentacion: round2(alimentacion), dias: lista.map((d) => ({ fecha: d.fecha, fuera: d.fuera, comida: d.comida })) };
 }
 
 /** Millas por galón (EPA, galón de EE. UU., el mismo que se vende en RD) a km por galón, con un decimal. */
@@ -164,4 +164,21 @@ export function semanasDelMes(mes, fechas) {
   const set = new Set(fechas);
   for (const s of semanas) s.fechas = [...set].filter((f) => f >= s.desde && f <= s.hasta).sort();
   return semanas.filter((s) => s.fechas.length).map((s, i) => ({ ...s, n: semanas.indexOf(s) + 1 }));
+}
+
+/**
+ * Desayuno incluido en el hotel: su valor se descuenta de la comida de ese día (el día de la noche fuera).
+ * Nunca deja la comida de un día en negativo. comidaPorDia: [{ fecha, monto }]; desayunos: { [fecha]: valor }.
+ * Devuelve { descuento, noches, porDia: [{ fecha, descuento }] }.
+ */
+export function descontarDesayunos(comidaPorDia, desayunos = {}) {
+  const porDia = [];
+  for (const d of comidaPorDia) {
+    const v = Number(desayunos[d.fecha]);
+    if (!(v > 0)) continue;
+    requireNumber('Comida del día', d.monto);
+    const x = round2(Math.min(v, d.monto));
+    if (x > 0) porDia.push({ fecha: d.fecha, descuento: x });
+  }
+  return { descuento: round2(porDia.reduce((s, d) => s + d.descuento, 0)), noches: porDia.length, porDia };
 }

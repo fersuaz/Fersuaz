@@ -18,14 +18,14 @@ export const COLECCIONES = {
   planDias: { tabla: 'plan_dias_representante', campos: ['representanteId', 'diasDentro', 'diasFuera', 'fuente', 'actualizadoPor'], json: [] },
   ventasFarmacia: { tabla: 'ventas_farmacia', campos: ['farmaciaId', 'medicamentoId', 'unidades', 'precioUnitario', 'monto', 'fecha', 'factura', 'provincia', 'municipio', 'lote', 'fuente', 'archivo', 'cargadoPor'], json: [] },
   configuracion: { tabla: 'configuracion', campos: ['clave', 'valor', 'actualizadoPor'], json: ['valor'] },
-  perfiles: { tabla: 'perfiles_viatico', campos: ['representanteId', 'residencia', 'vehiculo', 'tarifaAlimentacion', 'reembolsoPorKm', 'topeCombustible', 'publico', 'actualizadoPor'], json: ['residencia', 'vehiculo', 'publico'] },
+  perfiles: { tabla: 'perfiles_viatico', campos: ['representanteId', 'residencia', 'vehiculo', 'tarifaAlimentacion', 'reembolsoPorKm', 'topeCombustible', 'publico', 'comidaDesglose', 'actualizadoPor'], json: ['residencia', 'vehiculo', 'publico', 'comidaDesglose'] },
   precios: { tabla: 'precios_combustible', campos: ['combustible', 'precioGalon', 'vigenteDesde', 'fuente', 'enlace', 'registradoPor'], json: [] },
   jornadas: { tabla: 'jornadas', campos: ['representanteId', 'cronogramaId', 'fecha', 'paradas', 'kmEstimados', 'kmFuente', 'kmReales', 'conAlimentacion', 'hospedaje', 'peajes', 'estacionamiento', 'otros', 'estado'], json: ['paradas', 'hospedaje'] },
   establecimientos: { tabla: 'establecimientos', campos: ['tipo', 'nombre', 'provincia', 'municipio', 'sector', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'fuente', 'estado', 'creadoPor', 'descarteMotivo', 'descartadoPor'], json: [] },
   zonas: { tabla: 'zonas_representante', campos: ['representanteId', 'provincias', 'municipios', 'excluidos', 'actualizadoPor'], json: ['provincias', 'municipios', 'excluidos'] },
   vehiculosAgregados: { tabla: 'vehiculos_agregados', campos: ['anio', 'marca', 'modelo', 'version', 'kmPorGalon', 'combustible', 'creadoPor'], json: [] },
   cuentasBanco: { tabla: 'cuentas_banco', campos: ['usuarioId', 'banco', 'tipo', 'numero', 'titular', 'correo', 'actualizadoPor'], json: [] },
-  hoteles: { tabla: 'hoteles', campos: ['nombre', 'provincia', 'municipio', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'calificacion', 'fuente', 'precioNoche', 'requisitos', 'notas', 'verificadoPor', 'verificadoEn', 'estado', 'creadoPor'], json: ['requisitos'] },
+  hoteles: { tabla: 'hoteles', campos: ['nombre', 'provincia', 'municipio', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'calificacion', 'fuente', 'precioNoche', 'requisitos', 'notas', 'verificadoPor', 'verificadoEn', 'estado', 'creadoPor', 'desayunoIncluido', 'valorDesayuno'], json: ['requisitos'] },
   preregistros: { tabla: 'preregistros', campos: ['email', 'nombre', 'telefono', 'posicion', 'provincias', 'estado', 'usuarioId', 'creadoPor'], json: ['provincias'] },
   preciosMedicamento: { tabla: 'precios_medicamento', campos: ['medicamentoId', 'precio', 'vigenteDesde', 'fuente', 'registradoPor'], json: [] },
   cronogramas: { tabla: 'cronogramas', campos: ['representanteId', 'fecha', 'lugares', 'nota', 'estado', 'motivo', 'creadoPor', 'kmEstimado', 'minutosEstimados', 'kmOrigen', 'duermeFuera', 'hotelId'], json: ['lugares'] },
@@ -79,7 +79,7 @@ export class PgData {
     for (const f of c.campos) {
       let v = r[snake(f)];
       if (v instanceof Date) v = v.toISOString().slice(0, 10);
-      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision', 'precioGalon', 'kmEstimados', 'kmReales', 'peajes', 'estacionamiento', 'otros', 'tarifaAlimentacion', 'reembolsoPorKm', 'montoAprobado', 'precio', 'lat', 'lng', 'precioNoche', 'calificacion', 'topeCombustible', 'kmPorGalon', 'kmEstimado', 'precioUnitario', 'monto'].includes(f)) v = Number(v);
+      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) && ['total', 'ventas', 'porcentaje', 'comision', 'precioGalon', 'kmEstimados', 'kmReales', 'peajes', 'estacionamiento', 'otros', 'tarifaAlimentacion', 'reembolsoPorKm', 'montoAprobado', 'precio', 'lat', 'lng', 'precioNoche', 'calificacion', 'topeCombustible', 'kmPorGalon', 'kmEstimado', 'precioUnitario', 'monto', 'valorDesayuno'].includes(f)) v = Number(v);
       out[f] = v;
     }
     return out;

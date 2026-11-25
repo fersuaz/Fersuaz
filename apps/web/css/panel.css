@@ -1086,3 +1086,15 @@ body.vista-cargando::before { content: ""; position: fixed; top: 0; left: 0; rig
 .asis-quitados-cabeza { display: flex; align-items: center; justify-content: space-between; gap: .75rem 1.5rem; flex-wrap: wrap; margin: 0 0 1.25rem; }
 .asis-quitados-cabeza .hint { margin: 0; flex: 1 1 260px; }
 .asis-quitados .tabla, .asis-quitados .lf-tabla { margin-top: .25rem; }
+/* Desayuno incluido en el hotel */
+.desayuno-caja { display: grid; gap: .6rem; background: var(--panel); border-radius: 12px; padding: .8rem 1rem; margin: .75rem 0; }
+.desayuno-si span { display: grid; gap: .1rem; }
+.desayuno-si small { color: var(--texto-2); font-weight: 400; }
+.desayuno-opciones { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; align-items: center; padding-left: 1.9rem; }
+.desayuno-opciones[hidden] { display: none; }
+.desayuno-otro { display: inline-flex; align-items: center; gap: .5rem; }
+.desayuno-otro input[type="number"] { width: 7rem; min-height: 38px; padding: 0 .6rem; border: 1.5px solid var(--linea); border-radius: 10px; font: inherit; }
+.precio-desayuno { flex-basis: 100%; color: var(--celeste-texto); font-weight: 600; }
+.comida-caja { display: grid; gap: .9rem; }
+.comida-caja .oculto-modo { display: none; }
+.comida-total { margin: 0; font-weight: 600; color: var(--marino); }

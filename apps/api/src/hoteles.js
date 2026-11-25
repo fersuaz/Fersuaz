@@ -97,6 +97,15 @@ export function createHoteles({ data, audit, now = () => new Date() }) {
       const t = normalizeName(input.telefono);
       if (t && !/^[\d\s()+-]{7,20}$/.test(t)) e.telefono = 'Escribe un teléfono válido o déjalo vacío.'; else cambios.telefono = t || null;
     }
+    if (input.desayunoIncluido !== undefined) {
+      const si = input.desayunoIncluido === true || input.desayunoIncluido === 'true';
+      cambios.desayunoIncluido = si;
+      // El valor es opcional: si el representante tiene su desayuno en la comida desglosada, se rebaja ese.
+      const vacio = input.valorDesayuno == null || input.valorDesayuno === '';
+      const v = Number(input.valorDesayuno);
+      if (si && !vacio && (!Number.isFinite(v) || v <= 0 || v > 5000)) e.valorDesayuno = 'Escribe el valor del desayuno en RD$ o déjalo vacío.';
+      else cambios.valorDesayuno = si && !vacio ? r2(v) : null;
+    }
     if (input.direccion !== undefined) cambios.direccion = normalizeName(input.direccion).slice(0, 200) || null;
     if (input.estado !== undefined) {
       if (!['activo', 'inactivo'].includes(input.estado)) e.estado = 'Estado no válido.'; else cambios.estado = input.estado;
@@ -105,7 +114,7 @@ export function createHoteles({ data, audit, now = () => new Date() }) {
     if (!Object.keys(cambios).length) return vista(h);
     const out = await data.update('hoteles', id, { ...cambios, verificadoPor: actor.id, verificadoEn: now().toISOString() });
     await audit({ actorId: actor.id, action: 'hotel_verificado', entity: 'hotel', entityId: id,
-      before: { precioNoche: h.precioNoche ?? null, requisitos: h.requisitos ?? {}, estado: h.estado, ...(cambios.nombre ? { nombre: h.nombre } : {}), ...('telefono' in cambios ? { telefono: h.telefono ?? null } : {}) }, after: cambios });
+      before: { precioNoche: h.precioNoche ?? null, requisitos: h.requisitos ?? {}, estado: h.estado, ...('desayunoIncluido' in cambios ? { desayunoIncluido: h.desayunoIncluido ?? false, valorDesayuno: h.valorDesayuno ?? null } : {}), ...(cambios.nombre ? { nombre: h.nombre } : {}), ...('telefono' in cambios ? { telefono: h.telefono ?? null } : {}) }, after: cambios });
     return vista(out);
   }
 
