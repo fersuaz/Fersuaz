@@ -7,7 +7,7 @@ const CONSULTA = {
 };
 const CAMPOS = 'places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.businessStatus,places.rating,places.websiteUri';
 
-export class SinLugares { activo = false; async buscar() { return []; } async pagina() { return { items: [], siguiente: null }; } async detalle() { return null; } async ubicacion() { return null; } }
+export class SinLugares { activo = false; async buscar() { return []; } async pagina() { return { items: [], siguiente: null }; } async detalle() { return null; } async ubicacion() { return null; } async coordsDe() { return null; } }
 
 export class GooglePlaces {
   activo = true;
@@ -50,6 +50,15 @@ export class GooglePlaces {
       headers: { 'X-Goog-Api-Key': this.apiKey, 'X-Goog-FieldMask': CAMPOS.replaceAll('places.', '') },
     });
     return p?.id ? GooglePlaces.#lugar(p) : null;
+  }
+  /** Coordenadas de un lugar por su nombre (enlaces de Google Maps que no traen el punto). */
+  async coordsDe(nombre) {
+    const d = await this.#pedir('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'X-Goog-Api-Key': this.apiKey, 'X-Goog-FieldMask': 'places.location' },
+      body: JSON.stringify({ textQuery: `${nombre}, República Dominicana`, languageCode: 'es', regionCode: 'DO', pageSize: 1 }),
+    });
+    const l = d.places?.[0]?.location;
+    return l ? { lat: Math.round(l.latitude * 1e6) / 1e6, lng: Math.round(l.longitude * 1e6) / 1e6 } : null;
   }
   /**
    * Nombre del lugar en unas coordenadas: primero la dirección (Geocoding inverso) y, si esa API no está

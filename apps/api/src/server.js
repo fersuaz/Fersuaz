@@ -9,6 +9,7 @@ import { createViaticos, COMBUSTIBLE_LABEL } from './viaticos.js';
 import { SinMapas, crearMapas } from './mapas.js';
 import { createTerritorio, provinciaOficial, municipioOficial } from './territorio.js';
 import { normalizeName, leerCoordenadas } from './validation.js';
+import { coordsDeEnlace, abrirEnlace, esHostGoogle } from './enlace-mapa.js';
 import { createNotificaciones } from './notificaciones.js';
 import { SinCorreo, crearCorreo, bienvenida } from './correo.js';
 import { canApprove } from './roles.js';
@@ -47,7 +48,7 @@ async function readJson(req, limit = MAX_BODY) {
 
 const publico = ({ passwordHash, ...u }) => u;
 
-export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), correo = new SinCorreo(), sitio = 'https://fersuaz.net', micmFetch = fetch, vehiculosFetch = fetch, barridoPausa, sessionSecret, allowedOrigins = [], now, lectorIA = null }) {
+export function createApp({ store, data = new MemoryData(), files = new MemoryFiles(), mapas = new SinMapas(), lugares = new SinLugares(), correo = new SinCorreo(), sitio = 'https://fersuaz.net', micmFetch = fetch, vehiculosFetch = fetch, enlaceFetch = fetch, barridoPausa, sessionSecret, allowedOrigins = [], now, lectorIA = null }) {
   const n = createNotificaciones({ data, users: store, correo, sitio });
   const avisar = (fn) => fn().catch((e) => console.error('Notificación:', e.message));
   const t = createTerritorio({ data, users: store, audit: (e) => store.addAudit(e), now });
@@ -103,6 +104,28 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     const prov = x?.provincia ? provincias.find((p) => base(p) === base(x.provincia)) ?? null : null;
     const mun = prov && x?.municipio ? municipios[prov].find((m) => base(m) === base(x.municipio)) ?? null : null;
     return { item: x ? { ...x, provincia: prov, municipio: mun } : null, ...c, motivo: x ? null : 'Google no encontró un nombre para ese punto; escríbelo.' };
+  }
+  /** Ubicación desde un enlace de Google Maps (largo o corto): coordenadas y nombre del lugar. */
+  async function enlaceGoogle(me, q) {
+    if (!me || me.status !== 'activo' || !GESTION_LUGARES.includes(me.role)) throw new AuthError(403, 'No tienes permiso para esta acción.');
+    const texto = String(q.get('url') ?? '').trim().slice(0, 2000);
+    const malo = 'Pega un enlace de Google Maps (Compartir → Copiar enlace).';
+    let u; try { u = new URL(texto); } catch { throw new AuthError(422, malo, { 'residencia.coordenadas': malo }); }
+    if (!esHostGoogle(u.hostname)) throw new AuthError(422, malo, { 'residencia.coordenadas': malo });
+    let c = coordsDeEnlace(texto);
+    if (!c || c.lat == null || c.aproximado) {
+      const fin = await abrirEnlace(texto, enlaceFetch);
+      const c2 = fin ? coordsDeEnlace(fin) : null;
+      if (c2?.lat != null && (!c2.aproximado || c?.lat == null)) c = c2;
+      else if (c2?.nombre && !c?.nombre) c = { ...(c ?? {}), nombre: c2.nombre };
+    }
+    // Si el enlace solo trae el nombre del lugar (o el centro del mapa), se busca el punto del lugar en Google.
+    if ((c?.lat == null || c.aproximado) && c?.nombre && lugares.activo && typeof lugares.coordsDe === 'function') {
+      try { const p = await lugares.coordsDe(c.nombre); if (p) c = { ...p, nombre: c.nombre }; } catch { /* se queda lo que haya */ }
+    }
+    if (c?.lat == null) { const m = 'No pudimos leer la ubicación de ese enlace. Abre el lugar en Google Maps, mantén presionado el punto y copia los números.'; throw new AuthError(422, m, { 'residencia.coordenadas': m }); }
+    const sp = new URLSearchParams({ lat: String(c.lat), lng: String(c.lng) });
+    return { ...(await ubicacionGoogle(me, sp)), desdeEnlace: true, aproximado: Boolean(c.aproximado) };
   }
   async function agregarGoogle(me, body) {
     if (!me || me.status !== 'activo' || !GESTION_LUGARES.includes(me.role)) throw new AuthError(403, 'No tienes permiso para esta acción.');
@@ -459,6 +482,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   // Búsqueda en Google Maps (solo gestión, cuesta por consulta)
   ruta('GET', '/api/territorio/google/estado', () => ({ activo: lugares.activo }));
   ruta('GET', '/api/territorio/ubicacion', async ({ me, q }) => ubicacionGoogle(me, q));
+  ruta('GET', '/api/territorio/ubicacion-enlace', async ({ me, q }) => enlaceGoogle(me, q));
   ruta('GET', '/api/territorio/google/buscar', async ({ me, q }) => buscarGoogle(me, q));
   ruta('POST', '/api/territorio/google/agregar', async ({ me, body }) => [201, await agregarGoogle(me, body)]);
   ruta('GET', '/api/territorio/google/barrido', async ({ me }) => { puedeBarrido(me); return { item: await barrido.estado() }; });
