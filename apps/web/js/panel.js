@@ -2015,8 +2015,10 @@ function copiarMes(rep, mes, div, alAprobar = null) {
 }
 
 /** Propuesta automática del mes (solo administrador): el sistema reparte los lugares de la zona; el admin ajusta y aprueba. */
-async function propuestaMes(rep, mes, div, alAprobar = null) {
-  const fpd = campo('porDia', 'Lugares por día', { type: 'number', min: 1, max: 15, step: 1, value: 8, inputmode: 'numeric' });
+async function propuestaMes(rep, mes, div, alAprobar = null, posicion = null) {
+  const vpd = await api('GET', '/api/cronogramas/visitas-por-dia').then((x) => x.item).catch(() => null);
+  const n0 = (posicion && vpd?.porPosicion?.[posicion]) || vpd?.predeterminado || 8;
+  const fpd = campo('porDia', 'Visitas por día', { type: 'number', min: 1, max: 15, step: 1, value: n0, inputmode: 'numeric' }, posicion ? `(${posicion}: ${n0}${vpd?.porPosicion?.[posicion] ? ', configurado' : ', predeterminado'})` : '');
   // Días de la semana que trabaja (por defecto, lunes a viernes) y fechas que no trabaja
   const SEMANA = [[1, 'Lun', 'lunes'], [2, 'Mar', 'martes'], [3, 'Mié', 'miércoles'], [4, 'Jue', 'jueves'], [5, 'Vie', 'viernes'], [6, 'Sáb', 'sábado'], [0, 'Dom', 'domingo']];
   const sab = h('fieldset', { class: 'dias-semana' }, h('legend', {}, 'Días laborables'),
@@ -2064,13 +2066,14 @@ V.cronogramas = async () => {
   const selRep = campo('rep', 'Representante', { options: reps.map((r) => ({ value: r.id, label: `${r.fullName} (${r.position ?? ''})` })), value: rep, placeholder: 'Elige el representante' });
   selRep.querySelector('select').addEventListener('change', (e) => irA('cronogramas', { mes, rep: e.target.value }));
   const bloques = [h('div', { class: 'form-fila' }, selRep, filtroMes(mes, 'cronogramas', () => `rep=${rep}`, { futuro: true }))];
-  if (!rep) return vista('Cronogramas', 'Elige un representante para ver y programar sus días.', ...bloques);
+  const visitas = ES_GER() ? S('visitas', 'Visitas por día', await formVisitasPorDia()) : null;
+  if (!rep) return vistaS('cronogramas', ['visitas'], 'Cronogramas', 'Elige un representante para ver y programar sus días.', ...bloques, h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Elige un representante'), 'Verás sus días, la propuesta automática y la copia del mes anterior.'), visitas);
   const [{ item: zona }, { items: crons }, lz] = await Promise.all([api('GET', `/api/territorio/zonas/${rep}`), api('GET', `/api/cronogramas?representanteId=${rep}&mes=${mes}`), api('GET', `/api/territorio/zonas/${rep}/lugares`)]);
   if (esAdmin) {
     if (!zona.provincias.length) bloques.push(h('div', { class: 'aviso error' }, 'Este representante no tiene provincias asignadas. ', h('a', { href: `#representantes?rep=${rep}` }, 'Asignar provincias')));
     else {
       bloques.push(S('copiar', 'Copiar mes anterior', copiarMes(rep, mes, div)));
-      bloques.push(S('propuesta', 'Propuesta automática', await propuestaMes(rep, mes, div)));
+      bloques.push(S('propuesta', 'Propuesta automática', await propuestaMes(rep, mes, div, null, reps.find((x) => x.id === rep)?.position)));
       const lugares = [...lz.establecimientos.map((x) => ({ ...x, refTipo: 'establecimiento', etiqueta: div.tipos[x.tipo] })), ...lz.farmacias.map((x) => ({ ...x, refTipo: 'farmacia', etiqueta: 'Farmacia' }))]
         .sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
       // Días del mes como botones
@@ -2114,7 +2117,8 @@ V.cronogramas = async () => {
       { t: 'Noche', v: (c) => (c.duermeFuera ? h('span', { class: 'chip noche' }, 'Duerme fuera') : '') },
       { t: '', v: (c) => c.estado === 'aprobado' && !c.jornadaId ? h('div', { class: 'acciones-fila' }, puedeNoche ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => noche(c) }, c.duermeFuera ? 'Quitar noche fuera' : 'Noche fuera') : null, esAdmin ? h('button', { class: 'btn-sec btn-peq', onclick: () => anular(c) }, 'Anular') : null) : '' }],
     crons, ['Sin días programados en este mes', esAdmin ? 'Usa la propuesta automática o programa a mano.' : 'El administrador aún no programa este mes.'])));
-  return vistaS('cronogramas', ['copiar', 'propuesta', 'mano', 'dias'], 'Cronogramas', 'El administrador programa y aprueba los días y lugares de cada representante.', ...bloques);
+  bloques.push(visitas);
+  return vistaS('cronogramas', ['copiar', 'propuesta', 'mano', 'dias', 'visitas'], 'Cronogramas', 'El administrador programa y aprueba los días y lugares de cada representante.', ...bloques);
 };
 
 // ---------------------------------------------------------------- campana de notificaciones
@@ -3771,10 +3775,10 @@ async function pasoRep(paso, ctx) {
     const nLug = diasAprob.reduce((n, c) => n + c.lugares.length, 0); const nNoche = diasAprob.filter((c) => c.duermeFuera).length;
     const partes = [h('div', { class: 'asis-mes' }, h('span', { class: 'asis-mes-etq' }, 'Mes'), segMes),
       h('div', { class: 'tarjeta' }, h('h2', {}, `Días aprobados en ${nombreMesLargo(mes)} (${fmtN.format(diasAprob.length)})`),
-        diasAprob.length ? [h('p', { class: 'hint' }, `${fmtN.format(nLug)} visitas programadas${nNoche ? ` y ${fmtN.format(nNoche)} noche(s) fuera` : ''}. Para quitar días o marcar noches fuera, usa `, h('a', { href: `#cronogramas?rep=${rep}&mes=${mes}&sec=dias` }, 'Cronogramas'), '.'),
-          tabla([{ t: 'Día', v: (c) => fecha(c.fecha) }, { t: 'Lugares', v: (c) => c.lugares.map((l) => l.lugar).join(', ') }, { t: 'Noche', v: (c) => (c.duermeFuera ? h('span', { class: 'chip noche' }, 'Duerme fuera') : '') }], diasAprob, ['', ''], { porPagina: 10 })]
+        diasAprob.length ? [h('p', { class: 'hint' }, `${fmtN.format(nLug)} visitas programadas${nNoche ? ` y ${fmtN.format(nNoche)} noche(s) fuera` : ''}. Marca las noches que duerme fuera: entran al presupuesto con el hotel elegido o el recomendado de esa provincia.`),
+          await nochesFuera(diasAprob, recargar)]
           : h('p', { class: 'hint' }, esAdmin ? 'Aún no tiene días este mes. Copia la ruta del mes anterior o deja que el sistema la proponga; revisas y apruebas.' : 'Aún no tiene días este mes. El administrador programa y aprueba el cronograma.'))];
-    if (esAdmin) partes.push(h('div', { class: 'asis-dos' }, await propuestaMes(rep, mes, div, recargar), copiarMes(rep, mes, div, recargar)));
+    if (esAdmin) partes.push(h('div', { class: 'asis-dos' }, await propuestaMes(rep, mes, div, recargar, r?.position), copiarMes(rep, mes, div, recargar)));
     if (!esAdmin && !diasAprob.length) partes.push(h('div', { class: 'aviso' }, 'Sin cronograma, el resumen no tendrá km ni gastos del mes.'));
     partes.push(nav.nodo);
     return partes;
@@ -3915,6 +3919,62 @@ function listaMarcable({ clave, filas, campos, cols, verbo, accion, porPagina = 
     return h('div', {}, h('div', { class: 'lote-barra asis-lote' }, h('label', { class: 'check' }, todos, h('span', {}, 'Marcar los que se ven')), bMarc, bTodos),
       tabla(colsM, vs, activos ? vacio : ['', ''], { porPagina }));
   }));
+  return caja;
+}
+/** Visitas por día de cada posición: el número con que la propuesta automática reparte los lugares. */
+async function formVisitasPorDia() {
+  const { item } = await api('GET', '/api/cronogramas/visitas-por-dia');
+  const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar visitas por día');
+  const fila = (p, nota) => campo(`porPosicion.${p}`, p, { type: 'number', min: 1, max: 15, step: 1, inputmode: 'numeric', value: item.porPosicion[p] ?? '', placeholder: String(item.predeterminado) }, nota);
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Visitas por día'),
+    h('p', { class: 'hint' }, `Cuántos lugares visita cada uno por día en la propuesta automática del cronograma. Vacío = ${item.predeterminado}. Al proponer el mes se puede cambiar para un representante.`),
+    h('div', { class: 'form-fila' }, fila('Visitador'), fila('Vendedor'), fila('PVC'), fila('Promotora', '(opcional: solo si alguna vez necesitan cronograma)')),
+    h('div', { class: 'acciones' }, b));
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (await enviar(f, b, () => api('POST', '/api/cronogramas/visitas-por-dia', { porPosicion: Object.fromEntries(POSICIONES.map((p) => [p, f.elements[`porPosicion.${p}`].value])) }))) aviso('Visitas por día guardadas.', 'ok');
+  });
+  return f;
+}
+/**
+ * Noches fuera de los días aprobados: marcar o quitar una o varias, y elegir el hotel de cada noche
+ * (vacío = el recomendado de la provincia). Los días que ya tienen jornada no se cambian aquí.
+ */
+async function nochesFuera(dias, recargar) {
+  const puede = ['administrador', 'gerencia'].includes(yo.role);
+  const provs = [...new Set(dias.map((c) => c.lugares.at(-1)?.provincia).filter(Boolean))];
+  const hoteles = puede ? (await Promise.all(provs.map((p) => api('GET', `/api/hoteles?provincia=${encodeURIComponent(p)}`).then((x) => x.items).catch(() => [])))).flat().filter((x) => x.estado !== 'inactivo' && Number(x.precioNoche) > 0) : [];
+  const sel = new Set();
+  const editable = (c) => puede && !c.jornadaId;
+  const poner = async (ids, duermeFuera, hotelId = null) => {
+    try { for (const id of ids) await api('POST', `/api/cronogramas/${id}/hotel`, { duermeFuera, hotelId }); aviso(duermeFuera ? `${fmtN.format(ids.length)} noche(s) fuera marcada(s).` : `${fmtN.format(ids.length)} noche(s) fuera quitada(s).`, 'ok'); }
+    catch (e) { alert(e.message); }
+    recargar();
+  };
+  const bSi = h('button', { class: 'btn btn-peq', type: 'button', disabled: true }, 'Marcar noche fuera');
+  const bNo = h('button', { class: 'btn-sec btn-peq', type: 'button', disabled: true }, 'Quitar noche fuera');
+  const todos = h('input', { type: 'checkbox', 'aria-label': 'Marcar todos los días' });
+  const lista = dias.filter(editable);
+  const contar = () => { const n = sel.size; bSi.disabled = bNo.disabled = !n; bSi.textContent = n ? `Marcar noche fuera (${n})` : 'Marcar noche fuera'; bNo.textContent = n ? `Quitar noche fuera (${n})` : 'Quitar noche fuera'; todos.checked = n > 0 && n === lista.length; todos.indeterminate = n > 0 && n < lista.length; };
+  todos.addEventListener('change', () => { lista.forEach((c) => (todos.checked ? sel.add(c.id) : sel.delete(c.id))); caja.querySelectorAll('input[data-dia]').forEach((x) => { x.checked = sel.has(x.dataset.dia); }); contar(); });
+  bSi.addEventListener('click', () => poner([...sel], true)); bNo.addEventListener('click', () => poner([...sel], false));
+  const selHotel = (c) => {
+    const prov = c.lugares.at(-1)?.provincia; const mun = c.lugares.at(-1)?.municipio;
+    const xs = hoteles.filter((x) => x.provincia === prov).sort((a, b) => (a.municipio === mun ? 0 : 1) - (b.municipio === mun ? 0 : 1) || Number(a.precioNoche) - Number(b.precioNoche));
+    const s0 = h('select', { 'aria-label': `Hotel de la noche del ${fecha(c.fecha)}`, 'data-sin-buscador': '1', class: 'noche-hotel' }, h('option', { value: '' }, 'Recomendado (automático)'),
+      ...xs.map((x) => h('option', { value: x.id, selected: c.hotelId === x.id }, `${x.nombre}, ${x.municipio}: ${RD(x.precioNoche)}${x.desayunoIncluido ? ', con desayuno' : ''}`)));
+    s0.addEventListener('change', () => poner([c.id], true, s0.value || null));
+    return s0;
+  };
+  const cols = [
+    ...(puede ? [{ t: '', v: (c) => editable(c) ? h('input', { type: 'checkbox', 'data-dia': c.id, checked: sel.has(c.id), 'aria-label': `Marcar ${fecha(c.fecha)}`, onchange: (e) => { e.target.checked ? sel.add(c.id) : sel.delete(c.id); contar(); } }) : '' }] : []),
+    { t: 'Día', v: (c) => fecha(c.fecha) }, { t: 'Lugares', v: (c) => [c.lugares.map((l) => l.lugar).join(', '), h('small', { style: 'display:block;color:var(--texto-2)' }, [...new Set(c.lugares.map((l) => l.municipio))].join(', '))] },
+    { t: 'Noche fuera', v: (c) => !c.duermeFuera ? (editable(c) ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => poner([c.id], true) }, 'Duerme fuera') : '')
+      : h('div', { class: 'noche-celda' }, h('span', { class: 'chip noche' }, 'Duerme fuera'), editable(c) ? selHotel(c) : null, editable(c) ? h('button', { class: 'btn-enlace', type: 'button', onclick: () => poner([c.id], false) }, 'Quitar') : null,
+        c.jornadaId ? h('small', { class: 'hint' }, 'Ya tiene jornada: el hotel lo reporta el representante.') : null) },
+  ];
+  const caja = h('div', {}, puede && lista.length ? h('div', { class: 'lote-barra asis-lote' }, h('label', { class: 'check' }, todos, h('span', {}, 'Marcar todos los días')), bSi, bNo) : null,
+    tabla(cols, dias, ['', ''], { porPagina: 15 }));
   return caja;
 }
 /**
