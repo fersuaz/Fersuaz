@@ -2510,15 +2510,15 @@ function importador(tipo, titulo, ayuda, alTerminar) {
 }
 
 /** Búsqueda de Google Maps por municipio (solo gestión). */
-async function buscadorGoogle(tipos, alAgregar) {
+async function buscadorGoogle(tipos, alAgregar, { provincias = null, municipios = null, titulo = 'Buscar en Google Maps', nota = 'Busca por municipio y agrega con un clic. Cada búsqueda consume cuota de Google.' } = {}) {
   const [{ activo }, div] = await Promise.all([api('GET', '/api/territorio/google/estado'), division()]);
-  if (!activo) return h('div', { class: 'tarjeta' }, h('h2', {}, 'Buscar en Google Maps'), h('p', { class: 'hint' }, 'La búsqueda en Google Maps se activa cuando se configure la clave del mapa (MAPS_API_KEY) en el servidor. Mientras tanto, registra a mano o importa un Excel.'));
-  const z = selectorZona(div.provincias, div.municipios);
+  if (!activo) return h('div', { class: 'tarjeta' }, h('h2', {}, titulo), h('p', { class: 'hint' }, 'La búsqueda en Google Maps se activa cuando se configure la clave del mapa (MAPS_API_KEY) en el servidor. Mientras tanto, registra a mano o importa un Excel.'));
+  const z = selectorZona(provincias ?? div.provincias, municipios ?? div.municipios, provincias?.length === 1 ? { provincia: provincias[0] } : {});
   const ft = campo('tipo', 'Tipo', { options: tipos.map(([value, label]) => ({ value, label })), value: tipos[0][0] });
   const ftx = campo('texto', 'Nombre o palabra', {}, '(opcional)');
   const b = h('button', { class: 'btn-sec', type: 'submit' }, 'Buscar en Google Maps');
   const res = h('div', { 'aria-live': 'polite' });
-  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Buscar en Google Maps'), h('p', { class: 'hint' }, 'Busca por municipio y agrega con un clic. Cada búsqueda consume cuota de Google.'),
+  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, titulo), h('p', { class: 'hint' }, nota),
     h('div', { class: 'form-fila' }, z.fp, z.fm, ft, ftx), h('div', { class: 'acciones' }, b), res);
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -3599,44 +3599,151 @@ async function pasoRep(paso, ctx) {
     return f;
   }
   if (paso === 'lugares') {
-    const lz = await api('GET', `/api/territorio/zonas/${rep}/lugares`);
     const TIP = { farmacia: 'Farmacia', hospital: 'Hospital', clinica: 'Clínica', unap: 'UNAP', cpn: 'Primer nivel', diagnostico: 'Centro diagnóstico', consultorio: 'Consultorio' };
-    const todos = [...lz.farmacias.map((x) => ({ ...x, tipo: 'farmacia' })), ...lz.establecimientos].sort((a, b) => a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
-    const porTipo = Object.entries(todos.reduce((m, x) => ((m[x.tipo] = (m[x.tipo] ?? 0) + 1), m), {})).sort((a, b) => b[1] - a[1]);
     const uni = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), 'es'));
-    const quitar = async (x) => {
-      const m = await confirmar('Quitar de su zona', `${x.nombre} saldrá de las zonas, los cronogramas y las metas de visitas.`, { okTexto: 'Quitar', pedirMotivo: true, etiquetaMotivo: 'Motivo', sugerencias: [{ texto: 'No es un centro de salud.' }, { texto: 'Está cerrado.' }, { texto: 'Repetido.' }, { texto: 'No está en esta zona.' }] });
-      if (m == null) return;
-      try { await api('POST', '/api/territorio/establecimientos/descartar', { ids: [x.id], motivo: m }); aviso(`${x.nombre} quitado.`, 'ok'); router(); } catch (e) { alert(e.message); }
+    const cont = h('div', { class: 'asis-lista', 'aria-live': 'polite' }); const sel = new Set(); let deshacer = null; let abierto = false;
+    const nav = navPasosRep('lugares', ir, { siguiente: () => { ses.add('lugares'); } });
+    const nombreRep = r?.fullName ?? 'el representante';
+    const cambiar = async (cuerpo, hecho) => {
+      try { await api('POST', `/api/territorio/zonas/${rep}/excluidos`, cuerpo); }
+      catch (e) { alert(e.message); return; }
+      deshacer = hecho ? { texto: hecho, cuerpo: cuerpo.quitar ? { volver: cuerpo.quitar } : { quitar: cuerpo.volver } } : null;
+      sel.clear(); await pintar();
     };
-    const campos = [
-      { id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Nombre o dirección', valor: (x) => `${x.nombre} ${x.direccion ?? ''}` },
-      { id: 'mun', etiqueta: 'Municipios', tipo: 'opciones', plural: 'municipios', opciones: uni(todos.map((x) => x.municipio)), valor: (x) => x.municipio },
-      { id: 'tipo', etiqueta: 'Tipos', tipo: 'opciones', plural: 'tipos', opciones: uni(todos.map((x) => x.tipo)).map((t) => ({ value: t, label: TIP[t] ?? t })), valor: (x) => x.tipo },
-    ];
-    const cols = [{ t: 'Lugar', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion ?? '')] }, { t: 'Tipo', v: (x) => TIP[x.tipo] ?? x.tipo }, { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` },
-      { t: 'Ubicación', v: (x) => (x.lat == null ? h('span', { class: 'chip pendiente' }, 'Sin ubicación') : 'Sí') }, { t: '', v: (x) => h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => quitar(x) }, 'Quitar') }];
-    const nav = navPasosRep('lugares', ir, { siguiente: () => { ses.add('lugares'); }, bloqueado: !todos.length, motivo: todos.length ? null : 'Su zona no tiene lugares registrados. Regístralos en Establecimientos y vuelve.' });
-    return [h('div', { class: 'tarjeta' }, h('h2', {}, `Establecimientos que visitará (${fmtN.format(todos.length)})`),
-      h('p', { class: 'hint' }, 'Son los lugares de su zona: entran a su cronograma y a su meta de visitas. Quita los que no visita; para agregar uno nuevo, regístralo en Establecimientos.'),
-      porTipo.length ? h('div', { class: 'asis-chips' }, porTipo.map(([t, n]) => h('span', { class: 'asis-chip' }, h('strong', {}, fmtN.format(n)), ` ${TIP[t] ?? t}`))) : null,
-      todos.length ? listaFiltrada(`asis-lugares-${rep}`, todos, campos, (vs, activos) => tabla(cols, vs, activos ? ['Ningún lugar con estos filtros', 'Cambia o limpia los filtros.'] : ['', ''], { porPagina: 15 }))
-        : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Su zona no tiene lugares'), h('a', { href: '#establecimientos' }, 'Registrar establecimientos'))), nav.nodo];
+    const quitar = (ids) => cambiar({ quitar: ids }, `${fmtN.format(ids.length)} lugar(es) quitado(s) de la ruta de ${nombreRep}.`);
+    const volver = (ids) => cambiar({ volver: ids }, `${fmtN.format(ids.length)} lugar(es) agregado(s) de nuevo a su ruta.`);
+    async function pintar() {
+      let lz; try { lz = await api('GET', `/api/territorio/zonas/${rep}/lugares`); } catch (e) { cont.replaceChildren(h('div', { class: 'aviso error' }, e.message)); return; }
+      const todos = [...lz.farmacias.map((x) => ({ ...x, tipo: 'farmacia' })), ...lz.establecimientos].sort((a, b) => a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
+      const fuera = (lz.excluidos ?? []).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+      if (nav.boton) { nav.boton.disabled = !todos.length; nav.boton.title = todos.length ? '' : 'Agrega al menos un lugar a su ruta para seguir.'; }
+      const porTipo = Object.entries(todos.reduce((m, x) => ((m[x.tipo] = (m[x.tipo] ?? 0) + 1), m), {})).sort((a, b) => b[1] - a[1]);
+      let vistos = [];
+      const todosVis = h('input', { type: 'checkbox', 'aria-label': 'Marcar todos los lugares que se ven' });
+      const bMarc = h('button', { class: 'btn-sec btn-peq btn-peligro', type: 'button', disabled: true });
+      const bTodos = h('button', { class: 'btn-sec btn-peq', type: 'button' });
+      const contar = () => {
+        const n = vistos.filter((x) => sel.has(x.id)).length;
+        todosVis.checked = n > 0 && n === vistos.length; todosVis.indeterminate = n > 0 && n < vistos.length;
+        bMarc.disabled = !sel.size; bMarc.textContent = sel.size ? `Quitar ${fmtN.format(sel.size)} marcado(s)` : 'Quitar marcados';
+        bTodos.textContent = `Quitar todos los que se ven (${fmtN.format(vistos.length)})`; bTodos.disabled = !vistos.length;
+      };
+      todosVis.addEventListener('change', () => { vistos.forEach((x) => (todosVis.checked ? sel.add(x.id) : sel.delete(x.id))); cont.querySelectorAll('input[data-lugar]').forEach((c) => { c.checked = sel.has(c.dataset.lugar); }); contar(); });
+      bMarc.addEventListener('click', () => quitar([...sel]));
+      bTodos.addEventListener('click', async () => {
+        if (!(await confirmar('Quitar todos', `${fmtN.format(vistos.length)} lugar(es) saldrán de la ruta de ${nombreRep}: de su propuesta de cronograma y de su meta de visitas. Siguen en el catálogo y en la zona de los demás. Puedes deshacerlo.`, { okTexto: `Quitar ${fmtN.format(vistos.length)}` }))) return;
+        quitar(vistos.map((x) => x.id));
+      });
+      const cols = [
+        { t: '', v: (x) => h('input', { type: 'checkbox', 'data-lugar': x.id, checked: sel.has(x.id), 'aria-label': `Marcar ${x.nombre}`, onchange: (e) => { e.target.checked ? sel.add(x.id) : sel.delete(x.id); contar(); } }) },
+        { t: 'Lugar', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion ?? '')] }, { t: 'Tipo', v: (x) => TIP[x.tipo] ?? x.tipo },
+        { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` }, { t: 'Ubicación', v: (x) => (x.lat == null ? h('span', { class: 'chip pendiente' }, 'Sin ubicación') : 'Sí') },
+        { t: '', v: (x) => h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => quitar([x.id]) }, 'Quitar') }];
+      const campos = [
+        { id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Nombre o dirección', valor: (x) => `${x.nombre} ${x.direccion ?? ''}` },
+        { id: 'mun', etiqueta: 'Municipios', tipo: 'opciones', plural: 'municipios', opciones: uni(todos.map((x) => x.municipio)), valor: (x) => x.municipio },
+        { id: 'tipo', etiqueta: 'Tipos', tipo: 'opciones', plural: 'tipos', opciones: uni(todos.map((x) => x.tipo)).map((t) => ({ value: t, label: TIP[t] ?? t })), valor: (x) => x.tipo },
+      ];
+      const lista = todos.length ? listaFiltrada(`asis-lugares-${rep}`, todos, campos, (vs, activos) => {
+        vistos = vs; contar();
+        return h('div', {}, h('div', { class: 'lote-barra asis-lote' }, h('label', { class: 'check' }, todosVis, h('span', {}, 'Marcar los que se ven')), bMarc, bTodos),
+          tabla(cols, vs, activos ? ['Ningún lugar con estos filtros', 'Cambia o limpia los filtros.'] : ['', ''], { porPagina: 15 }));
+      }) : h('div', { class: 'tarjeta vacio' }, h('strong', {}, fuera.length ? 'Quitaste todos los lugares de su ruta' : 'Su zona no tiene lugares'), fuera.length ? 'Vuelve a agregar los que visitará en "Quitados de su ruta" o búscalos abajo.' : 'Búscalos abajo en Google Maps.');
+      const quitados = fuera.length ? h('details', { class: 'tarjeta asis-quitados', open: abierto || !todos.length, ontoggle: (e) => { abierto = e.target.open; } }, h('summary', {}, `Quitados de su ruta (${fmtN.format(fuera.length)})`),
+        h('p', { class: 'hint' }, 'No entran en su cronograma ni en su meta de visitas. Siguen en el catálogo.'),
+        h('div', { class: 'acciones', style: 'margin-top:0' }, h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver(fuera.map((x) => x.id)) }, `Volver a agregar todos (${fmtN.format(fuera.length)})`)),
+        tabla([{ t: 'Lugar', v: (x) => x.nombre }, { t: 'Tipo', v: (x) => TIP[x.tipo] ?? x.tipo }, { t: 'Municipio', v: (x) => x.municipio },
+          { t: '', v: (x) => h('button', { class: 'btn btn-peq', type: 'button', onclick: () => volver([x.id]) }, 'Volver a agregar') }], fuera, ['', ''], { porPagina: 10 })) : null;
+      cont.replaceChildren(
+        deshacer ? h('div', { class: 'asis-deshacer', role: 'status' }, h('span', {}, deshacer.texto), h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => cambiar(deshacer.cuerpo, null) }, 'Deshacer')) : null,
+        h('div', { class: 'tarjeta' }, h('h2', {}, `Establecimientos que visitará (${fmtN.format(todos.length)})`),
+          h('p', { class: 'hint' }, 'Son los lugares de su zona que entran a su cronograma y a su meta de visitas. Quitar aquí lo saca solo de su ruta: no se borra del catálogo ni de la zona de los demás.'),
+          porTipo.length ? h('div', { class: 'asis-chips' }, porTipo.map(([t, n]) => h('span', { class: 'asis-chip' }, h('strong', {}, fmtN.format(n)), ` ${TIP[t] ?? t}`))) : null, lista),
+        quitados);
+    }
+    await pintar();
+    const zprov = zona?.provincias ?? [];
+    const buscador = await buscadorGoogle([['farmacia', 'Farmacias'], ['clinica', 'Clínicas'], ['hospital', 'Hospitales'], ['unap', 'UNAP'], ['cpn', 'Centros de primer nivel'], ['diagnostico', 'Centros diagnósticos'], ['consultorio', 'Consultorios']], () => pintar(),
+      { provincias: zprov, municipios: Object.fromEntries(zprov.map((p) => [p, zona.municipios?.[p]?.length ? zona.municipios[p] : div.municipios[p]])), titulo: 'Buscar y agregar lugares', nota: 'Busca en Google Maps dentro de su zona y agrega con un clic: entra al catálogo y a su ruta. Si ya está registrado pero lo quitaste, vuélvelo a agregar en "Quitados de su ruta".' });
+    return [cont, buscador, nav.nodo];
   }
   if (paso === 'hoteles') {
     const provs = zona?.provincias ?? [];
-    const listas = await Promise.all(provs.map((p) => api('GET', `/api/hoteles?provincia=${encodeURIComponent(p)}`).then((x) => x.items).catch(() => [])));
-    const recs = await Promise.all(provs.map((p) => api('GET', `/api/hoteles/recomendado?provincia=${encodeURIComponent(p)}`).then((x) => x.item).catch(() => null)));
-    const enZona = (x) => !zona.municipios?.[x.provincia]?.length || zona.municipios[x.provincia].includes(x.municipio);
-    const hs = listas.flat().filter((x) => x.estado !== 'inactivo' && enZona(x)).sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || (Number(a.precioNoche) || 9e9) - (Number(b.precioNoche) || 9e9));
-    const recIds = new Set(recs.map((x) => x?.hotel?.id).filter(Boolean));
+    const puedeEditar = ES_GER();
+    const reqs = (await api('GET', '/api/hoteles/requisitos')).items;
+    const cont = h('div', { class: 'asis-lista', 'aria-live': 'polite' }); const sel = new Set(); let deshacer = null; let abierto = false;
     const nav = navPasosRep('hoteles', ir, { siguiente: () => { ses.add('hoteles'); } });
-    return [h('div', { class: 'tarjeta' }, h('h2', {}, `Hoteles de su zona (${fmtN.format(hs.length)})`),
-      h('p', { class: 'hint' }, 'Cuando un día del cronograma está marcado "duerme fuera", la noche entra al presupuesto con el hotel recomendado de esa provincia (el más económico con precio confirmado que cumple los requisitos) o con el precio de referencia.'),
-      h('dl', { class: 'rejilla' }, provs.map((p, i) => h('div', { class: 'cifra' }, h('dt', {}, `Recomendado en ${p}`), h('dd', {}, recs[i]?.hotel ? `${recs[i].hotel.nombre}, ${RD(recs[i].hotel.precioNoche)}` : 'Sin hotel confirmado')))),
-      hs.length ? tabla([{ t: 'Hotel', v: (x) => [x.nombre, recIds.has(x.id) ? h('span', { class: 'chip ok', style: 'margin-left:.4rem' }, 'Recomendado') : null] }, { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` },
-        { t: 'Precio por noche', num: true, v: (x) => (Number(x.precioNoche) > 0 ? RD(x.precioNoche) : h('span', { class: 'chip pendiente' }, 'Sin precio')) }, { t: 'Teléfono', v: (x) => x.telefono ?? '' }], hs, ['', ''], { porPagina: 10 })
-        : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay hoteles registrados en su zona'), 'Si nunca duerme fuera, puedes seguir. Para agregar uno, ve a ', h('a', { href: '#hoteles' }, 'Hoteles'), '.')), nav.nodo];
+    const enZona = (x) => !zona.municipios?.[x.provincia]?.length || zona.municipios[x.provincia].includes(x.municipio);
+    const lote = async (ids, estado, hecho) => {
+      try { await api('POST', '/api/hoteles/lote', { ids, estado }); } catch (e) { alert(e.message); return; }
+      deshacer = hecho ? { texto: hecho, ids, estado: estado === 'inactivo' ? 'activo' : 'inactivo' } : null; sel.clear(); await pintar();
+    };
+    const quitar = (ids) => lote(ids, 'inactivo', `${fmtN.format(ids.length)} hotel(es) quitado(s): ya no se usan para las noches fuera.`);
+    const volver = (ids) => lote(ids, 'activo', `${fmtN.format(ids.length)} hotel(es) se vuelven a usar.`);
+    async function pintar() {
+      const [listas, recs] = await Promise.all([Promise.all(provs.map((p) => api('GET', `/api/hoteles?provincia=${encodeURIComponent(p)}`).then((x) => x.items).catch(() => []))),
+        Promise.all(provs.map((p) => api('GET', `/api/hoteles/recomendado?provincia=${encodeURIComponent(p)}`).then((x) => x.item).catch(() => null)))]);
+      const todos = listas.flat().filter(enZona);
+      const hs = todos.filter((x) => x.estado !== 'inactivo'); const fuera = todos.filter((x) => x.estado === 'inactivo');
+      const recIds = new Set(recs.map((x) => x?.hotel?.id).filter(Boolean));
+      let vistos = [];
+      const todosVis = h('input', { type: 'checkbox', 'aria-label': 'Marcar todos los hoteles que se ven' });
+      const bMarc = h('button', { class: 'btn-sec btn-peq btn-peligro', type: 'button', disabled: true });
+      const bTodos = h('button', { class: 'btn-sec btn-peq', type: 'button' });
+      const contar = () => {
+        const n = vistos.filter((x) => sel.has(x.id)).length;
+        todosVis.checked = n > 0 && n === vistos.length; todosVis.indeterminate = n > 0 && n < vistos.length;
+        bMarc.disabled = !sel.size; bMarc.textContent = sel.size ? `Quitar ${fmtN.format(sel.size)} marcado(s)` : 'Quitar marcados';
+        bTodos.textContent = `Quitar todos los que se ven (${fmtN.format(vistos.length)})`; bTodos.disabled = !vistos.length;
+      };
+      todosVis.addEventListener('change', () => { vistos.forEach((x) => (todosVis.checked ? sel.add(x.id) : sel.delete(x.id))); cont.querySelectorAll('input[data-hotel]').forEach((c) => { c.checked = sel.has(c.dataset.hotel); }); contar(); });
+      bMarc.addEventListener('click', () => quitar([...sel]));
+      bTodos.addEventListener('click', async () => { if (await confirmar('Quitar todos', `${fmtN.format(vistos.length)} hotel(es) dejarán de usarse para las noches fuera. Su historial se conserva y puedes deshacerlo.`, { okTexto: `Quitar ${fmtN.format(vistos.length)}` })) quitar(vistos.map((x) => x.id)); });
+      const precio = (x) => {
+        if (!puedeEditar) return Number(x.precioNoche) > 0 ? RD(x.precioNoche) : h('span', { class: 'chip pendiente' }, 'Sin precio');
+        const i = h('input', { type: 'number', min: 1, step: 0.01, inputmode: 'decimal', class: 'precio-celda', value: x.precioNoche ?? '', placeholder: 'Sin precio', 'aria-label': `Precio por noche de ${x.nombre} en RD$` });
+        const ok = h('small', { class: 'precio-ok', 'aria-live': 'polite' });
+        i.addEventListener('change', async () => {
+          ok.textContent = 'Guardando…';
+          try { await api('POST', `/api/hoteles/${x.id}`, { precioNoche: i.value || null }); x.precioNoche = i.value ? Number(i.value) : null; ok.textContent = 'Guardado'; setTimeout(() => { ok.textContent = ''; }, 2500); }
+          catch (e) { ok.textContent = ''; alert(e.message); i.value = x.precioNoche ?? ''; }
+        });
+        return h('div', { class: 'precio-caja' }, h('span', { 'aria-hidden': 'true' }, 'RD$'), i, ok);
+      };
+      const estadoReq = (x) => x.cumple ? h('span', { class: 'chip validado' }, 'Cumple todo') : h('span', { class: 'chip pendiente', title: (x.faltan ?? []).map((k) => reqs.find((q) => q.value === k)?.label ?? k).join(', ') }, `Faltan ${fmtN.format(x.faltan?.length ?? reqs.length)} requisito(s)`);
+      const cols = [
+        ...(puedeEditar ? [{ t: '', v: (x) => h('input', { type: 'checkbox', 'data-hotel': x.id, checked: sel.has(x.id), 'aria-label': `Marcar ${x.nombre}`, onchange: (e) => { e.target.checked ? sel.add(x.id) : sel.delete(x.id); contar(); } }) }] : []),
+        { t: 'Hotel', v: (x) => [h('span', {}, x.nombre, recIds.has(x.id) ? h('span', { class: 'chip ok', style: 'margin-left:.4rem' }, 'Recomendado') : null), h('small', { style: 'display:block;color:var(--texto-2)' }, [x.telefono, x.direccion].filter(Boolean).join('. '))] },
+        { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` },
+        { t: 'Precio por noche', v: precio }, { t: 'Requisitos', v: estadoReq },
+        ...(puedeEditar ? [{ t: '', v: (x) => h('div', { class: 'acciones-fila' }, h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: async () => { if (await editarHotel(x, reqs)) pintar(); } }, 'Editar'), h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => quitar([x.id]) }, 'Quitar')) }] : []),
+      ];
+      const campos = [
+        { id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Nombre, teléfono o dirección', valor: (x) => `${x.nombre} ${x.telefono ?? ''} ${x.direccion ?? ''}` },
+        { id: 'mun', etiqueta: 'Municipios', tipo: 'opciones', plural: 'municipios', opciones: [...new Set(hs.map((x) => x.municipio))].sort((a, b) => a.localeCompare(b, 'es')), valor: (x) => x.municipio },
+        { id: 'precio', etiqueta: 'Precio', tipo: 'opciones', opciones: [{ value: 'con', label: 'Con precio' }, { value: 'sin', label: 'Sin precio' }], valor: (x) => (Number(x.precioNoche) > 0 ? 'con' : 'sin') },
+      ];
+      const lista = hs.length ? listaFiltrada(`asis-hoteles-${rep}`, hs, campos, (vs, activos) => {
+        vistos = vs; contar();
+        return h('div', {}, puedeEditar ? h('div', { class: 'lote-barra asis-lote' }, h('label', { class: 'check' }, todosVis, h('span', {}, 'Marcar los que se ven')), bMarc, bTodos) : null,
+          tabla(cols, vs, activos ? ['Ningún hotel con estos filtros', 'Cambia o limpia los filtros.'] : ['', ''], { porPagina: 10 }));
+      }) : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay hoteles en uso en su zona'), 'Si nunca duerme fuera, puedes seguir. Para agregar uno, búscalo abajo.');
+      const quitados = fuera.length && puedeEditar ? h('details', { class: 'tarjeta asis-quitados', open: abierto, ontoggle: (e) => { abierto = e.target.open; } }, h('summary', {}, `Hoteles que no se usan (${fmtN.format(fuera.length)})`),
+        h('div', { class: 'acciones', style: 'margin-top:0' }, h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver(fuera.map((x) => x.id)) }, `Volver a usar todos (${fmtN.format(fuera.length)})`)),
+        tabla([{ t: 'Hotel', v: (x) => x.nombre }, { t: 'Municipio', v: (x) => x.municipio }, { t: 'Precio', num: true, v: (x) => (Number(x.precioNoche) > 0 ? RD(x.precioNoche) : '') },
+          { t: '', v: (x) => h('button', { class: 'btn btn-peq', type: 'button', onclick: () => volver([x.id]) }, 'Volver a usar') }], fuera, ['', ''], { porPagina: 10 })) : null;
+      cont.replaceChildren(
+        deshacer ? h('div', { class: 'asis-deshacer', role: 'status' }, h('span', {}, deshacer.texto), h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => lote(deshacer.ids, deshacer.estado, null) }, 'Deshacer')) : null,
+        h('div', { class: 'tarjeta' }, h('h2', {}, `Hoteles de su zona (${fmtN.format(hs.length)})`),
+          h('p', { class: 'hint' }, 'Cuando un día del cronograma está marcado "duerme fuera", la noche entra al presupuesto con el hotel recomendado de esa provincia: el más económico con precio confirmado que cumple todos los requisitos. Si ninguno cumple, se usa el precio de referencia.'),
+          h('dl', { class: 'rejilla' }, provs.map((p, i) => h('div', { class: 'cifra' }, h('dt', {}, `Recomendado en ${p}`), h('dd', {}, recs[i]?.hotel ? `${recs[i].hotel.nombre}, ${RD(recs[i].hotel.precioNoche)}` : 'Sin hotel confirmado')))),
+          recs.some((x) => !x) && puedeEditar ? h('p', { class: 'hint' }, 'Para tener recomendado, escribe el precio y marca los requisitos con "Editar".') : null, lista),
+        quitados);
+    }
+    await pintar();
+    const zm = Object.fromEntries(provs.map((p) => [p, zona.municipios?.[p]?.length ? zona.municipios[p] : div.municipios[p]]));
+    const buscador = puedeEditar ? await buscadorGoogle([['hotel', 'Hoteles']], () => pintar(), { provincias: provs, municipios: zm, titulo: 'Buscar y agregar hoteles', nota: 'Busca en Google Maps dentro de su zona y agrega con un clic. Después escribe su precio y marca los requisitos.' }) : null;
+    return [cont, buscador, nav.nodo];
   }
   if (paso === 'cronograma') {
     const esAdmin = yo.role === 'administrador';
@@ -3755,6 +3862,29 @@ function campoPuntoSalida(valor, res) {
     res0,
     h('div', { class: 'field' }, h('label', { for: 'res-dir' }, 'Nombre del lugar de salida ', h('small', {}, '(se puede editar; solo lo ven la gerencia y el representante)')), nombre, h('p', { class: 'error', dataset: { for: 'residencia.direccion' } })));
   return { nodo, leer: () => leerPunto(coords.value) };
+}
+/** Editar un hotel: nombre, teléfono, dirección, precio por noche, requisitos y notas. Devuelve true si se guardó. */
+async function editarHotel(x, reqs) {
+  const d = $('#dialogo'); $('#dialogo-titulo').textContent = `Editar ${x.nombre}`;
+  const inp = (id, label, props) => [h('label', { for: id, class: 'hint' }, label), h('input', { id, ...props })];
+  const cajas = reqs.map((q) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: `req-${q.value}`, checked: x.requisitos?.[q.value] === true }), h('span', {}, q.label)));
+  const notas = h('textarea', { id: 'eh-notas', rows: 2 }, x.notas ?? '');
+  const err = h('p', { class: 'error', role: 'alert' });
+  $('#dialogo-cuerpo').replaceChildren(h('p', { class: 'hint' }, `${x.municipio}, ${x.provincia}. Marca solo lo que hayas verificado por llamada o visita.`),
+    ...inp('eh-nombre', 'Nombre', { value: x.nombre, maxlength: 160 }), ...inp('eh-tel', 'Teléfono', { value: x.telefono ?? '', inputmode: 'tel' }),
+    ...inp('eh-dir', 'Dirección', { value: x.direccion ?? '', maxlength: 200 }), ...inp('eh-precio', 'Precio por noche RD$', { type: 'number', min: 1, step: 0.01, inputmode: 'decimal', value: x.precioNoche ?? '' }),
+    h('div', { class: 'dialogo-checks' }, cajas), h('label', { for: 'eh-notas', class: 'hint' }, 'Notas'), notas, err);
+  $('#dialogo-ok').textContent = 'Guardar'; d.showModal();
+  for (;;) {
+    const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
+    if (!ok) return false;
+    const v = (id) => d.querySelector(`#${id}`).value;
+    try {
+      await api('POST', `/api/hoteles/${x.id}`, { nombre: v('eh-nombre'), telefono: v('eh-tel'), direccion: v('eh-dir'), precioNoche: v('eh-precio') || null, notas: notas.value,
+        requisitos: Object.fromEntries(reqs.map((q) => [q.value, d.querySelector(`input[name="req-${q.value}"]`).checked])) });
+      aviso('Hotel actualizado.', 'ok'); return true;
+    } catch (e) { err.textContent = e.fields ? Object.values(e.fields).join(' ') : e.message; d.showModal(); }
+  }
 }
 /** Errores de un paso: cada campo marcado y un aviso general. */
 function errPaso(f, fields, msg = 'Completa este paso para seguir.') {

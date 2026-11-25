@@ -3,7 +3,7 @@
 // Dependiente: su farmacia (provincia, municipio, sector), vouchers y comisión.
 // Gestión: equipo, catálogo, cobertura y viáticos del mes.
 import { AuthError as HttpError } from './auth.js';
-import { dentroDeZona, TIPOS_ESTABLECIMIENTO } from './territorio.js';
+import { dentroDeZona, excluidoDeRuta, TIPOS_ESTABLECIMIENTO } from './territorio.js';
 import { cumpleTodo } from './hoteles.js';
 import { hoyRD } from './periodos.js';
 
@@ -95,7 +95,7 @@ export function createInicio({ data, users, v, c, t, now = () => new Date() }) {
     const zonas = await data.list('zonas');
     const cobertura = reps.map((u) => {
       const z = zonas.find((x) => x.representanteId === u.id);
-      const enZona = z ? farmacias.filter((f) => dentroDeZona(z, f.provincia, f.municipio)).length + ests.filter((e) => dentroDeZona(z, e.provincia, e.municipio)).length : 0;
+      const enZona = z ? farmacias.filter((f) => dentroDeZona(z, f.provincia, f.municipio) && !excluidoDeRuta(z, f.id)).length + ests.filter((e) => dentroDeZona(z, e.provincia, e.municipio) && !excluidoDeRuta(z, e.id)).length : 0;
       const prog = new Set(crons.filter((x) => x.representanteId === u.id).flatMap((x) => x.lugares.map((l) => `${l.refTipo}:${l.refId}`))).size;
       return { id: u.id, nombre: u.fullName, posicion: u.position, provincias: z?.provincias ?? [], lugares: enZona, programados: prog, dias: crons.filter((x) => x.representanteId === u.id).length, cobertura: enZona ? r2((prog / enZona) * 100) : 0 };
     });

@@ -50,6 +50,8 @@ export function posibleError(nombre) {
 }
 
 /** ¿Ese municipio está dentro de la zona? Una provincia sin lista de municipios cubre todos los suyos. */
+/** El lugar fue quitado de la ruta de ese representante (aunque esté en su zona). */
+export const excluidoDeRuta = (z, id) => Boolean(z?.excluidos?.includes?.(id));
 export function dentroDeZona(zona, provincia, municipio) {
   if (!zona?.provincias?.includes(provincia)) return false;
   const ms = zona.municipios?.[provincia];
@@ -190,8 +192,12 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     const z = await zonaDe(repId);
     if (!z?.provincias?.length) return { zona: { provincias: [], municipios: {} }, farmacias: [], establecimientos: [], resumen: [] };
     const activo = (x) => !['inactivo', 'inactiva'].includes(x.estado);
-    const farmacias = (await data.list('farmacias')).filter((x) => activo(x) && dentroDeZona(z, x.provincia, x.municipio));
-    const establecimientos = (await data.list('establecimientos')).filter((x) => activo(x) && dentroDeZona(z, x.provincia, x.municipio));
+    const fuera = new Set(z.excluidos ?? []);
+    const todasF = (await data.list('farmacias')).filter((x) => activo(x) && dentroDeZona(z, x.provincia, x.municipio));
+    const todosE = (await data.list('establecimientos')).filter((x) => activo(x) && dentroDeZona(z, x.provincia, x.municipio));
+    const farmacias = todasF.filter((x) => !fuera.has(x.id)); const establecimientos = todosE.filter((x) => !fuera.has(x.id));
+    // Quitados solo de su ruta (siguen en el catálogo y en la zona de otros): se pueden volver a agregar.
+    const excluidos = [...todasF.filter((x) => fuera.has(x.id)).map((x) => ({ ...x, tipo: 'farmacia' })), ...todosE.filter((x) => fuera.has(x.id))];
     const porMun = new Map();
     for (const x of [...farmacias.map((f) => ({ ...f, tipo: 'farmacia' })), ...establecimientos]) {
       const k = `${x.provincia}|${x.municipio}`;
@@ -201,7 +207,26 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
       porMun.set(k, r);
     }
     const resumen = [...porMun.values()].sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es'));
-    return { zona: { provincias: z.provincias, municipios: z.municipios ?? {} }, farmacias, establecimientos, resumen };
+    return { zona: { provincias: z.provincias, municipios: z.municipios ?? {} }, farmacias, establecimientos, resumen, excluidos };
+  }
+  /**
+   * Quita lugares de la ruta de un representante (o los vuelve a poner). No toca el catálogo ni a otros
+   * representantes: sale de su propuesta de cronograma y de su meta de visitas. Queda auditado.
+   */
+  async function excluirLugares(actor, repId, input = {}) {
+    permitir(rol(actor, GESTION), 'Solo la administración, la gerencia o la supervisión cambian los lugares de una ruta.');
+    const z = await zonaDe(repId);
+    if (!z?.provincias?.length) throw new HttpError(409, 'Asigna primero su zona de trabajo.');
+    const ids = (x) => [...new Set((Array.isArray(x) ? x : []).map(String).filter((s) => /^[\w-]{1,64}$/.test(s)))];
+    const quitar = ids(input.quitar); const volver = ids(input.volver);
+    if (!quitar.length && !volver.length) invalido({ ids: 'Elige al menos un lugar.' });
+    if (quitar.length + volver.length > 2000) invalido({ ids: 'Máximo 2,000 lugares por vez.' });
+    const antes = new Set(z.excluidos ?? []);
+    const nuevo = new Set(antes); quitar.forEach((i) => nuevo.add(i)); volver.forEach((i) => nuevo.delete(i));
+    const lista = [...nuevo];
+    await data.update('zonas', z.id, { excluidos: lista, actualizadoPor: actor.id });
+    await audit({ actorId: actor.id, action: 'ruta_lugares_cambiados', entity: 'user', entityId: repId, before: { excluidos: antes.size }, after: { quitados: quitar.filter((i) => !antes.has(i)).length, devueltos: volver.filter((i) => antes.has(i)).length, excluidos: lista.length } });
+    return { excluidos: lista.length, quitados: quitar.filter((i) => !antes.has(i)).length, devueltos: volver.filter((i) => antes.has(i)).length };
   }
 
   // ------------------------------------------------------------ establecimientos
@@ -516,7 +541,7 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
 
   return {
     division: () => ({ provincias: PROVINCIAS, municipios: DIVISION, tipos: TIPOS_ESTABLECIMIENTO }),
-    provinciasDe, zonaActor, asignarZona, verZona, conflictosZona, mensajeConflicto, zonasOcupadas, lugaresDeZona, descartarEstablecimientos, restaurarEstablecimiento,
+    provinciasDe, zonaActor, asignarZona, verZona, conflictosZona, mensajeConflicto, zonasOcupadas, lugaresDeZona, excluirLugares, descartarEstablecimientos, restaurarEstablecimiento,
     crearEstablecimiento, listarEstablecimientos, validarEstablecimiento,
     buscarPreregistro, confirmarPreregistro, listarPreregistros, anularPreregistro,
     importar, historialPrecio, cambiarPrecio,

@@ -89,6 +89,15 @@ export function createHoteles({ data, audit, now = () => new Date() }) {
       cambios.requisitos = Object.fromEntries(CLAVES.map((k) => [k, input.requisitos?.[k] === true]));
     }
     if (input.notas !== undefined) cambios.notas = normalizeName(input.notas).slice(0, 300) || null;
+    if (input.nombre !== undefined) {
+      const n = normalizeName(input.nombre);
+      if (n.length < 2 || n.length > 160) e.nombre = 'Escribe el nombre del hotel.'; else if (n !== h.nombre) cambios.nombre = n;
+    }
+    if (input.telefono !== undefined) {
+      const t = normalizeName(input.telefono);
+      if (t && !/^[\d\s()+-]{7,20}$/.test(t)) e.telefono = 'Escribe un teléfono válido o déjalo vacío.'; else cambios.telefono = t || null;
+    }
+    if (input.direccion !== undefined) cambios.direccion = normalizeName(input.direccion).slice(0, 200) || null;
     if (input.estado !== undefined) {
       if (!['activo', 'inactivo'].includes(input.estado)) e.estado = 'Estado no válido.'; else cambios.estado = input.estado;
     }
@@ -96,8 +105,26 @@ export function createHoteles({ data, audit, now = () => new Date() }) {
     if (!Object.keys(cambios).length) return vista(h);
     const out = await data.update('hoteles', id, { ...cambios, verificadoPor: actor.id, verificadoEn: now().toISOString() });
     await audit({ actorId: actor.id, action: 'hotel_verificado', entity: 'hotel', entityId: id,
-      before: { precioNoche: h.precioNoche ?? null, requisitos: h.requisitos ?? {}, estado: h.estado }, after: cambios });
+      before: { precioNoche: h.precioNoche ?? null, requisitos: h.requisitos ?? {}, estado: h.estado, ...(cambios.nombre ? { nombre: h.nombre } : {}), ...('telefono' in cambios ? { telefono: h.telefono ?? null } : {}) }, after: cambios });
     return vista(out);
+  }
+
+  /** Quitar (no usar) o volver a usar varios hoteles a la vez. Nada se borra: el historial de hospedajes se conserva. */
+  async function estadoLote(actor, ids, estado) {
+    permitir(gestion(actor), 'Solo la administración o la gerencia cambian hoteles.');
+    if (!['activo', 'inactivo'].includes(estado)) invalido({ estado: 'Estado no válido.' });
+    const lista = [...new Set((Array.isArray(ids) ? ids : []).map(String))];
+    if (!lista.length) invalido({ ids: 'Elige al menos un hotel.' });
+    if (lista.length > 500) invalido({ ids: 'Máximo 500 hoteles por vez.' });
+    let n = 0;
+    for (const id of lista) {
+      const h = await data.get('hoteles', id);
+      if (!h || h.estado === estado) continue;
+      await data.update('hoteles', id, { estado });
+      await audit({ actorId: actor.id, action: estado === 'inactivo' ? 'hotel_quitado' : 'hotel_reactivado', entity: 'hotel', entityId: id, before: { estado: h.estado }, after: { estado } });
+      n++;
+    }
+    return { cambiados: n };
   }
 
   async function recomendado(actor, { provincia, municipio }) {
@@ -117,5 +144,5 @@ export function createHoteles({ data, audit, now = () => new Date() }) {
     return h;
   }
 
-  return { crear, listar, actualizar, recomendado, paraHospedaje };
+  return { crear, listar, actualizar, estadoLote, recomendado, paraHospedaje };
 }

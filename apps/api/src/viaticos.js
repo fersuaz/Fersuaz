@@ -7,7 +7,7 @@ import { calcularCombustible, calcularAlimentacion, calcularHospedaje, calcularP
 import { esFechaISO, hoyRD } from './periodos.js';
 import { normalizeName, leerCoordenadas } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
-import { dentroDeZona } from './territorio.js';
+import { dentroDeZona, excluidoDeRuta } from './territorio.js';
 import { proponer, diasLaborables, copiarFechas } from './propuesta-cronograma.js';
 import { elegirHotel } from './hoteles.js';
 
@@ -312,8 +312,8 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     const activo = (x) => !['inactivo', 'inactiva'].includes(x.estado);
     const aRef = (refTipo) => (x) => ({ refTipo, refId: x.id, lugar: x.nombre, provincia: x.provincia, municipio: x.municipio, tipo: refTipo === 'farmacia' ? 'farmacia' : x.tipo, ...(x.lat != null && x.lng != null ? { lat: Number(x.lat), lng: Number(x.lng) } : {}) });
     const lugares = [
-      ...(await data.list('farmacias')).filter((x) => activo(x) && dentroDeZona(zona, x.provincia, x.municipio)).map(aRef('farmacia')),
-      ...(await data.list('establecimientos')).filter((x) => activo(x) && dentroDeZona(zona, x.provincia, x.municipio)).map(aRef('establecimiento')),
+      ...(await data.list('farmacias')).filter((x) => activo(x) && dentroDeZona(zona, x.provincia, x.municipio) && !excluidoDeRuta(zona, x.id)).map(aRef('farmacia')),
+      ...(await data.list('establecimientos')).filter((x) => activo(x) && dentroDeZona(zona, x.provincia, x.municipio) && !excluidoDeRuta(zona, x.id)).map(aRef('establecimiento')),
     ].filter((l) => !programados.has(`${l.refTipo}:${l.refId}`));
     const fechas = diasLaborables(mes, { desde: hoy(), excluir: [...crons.map((c) => c.fecha), ...libresQuitados], sabados: sabados === true || sabados === 'true', dias: semana ?? undefined });
     const perfil = await perfilDe(rep.id);
