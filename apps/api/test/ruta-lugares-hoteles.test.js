@@ -74,3 +74,16 @@ test('Hoteles: editar nombre, teléfono y precio; quitar varios y deshacer', asy
     assert.equal((await call('GET', '/api/hoteles?provincia=Espaillat', null, t.rep)).body.items.length, 2);
   } finally { server.close(); }
 });
+
+test('Listas en un solo pedido: todas las zonas y todos los planes de días', async () => {
+  const { server, call, t, id } = await setup();
+  try {
+    const z = await call('GET', '/api/territorio/zonas', null, t.gerente);
+    assert.equal(z.status, 200);
+    assert.deepEqual(z.body.items.find((x) => x.representanteId === id.rep).provincias, ['Espaillat']);
+    assert.equal((await call('GET', '/api/territorio/zonas', null, t.rep)).status, 403);
+    const p = await call('GET', '/api/representantes/plan-dias', null, t.gerente);
+    assert.equal(p.status, 200); assert.ok(Array.isArray(p.body.items));
+    assert.equal((await call('GET', '/api/representantes/plan-dias', null, t.rep)).status, 403);
+  } finally { server.close(); }
+});

@@ -181,6 +181,11 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     await audit({ actorId: actor.id, action: 'zona_asignada', entity: 'user', entityId: repId, before: antes ? { provincias: antes.provincias, municipios: antes.municipios ?? {} } : null, after: { provincias: lista, municipios } });
     return { ...z, municipios: z.municipios ?? {}, posicion };
   }
+  /** Todas las zonas de una vez (para listas: evita un pedido por representante). */
+  async function listarZonas(actor) {
+    permitir(rol(actor, [...GESTION, 'finanzas']));
+    return (await data.list('zonas')).map((z) => ({ representanteId: z.representanteId, provincias: z.provincias ?? [], municipios: z.municipios ?? {} }));
+  }
   async function verZona(actor, repId) {
     permitir(actor.id === repId || rol(actor, [...GESTION, 'finanzas']));
     const z = await zonaDe(repId);
@@ -541,7 +546,7 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
 
   return {
     division: () => ({ provincias: PROVINCIAS, municipios: DIVISION, tipos: TIPOS_ESTABLECIMIENTO }),
-    provinciasDe, zonaActor, asignarZona, verZona, conflictosZona, mensajeConflicto, zonasOcupadas, lugaresDeZona, excluirLugares, descartarEstablecimientos, restaurarEstablecimiento,
+    provinciasDe, zonaActor, asignarZona, verZona, listarZonas, conflictosZona, mensajeConflicto, zonasOcupadas, lugaresDeZona, excluirLugares, descartarEstablecimientos, restaurarEstablecimiento,
     crearEstablecimiento, listarEstablecimientos, validarEstablecimiento,
     buscarPreregistro, confirmarPreregistro, listarPreregistros, anularPreregistro,
     importar, historialPrecio, cambiarPrecio,

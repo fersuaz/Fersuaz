@@ -286,6 +286,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/representantes/clave-inicial', async ({ me }) => altas.verClaveInicial(me));
   ruta('POST', '/api/representantes/clave-inicial', async ({ me, body }) => altas.guardarClaveInicial(me, body ?? {}));
   ruta('POST', '/api/representantes/importar-paquete', async ({ me, body }) => altas.importarPaquete(me, body ?? {}), { limite: 12 * 1024 * 1024 });
+  ruta('GET', '/api/representantes/plan-dias', async ({ me }) => ({ items: await altas.planesDias(me) }));
   ruta('GET', /^\/api\/representantes\/([\w-]+)\/plan-dias$/, async ({ me, p }) => ({ item: await altas.planDias(me, p[1]) }));
   ruta('GET', '/api/representantes/inactivos', async ({ me }) => {
     if (!['administrador', 'gerencia'].includes(me.role)) throw new AuthError(403, 'Sin permiso.');
@@ -468,6 +469,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', /^\/api\/territorio\/establecimientos\/([\w-]+)\/restaurar$/, async ({ me, p }) => ({ item: await t.restaurarEstablecimiento(me, p[1]) }));
   ruta('POST', '/api/territorio/establecimientos', async ({ me, body }) => [201, { item: await t.crearEstablecimiento(me, body) }]);
   ruta('POST', /^\/api\/territorio\/establecimientos\/([\w-]+)\/validar$/, async ({ me, p }) => ({ item: await t.validarEstablecimiento(me, p[1]) }));
+  ruta('GET', '/api/territorio/zonas', async ({ me }) => ({ items: await t.listarZonas(me) }));
   ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p }) => ({ item: await t.verZona(me, p[1]) }));
   ruta('GET', '/api/territorio/zonas-ocupadas', async ({ me, q }) => ({ items: await t.zonasOcupadas(me, q.get('posicion'), q.get('excluir') || null) }));
   ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await t.asignarZona(me, p[1], body ?? {}) }));

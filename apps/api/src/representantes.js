@@ -291,5 +291,11 @@ export function createAltaRepresentantes({ store, t, v, data, notificar }) {
     return p ? { diasDentro: Number(p.diasDentro), diasFuera: Number(p.diasFuera), fuente: p.fuente ?? null, actualizado: p.updatedAt ?? p.createdAt ?? null } : null;
   }
 
-  return { alta, restablecerClave, editar, baja, reactivar, verClaveInicial, guardarClaveInicial, importarPaquete, planDias };
+  /** Días en zona y fuera de todos los representantes en un solo pedido. */
+  async function planesDias(actor) {
+    permitir(actor);
+    return (await data.list('planDias')).map((p) => ({ representanteId: p.representanteId, diasDentro: Number(p.diasDentro), diasFuera: Number(p.diasFuera), fuente: p.fuente ?? null, actualizado: p.updatedAt ?? p.createdAt ?? null }));
+  }
+
+  return { alta, restablecerClave, editar, baja, reactivar, verClaveInicial, guardarClaveInicial, importarPaquete, planDias, planesDias };
 }
