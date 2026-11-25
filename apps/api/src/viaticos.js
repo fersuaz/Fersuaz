@@ -3,7 +3,7 @@
 // los movimientos aprobados no se borran; los km son estimados manuales hasta conectar un proveedor de mapas.
 import { AuthError as HttpError } from './auth.js';
 import { STATUS, POSITIONS } from './roles.js';
-import { calcularCombustible, calcularAlimentacion, calcularHospedaje, calcularPresupuesto, detectarDuplicados, aplicarTope, calcularTransportePublico, semanasDelMes } from './calculos.js';
+import { calcularCombustible, calcularAlimentacion, calcularHospedaje, calcularPresupuesto, detectarDuplicados, aplicarTope, calcularTransportePublico, semanasDelMes, descontarDesayunos } from './calculos.js';
 import { esFechaISO, hoyRD } from './periodos.js';
 import { normalizeName, leerCoordenadas } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
@@ -60,6 +60,19 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
   }
 
   // ------------------------------------------------------------ perfiles
+  /** Desayuno, almuerzo y cena en RD$ (vacío = 0). null si no se usa el desglose. */
+  function leerDesglose(d, e) {
+    if (!d || typeof d !== 'object') return null;
+    const vacio = (x) => x == null || String(x).trim() === '';
+    if (['desayuno', 'almuerzo', 'cena'].every((k) => vacio(d[k]))) return null;
+    const out = {};
+    for (const k of ['desayuno', 'almuerzo', 'cena']) {
+      const v = vacio(d[k]) ? 0 : Number(d[k]);
+      if (!Number.isFinite(v) || v < 0 || v > 20000) e[`comidaDesglose.${k}`] = 'Escribe un monto en RD$ o déjalo vacío.'; else out[k] = r2(v);
+    }
+    if (!e['comidaDesglose.desayuno'] && !e['comidaDesglose.almuerzo'] && !e['comidaDesglose.cena'] && out.desayuno + out.almuerzo + out.cena <= 0) e['comidaDesglose.desayuno'] = 'Escribe al menos un monto.';
+    return out;
+  }
   /** Latitud y longitud exactas de donde sale (opcionales, ambas o ninguna, dentro de República Dominicana). */
   function coordenadasResidencia(res, e) {
     const vacio = (x) => x == null || String(x).trim() === '';
@@ -92,7 +105,10 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       if (vehiculo.combustible !== 'electrico' && (!Number.isFinite(vehiculo.rendimiento) || vehiculo.rendimiento <= 0 || vehiculo.rendimiento > 200)) e['vehiculo.rendimiento'] = 'Escribe el rendimiento real en km por galón.';
       if (vehiculo.anio != null && (!Number.isInteger(vehiculo.anio) || vehiculo.anio < 1980 || vehiculo.anio > Number(hoy().slice(0, 4)) + 1)) e['vehiculo.anio'] = 'Año no válido.';
     }
-    const tarifaAlimentacion = sinVehiculo && (input.tarifaAlimentacion == null || input.tarifaAlimentacion === '') ? 0 : num(input.tarifaAlimentacion);
+    // Comida por día: un monto, o desayuno + almuerzo + cena (la suma es la comida del día).
+    const comidaDesglose = leerDesglose(input.comidaDesglose, e);
+    const tarifaAlimentacion = comidaDesglose ? r2(comidaDesglose.desayuno + comidaDesglose.almuerzo + comidaDesglose.cena)
+      : sinVehiculo && (input.tarifaAlimentacion == null || input.tarifaAlimentacion === '') ? 0 : num(input.tarifaAlimentacion);
     if (!Number.isFinite(tarifaAlimentacion) || tarifaAlimentacion < 0) e.tarifaAlimentacion = 'Escribe la tarifa diaria de alimentación en RD$.';
     const reembolsoPorKm = num(input.reembolsoPorKm);
     if (reembolsoPorKm != null && (!Number.isFinite(reembolsoPorKm) || reembolsoPorKm <= 0)) e.reembolsoPorKm = 'Escribe un monto por km mayor que cero, o déjalo vacío.';
@@ -110,7 +126,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       }
     }
     if (Object.keys(e).length) invalido(e);
-    return { residencia, vehiculo, tarifaAlimentacion: r2(tarifaAlimentacion), reembolsoPorKm: reembolsoPorKm == null ? null : r2(reembolsoPorKm), topeCombustible: topeCombustible == null ? null : r2(topeCombustible), publico };
+    return { residencia, vehiculo, comidaDesglose, tarifaAlimentacion: r2(tarifaAlimentacion), reembolsoPorKm: reembolsoPorKm == null ? null : r2(reembolsoPorKm), topeCombustible: topeCombustible == null ? null : r2(topeCombustible), publico };
   }
   async function guardarPerfil(actor, representanteId, input) {
     permitir(rol(actor, ['administrador', 'gerencia', 'supervisor']), 'Solo la gerencia o los supervisores configuran perfiles de viático.');
@@ -632,7 +648,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     const errores = new Set();
     const necesitaKm = perfil.vehiculo?.propiedad !== 'ninguno';
     const fuera = crons.filter((c) => c.duermeFuera === true); const sinHotel = new Set();
-    const hotelesTodos = fuera.length ? await data.list('hoteles') : [];
+    const hotelesTodos = fuera.length || js.some((j) => j.hospedaje?.hotelId) ? await data.list('hoteles') : [];
     const referencia = fuera.length ? await referenciaHotel() : null;
     const hotelPlan = (c) => {
       if (c.duermeFuera !== true) return null;
@@ -650,8 +666,23 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
           peajes: 0, estacionamiento: 0, otros: 0, paradas: c.lugares ?? [], lugares: (c.lugares ?? []).length });
       });
     }
-    return { dias: dias.sort((a, b) => a.fecha.localeCompare(b.fecha)), errores: [...errores], sinHotel: [...sinHotel] };
+    // Desayuno incluido en el hotel de esa noche (aprobada): su valor se descuenta de la comida de ese día.
+    const porId = new Map(hotelesTodos.map((h) => [h.id, h])); const sinValorDesayuno = new Set();
+    for (const d of dias) {
+      const h = d.hospedaje?.estado === 'aprobado' && d.hospedaje.hotelId ? porId.get(d.hospedaje.hotelId) : null;
+      if (!h?.desayunoIncluido) continue;
+      // Se rebaja el desayuno del representante (su comida desglosada); si no lo tiene, el valor puesto en el hotel.
+      const propio = Number(perfil.comidaDesglose?.desayuno) > 0 ? Number(perfil.comidaDesglose.desayuno) : null;
+      const valor = propio ?? (Number(h.valorDesayuno) > 0 ? Number(h.valorDesayuno) : null);
+      if (valor) d.desayuno = { valor, hotel: h.nombre, fuente: propio ? 'representante' : 'hotel' };
+      else sinValorDesayuno.add(h.nombre);
+    }
+    const avisosDia = [...sinValorDesayuno].map((n) => `${n} incluye desayuno, pero no se sabe cuánto rebajar: pon el desayuno en la comida del representante (desayuno, almuerzo y cena) o el valor en el hotel.`);
+    return { dias: dias.sort((a, b) => a.fecha.localeCompare(b.fecha)), errores: [...errores], sinHotel: [...sinHotel], avisosDia };
   }
+  /** Valor del desayuno incluido por fecha (de los hoteles de las noches fuera). */
+  const resumenDesayunos = (des, dias) => (des.noches ? { noches: des.noches, descuento: des.descuento, porDia: des.porDia.map((x) => ({ ...x, hotel: dias.find((d) => d.fecha === x.fecha)?.desayuno?.hotel ?? null })) } : null);
+  const desayunosDe = (ds) => Object.fromEntries(ds.filter((d) => d.desayuno && d.conAlimentacion !== false).map((d) => [d.fecha, d.desayuno.valor]));
   /** Agrupa los días por semana y suma cada partida (el combustible, por precio vigente dentro de la semana). */
   async function porSemana(mes, dias, { costoCombustible, comidaDia }) {
     const semanas = semanasDelMes(mes, dias.map((d) => d.fecha));
@@ -673,11 +704,11 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     const faltan = [];
     const perfil = await perfilDe(repId);
     if (!perfil) return { faltan: ['El perfil de viático (vehículo, residencia y tarifa de comida) no está configurado.'] };
-    const { dias, errores, sinHotel } = await diasDelMes(repId, mes, perfil);
+    const { dias, errores, sinHotel, avisosDia } = await diasDelMes(repId, mes, perfil);
     faltan.push(...sinHotel);
     if (!dias.length) return { faltan: ['No hay días aprobados en el cronograma ni jornadas en ese mes.'] };
     const v = perfil.vehiculo;
-    if (v.propiedad === 'ninguno') return calcularPublico(repId, perfil, mes, dias, faltan);
+    if (v.propiedad === 'ninguno') { const x = await calcularPublico(repId, perfil, mes, dias, faltan); return x.avisos ? { ...x, avisos: [...x.avisos, ...avisosDia] } : x; }
     const sinKm = dias.filter((d) => d.km == null);
     if (sinKm.length) faltan.push(`${sinKm.length} día(s) del cronograma no tienen km por carretera (${errores.join('; ') || 'sin datos del mapa'}). Se calculan cuando el representante crea la jornada de ese día.`);
     const km = r2(dias.reduce((s, d) => s + (d.km || 0), 0));
@@ -708,14 +739,17 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     const base = await tarifasDePosicion(rep?.position);
     const zonaC = (await data.list('zonas', { representanteId: repId }))[0] ?? null;
     const esDentroC = zonaC?.provincias?.length ? (p) => dentroDeZona(zonaC, p.provincia, p.municipio) : (p) => p.provincia === perfil.residencia?.provincia && p.municipio === perfil.residencia?.municipio;
-    const comidaDentro = perfil.publico?.comidaDentro ?? base.montos.comidaDentro ?? perfil.tarifaAlimentacion;
-    const comidaFuera = perfil.publico?.comidaFuera ?? base.montos.comidaFuera ?? perfil.tarifaAlimentacion;
-    const fuentesComida = perfil.publico?.comidaDentro != null || perfil.publico?.comidaFuera != null ? 'representante' : base.montos.comidaDentro != null || base.montos.comidaFuera != null ? base.fuente : 'perfil';
+    const desg = perfil.comidaDesglose ? r2(perfil.comidaDesglose.desayuno + perfil.comidaDesglose.almuerzo + perfil.comidaDesglose.cena) : null;
+    const comidaDentro = desg ?? perfil.publico?.comidaDentro ?? base.montos.comidaDentro ?? perfil.tarifaAlimentacion;
+    const comidaFuera = desg ?? perfil.publico?.comidaFuera ?? base.montos.comidaFuera ?? perfil.tarifaAlimentacion;
+    const fuentesComida = desg != null ? 'desglose' : perfil.publico?.comidaDentro != null || perfil.publico?.comidaFuera != null ? 'representante' : base.montos.comidaDentro != null || base.montos.comidaFuera != null ? base.fuente : 'perfil';
     const comidaDe = (ds) => {
       const porFecha = new Map();
       for (const d of ds) { if (!d.conAlimentacion) continue; const f = porFecha.get(d.fecha) ?? false; porFecha.set(d.fecha, f || (d.paradas ?? []).some((p) => !esDentroC(p))); }
       let dentro = 0; let fuera = 0; for (const x of porFecha.values()) { if (x) fuera++; else dentro++; }
-      return { dentro, fuera, monto: r2(dentro * (comidaDentro ?? 0) + fuera * (comidaFuera ?? 0)) };
+      const bruto = r2(dentro * (comidaDentro ?? 0) + fuera * (comidaFuera ?? 0));
+      const des = descontarDesayunos([...porFecha].map(([fecha, x]) => ({ fecha, monto: (x ? comidaFuera : comidaDentro) ?? 0 })), desayunosDe(ds));
+      return { dentro, fuera, bruto, desayunos: des, monto: r2(bruto - des.descuento) };
     };
     const semanas = await porSemana(mes, dias, { costoCombustible, comidaDia: (ds) => comidaDe(ds).monto });
     if (sinPrecio.size) faltan.push(`No hay precio de ${COMBUSTIBLE_LABEL[tipo]?.toLowerCase() ?? 'combustible'} vigente para ${sinPrecio.size} día(s). Regístralo en Precios de combustible.`);
@@ -741,11 +775,11 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
         jornadas: nJ, diasCronograma: dias.length - nJ, dias: new Set(dias.map((d) => d.fecha)).size, lugares: dias.reduce((s, d) => s + d.lugares, 0),
         km, kmTipo: dias.every((d) => d.kmFuente === 'google') ? 'por carretera (Google)' : dias.some((d) => d.kmFuente === 'google') ? 'mixto: mapa y manual' : 'estimado manual',
         galones, rendimiento: v.rendimiento ?? null, combustible: v.combustible, preciosUsados, diasAlimentacion: diasComida, tarifaAlimentacion: comidaDentro, comidaDentro, comidaFuera, diasComidaDentro: cm.dentro, diasComidaFuera: cm.fuera, comidaFuente: fuentesComida, posicion: rep?.position ?? null,
-        reembolsoPorKm: usaReembolso ? perfil.reembolsoPorKm : null, hospedajes: hoteles.length,
+        reembolsoPorKm: usaReembolso ? perfil.reembolsoPorKm : null, hospedajes: hoteles.length, desayunos: resumenDesayunos(cm.desayunos, dias), comidaBruta: cm.bruto, comidaDesglose: perfil.comidaDesglose ?? null,
         combustibleCalculado, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
-        semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares, ...(d.hospedaje?.plan ? { noche: { precio: d.hospedaje.tarifaNoche, hotel: d.hospedaje.hotel, fuente: d.hospedaje.fuente, municipio: d.hospedaje.municipio } } : {}) })),
+        semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares, ...(d.hospedaje?.plan ? { noche: { precio: d.hospedaje.tarifaNoche, hotel: d.hospedaje.hotel, fuente: d.hospedaje.fuente, municipio: d.hospedaje.municipio, desayuno: d.desayuno?.valor ?? null } } : {}) })),
       },
-      avisos: topado.topado ? [`El combustible calculado (RD$${combustibleCalculado.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [],
+      avisos: [...avisosDia, ...(topado.topado ? [`El combustible calculado (RD$${combustibleCalculado.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [])],
     };
   }
   /** Sin vehículo: transporte y comida por día, dentro o fuera de su zona de trabajo, según el cronograma. */
@@ -757,19 +791,22 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       const propio = perfil.publico?.[k];
       tarifas[k] = propio ?? base.montos[k]; fuente[k] = propio != null ? 'representante' : base.fuente;
     }
+    if (perfil.comidaDesglose) { const t = r2(perfil.comidaDesglose.desayuno + perfil.comidaDesglose.almuerzo + perfil.comidaDesglose.cena); tarifas.comidaDentro = t; tarifas.comidaFuera = t; fuente.comidaDentro = 'desglose'; fuente.comidaFuera = 'desglose'; }
     const sinMonto = TARIFAS_PUBLICO.filter((k) => tarifas[k] == null);
     if (sinMonto.length) return { faltan: [...faltan, `Faltan los montos de transporte público (transporte y comida, dentro y fuera de su zona)${base.fuente === 'posicion' && rep?.position ? ` para la posición ${rep.position}` : ''}. Configúralos en Perfiles de viático → Montos globales.`] };
     const zona = (await data.list('zonas', { representanteId: repId }))[0] ?? null;
     const conZona = !!zona?.provincias?.length;
     const avisosZona = conZona ? [] : ['No tiene zona asignada: se tomó su municipio de residencia como "dentro". Asígnale su zona en Representantes.'];
     const esDentro = conZona ? (p) => dentroDeZona(zona, p.provincia, p.municipio) : undefined;
-    const r = calcularTransportePublico({ jornadas: dias, esDentro, residencia: perfil.residencia, tarifas });
+    const r0 = calcularTransportePublico({ jornadas: dias, esDentro, residencia: perfil.residencia, tarifas });
+    const netoPublico = (rr, ds) => { const des = descontarDesayunos(rr.dias.filter((d) => d.comida).map((d) => ({ fecha: d.fecha, monto: d.fuera ? tarifas.comidaFuera : tarifas.comidaDentro })), desayunosDe(ds)); return { ...rr, alimentacionBruta: rr.alimentacion, desayunos: des, alimentacion: r2(rr.alimentacion - des.descuento) }; };
+    const r = netoPublico(r0, dias);
     const topeRep = perfil.topeCombustible ?? null;
     const tope = topeRep ?? (await verTopeGlobal());
     const topado = aplicarTope({ calculado: r.transporte, tope });
     const semanas = await porSemana(mes, dias, {
       costoCombustible: async (ds) => ({ galones: 0, costo: 0, transporte: calcularTransportePublico({ jornadas: ds, esDentro, residencia: perfil.residencia, tarifas }).transporte }),
-      comidaDia: (ds) => calcularTransportePublico({ jornadas: ds, esDentro, residencia: perfil.residencia, tarifas }).alimentacion,
+      comidaDia: (ds) => netoPublico(calcularTransportePublico({ jornadas: ds, esDentro, residencia: perfil.residencia, tarifas }), ds).alimentacion,
     });
     const hoteles = dias.filter((d) => d.hospedaje);
     const sinAprobar = hoteles.filter((d) => d.hospedaje.estado !== 'aprobado');
@@ -785,9 +822,9 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
         km: r2(dias.reduce((s, d) => s + (d.km || 0), 0)), kmTipo: 'transporte público', galones: null, rendimiento: null, combustible: null, preciosUsados: {},
         transportePublico: true, diasDentro: r.diasDentro, diasFuera: r.diasFuera, tarifas, tarifasFuente: fuente, diasDetalle: r.dias,
         posicion: rep?.position ?? null, dentroSegun: conZona ? 'zona' : 'residencia',
-        diasAlimentacion: r.diasDentro + r.diasFuera, tarifaAlimentacion: null, reembolsoPorKm: null, hospedajes: hoteles.length,
+        diasAlimentacion: r.diasDentro + r.diasFuera, tarifaAlimentacion: null, reembolsoPorKm: null, hospedajes: hoteles.length, desayunos: resumenDesayunos(r.desayunos, dias), comidaBruta: r.alimentacionBruta, comidaDesglose: perfil.comidaDesglose ?? null,
         combustibleCalculado: r.transporte, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
-        semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares, ...(d.hospedaje?.plan ? { noche: { precio: d.hospedaje.tarifaNoche, hotel: d.hospedaje.hotel, fuente: d.hospedaje.fuente, municipio: d.hospedaje.municipio } } : {}) })),
+        semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares, ...(d.hospedaje?.plan ? { noche: { precio: d.hospedaje.tarifaNoche, hotel: d.hospedaje.hotel, fuente: d.hospedaje.fuente, municipio: d.hospedaje.municipio, desayuno: d.desayuno?.valor ?? null } } : {}) })),
       },
       avisos: [...avisosZona, ...(topado.topado ? [`El transporte calculado (RD$${r.transporte.toLocaleString('es-DO', { minimumFractionDigits: 2 })}) pasa del tope mensual; se presupuesta el tope de RD$${tope.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`] : [])],
     };
