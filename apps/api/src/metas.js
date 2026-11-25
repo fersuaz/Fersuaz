@@ -7,7 +7,7 @@ import { recetaAprobada } from './comercial.js';
 // - Promotora: recetas, medicamentos por receta, volumen recetado (RD$, precio del catálogo) y pacientes.
 // Una visita cuenta solo cuando el representante la marca como hecha en su jornada.
 import { AuthError as HttpError } from './auth.js';
-import { solapes, dentroDeZona, textoSolapes } from './territorio.js';
+import { solapes, dentroDeZona, textoSolapes, excluidoDeRuta } from './territorio.js';
 
 const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 export const METRICAS = Object.freeze({
@@ -124,7 +124,8 @@ export function createMetas({ data, users, audit, hoy }) {
       const val = valoresDelMes({ jornadas: js, recetas: recetas.filter((r) => r.promotoraId === rep.id), precios });
       const paradas = js.filter((j) => j.estado !== 'cancelada').flatMap((j) => j.paradas ?? []);
       const z = zonas.get(rep.id);
-      const enZona = { farmacia: z ? farmacias.filter((x) => dentroDeZona(z, x.provincia, x.municipio)).length : 0, centro: z ? centros.filter((x) => dentroDeZona(z, x.provincia, x.municipio)).length : 0 };
+      const deRuta = (x) => dentroDeZona(z, x.provincia, x.municipio) && !excluidoDeRuta(z, x.id);
+      const enZona = { farmacia: z ? farmacias.filter(deRuta).length : 0, centro: z ? centros.filter(deRuta).length : 0 };
       const metas = metaEfectiva(config, rep);
       const metricas = Object.entries(metas).map(([k, m]) => {
         const lugar = METRICAS[k].porLugar;

@@ -423,6 +423,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/hoteles', async ({ me, q }) => ({ items: await hoteles.listar(me, { provincia: q.get('provincia') || undefined, municipio: q.get('municipio') || undefined }) }));
   ruta('GET', '/api/hoteles/recomendado', async ({ me, q }) => ({ item: await hoteles.recomendado(me, { provincia: q.get('provincia'), municipio: q.get('municipio') || undefined }) }));
   ruta('POST', '/api/hoteles', async ({ me, body }) => [201, { item: await hoteles.crear(me, body ?? {}) }]);
+  ruta('POST', '/api/hoteles/lote', async ({ me, body }) => ({ item: await hoteles.estadoLote(me, body?.ids, body?.estado) }));
   ruta('POST', /^\/api\/hoteles\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await hoteles.actualizar(me, p[1], body ?? {}) }));
   // Tope mensual global de combustible / transporte
   ruta('GET', '/api/viaticos/tarifas-publico', async ({ me }) => { if (me?.status !== 'activo') throw new AuthError(403, 'No tienes permiso para esta acción.'); return { item: await v.verTarifasPublico() }; });
@@ -448,6 +449,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/territorio/zonas-ocupadas', async ({ me, q }) => ({ items: await t.zonasOcupadas(me, q.get('posicion'), q.get('excluir') || null) }));
   ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await t.asignarZona(me, p[1], body ?? {}) }));
   ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)\/lugares$/, async ({ me, p }) => t.lugaresDeZona(me, p[1]));
+  ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)\/excluidos$/, async ({ me, p, body }) => ({ item: await t.excluirLugares(me, p[1], body ?? {}) }));
+  ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)\/excluidos$/, async ({ me, p, body }) => ({ item: await t.excluirLugares(me, p[1], body ?? {}) }));
   ruta('GET', '/api/territorio/preregistros', async ({ me }) => ({ items: await t.listarPreregistros(me) }));
   ruta('POST', /^\/api\/territorio\/preregistros\/([\w-]+)\/anular$/, async ({ me, p }) => ({ item: await t.anularPreregistro(me, p[1]) }));
   ruta('POST', /^\/api\/importar\/(medicamentos|farmacias|establecimientos|representantes)$/, async ({ me, p, body }) => t.importar(me, p[1], body), { limite: 12 * 1024 * 1024 });

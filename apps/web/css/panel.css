@@ -1063,3 +1063,16 @@ tr.fila-sel td { background: #E9F0F6; }
 .punto-resultado:empty { display: none; }
 .punto-resultado { background: var(--panel); border-radius: 12px; padding: .75rem 1rem; color: var(--tinta); line-height: 1.5; }
 .punto-resultado a { color: var(--celeste-texto); font-weight: 600; white-space: nowrap; }
+/* Asistente: deshacer, selección y precio en la tabla */
+.asis-deshacer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; background: var(--marino); color: #fff; border-radius: 14px; padding: .7rem 1rem; margin-bottom: 1rem; position: sticky; top: .5rem; z-index: 5; }
+.asis-deshacer .btn-sec { background: #fff; }
+.asis-lote { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin: .5rem 0 .75rem; }
+.asis-lote .check { margin-right: auto; }
+.asis-quitados summary { cursor: pointer; font: 600 1.05rem Poppins, sans-serif; color: var(--marino); }
+.asis-quitados[open] summary { margin-bottom: .75rem; }
+.precio-caja { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+.precio-caja span { color: var(--texto-2); font-size: .85rem; }
+.panel-body .precio-caja .precio-celda, .precio-celda { width: 7.5rem; min-height: 38px; padding: 0 .6rem; border: 1.5px solid var(--linea); border-radius: 10px; font: inherit; }
+.precio-celda:focus { border-color: var(--celeste-texto); outline: 2px solid var(--celeste-texto); outline-offset: 1px; }
+.precio-ok { color: var(--celeste-texto); font-weight: 600; flex-basis: 100%; }
+.precio-ok:empty { display: none; }
