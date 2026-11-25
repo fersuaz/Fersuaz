@@ -83,3 +83,18 @@ export function errorClave(password) {
   if (p.length > 200) return 'La contraseña es demasiado larga.';
   return null;
 }
+
+/**
+ * Latitud y longitud dentro de República Dominicana (con margen para Saona, Beata y la costa).
+ * Devuelve { lat, lng } con 6 decimales o { error } en español.
+ */
+export const LIMITES_RD = { latMin: 17.3, latMax: 20.1, lngMin: -72.1, lngMax: -68.1 };
+export function leerCoordenadas(lat0, lng0) {
+  const num = (x) => (typeof x === 'number' ? x : /^\s*-?\d{1,3}(\.\d+)?\s*$/.test(String(x ?? '')) ? Number(x) : NaN);
+  const lat = num(lat0); const lng = num(lng0);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { error: 'Escribe la latitud y la longitud con punto decimal, por ejemplo 19.4517, -70.6970.' };
+  const L = LIMITES_RD;
+  if (lat < L.latMin || lat > L.latMax || lng < L.lngMin || lng > L.lngMax) return { error: 'Esas coordenadas no están en República Dominicana. Revisa que la latitud vaya primero (cerca de 18 o 19) y la longitud después (negativa, cerca de -70).' };
+  const r6 = (n) => Math.round(n * 1e6) / 1e6;
+  return { lat: r6(lat), lng: r6(lng) };
+}

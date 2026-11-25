@@ -103,8 +103,8 @@ export function createAltaRepresentantes({ store, t, v, data, notificar }) {
     else if (!rm) e['residencia.municipio'] = 'Elige el municipio donde vive.';
     let perfil = null;
     try {
-      perfil = v.prepararPerfil({ ...input, residencia: { provincia: rp, municipio: rm, direccion: input.residencia?.direccion } });
-    } catch (err) { if (err.fields) Object.assign(e, Object.fromEntries(Object.entries(err.fields).filter(([k]) => !k.startsWith('residencia')))); else throw err; }
+      perfil = v.prepararPerfil({ ...input, residencia: { provincia: rp, municipio: rm, direccion: input.residencia?.direccion, lat: input.residencia?.lat, lng: input.residencia?.lng } });
+    } catch (err) { if (err.fields) Object.assign(e, Object.fromEntries(Object.entries(err.fields).filter(([k]) => !k.startsWith('residencia') || k === 'residencia.coordenadas'))); else throw err; }
     if (Object.keys(e).length) throw new HttpError(422, 'Revisa los campos marcados.', e);
 
     const usuario = await usuarioLibre(usuarioBase(nombre, apellido));
