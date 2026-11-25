@@ -307,13 +307,14 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
    * Propuesta del mes para un representante: lugares de su zona que aún no están programados ese mes,
    * repartidos en los días laborables libres, por municipio y cercanía. No guarda nada.
    */
-  async function proponerCronograma(actor, { representanteId, mes, porDia = 8, sabados = false, dias, feriados = [] }) {
+  async function proponerCronograma(actor, { representanteId, mes, porDia, sabados = false, dias, feriados = [] }) {
     permitir(rol(actor, ['administrador']), 'Solo el administrador crea cronogramas.');
     const rep = await users.findUserById(String(representanteId ?? ''));
     if (!rep || rep.role !== 'representante' || rep.status !== 'activo') throw new HttpError(404, 'El representante no existe o no está activo.');
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(mes)) || mes < hoy().slice(0, 7)) invalido({ mes: 'Elige el mes en curso o uno futuro.' });
-    const n = Number(porDia);
-    if (!Number.isInteger(n) || n < 1 || n > MAX_LUGARES) invalido({ porDia: `Escribe entre 1 y ${MAX_LUGARES} lugares por día.` });
+    // Visitas por día: lo que se escriba en la propuesta o, si no, lo configurado para su posición (8 si no hay nada).
+    const n = porDia == null || porDia === '' ? visitasDe(await leerVisitasPorDia(), rep?.position) : Number(porDia);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_LUGARES) invalido({ porDia: `Escribe entre 1 y ${MAX_LUGARES} visitas por día.` });
     let semana = null;
     if (dias !== undefined) {
       semana = [...new Set((Array.isArray(dias) ? dias : []).map(Number))];
@@ -607,6 +608,31 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
   async function verTopeGlobal() {
     const [c] = await data.list('configuracion', { clave: 'tope_combustible' });
     return c?.valor?.monto ?? null;
+  }
+  /** Visitas por día por posición (para la propuesta del cronograma). Vacío = 8, el valor de siempre. */
+  const VISITAS_POR_DIA = 8;
+  const visitasDe = (cfg, posicion) => Number(cfg?.porPosicion?.[posicion]) || VISITAS_POR_DIA;
+  async function leerVisitasPorDia() { return (await data.list('configuracion', { clave: 'visitas_por_dia' }))[0]?.valor ?? { porPosicion: {} }; }
+  async function verVisitasPorDia(actor) {
+    permitir(rol(actor, ['administrador', 'gerencia', 'supervisor']));
+    const cfg = await leerVisitasPorDia();
+    return { porPosicion: Object.fromEntries(POSITIONS.map((p) => [p, cfg.porPosicion?.[p] ?? null])), predeterminado: VISITAS_POR_DIA };
+  }
+  async function guardarVisitasPorDia(actor, input = {}) {
+    permitir(rol(actor, ['administrador', 'gerencia']), 'Solo la administración o la gerencia fijan las visitas por día.');
+    const e = {}; const porPosicion = {};
+    for (const p of POSITIONS) {
+      const v = input.porPosicion?.[p];
+      if (v === '' || v == null) { porPosicion[p] = null; continue; }
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 1 || n > MAX_LUGARES) e[`porPosicion.${p}`] = `Escribe entre 1 y ${MAX_LUGARES}.`; else porPosicion[p] = n;
+    }
+    if (Object.keys(e).length) invalido(e);
+    const [c] = await data.list('configuracion', { clave: 'visitas_por_dia' });
+    const valor = { porPosicion, actualizadoEn: now().toISOString() };
+    if (c) await data.update('configuracion', c.id, { valor, actualizadoPor: actor.id }); else await data.insert('configuracion', { clave: 'visitas_por_dia', valor, actualizadoPor: actor.id });
+    await audit({ actorId: actor.id, action: 'visitas_por_dia', entity: 'configuracion', entityId: 'visitas_por_dia', before: c?.valor?.porPosicion ?? null, after: porPosicion });
+    return verVisitasPorDia(actor);
   }
   async function guardarTopeGlobal(actor, monto) {
     permitir(rol(actor, ['administrador', 'gerencia']), 'Solo la administración o la gerencia fijan el tope de combustible.');
@@ -997,7 +1023,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
   }
 
   return {
-    guardarPerfil, verPerfil, listarRepresentantes, registrarPrecio,
+    guardarPerfil, verPerfil, listarRepresentantes, registrarPrecio, verVisitasPorDia, guardarVisitasPorDia,
     listarPrecios: async (actor) => { permitir(activo(actor)); return (await data.list('precios')).sort((a, b) => b.vigenteDesde.localeCompare(a.vigenteDesde)); },
     crearJornada, actualizarJornada, listarJornadas, calcularKm,
     crearCronograma, listarCronogramas, anularCronograma,

@@ -87,3 +87,19 @@ test('Listas en un solo pedido: todas las zonas y todos los planes de días', as
     assert.equal((await call('GET', '/api/representantes/plan-dias', null, t.rep)).status, 403);
   } finally { server.close(); }
 });
+
+test('Visitas por día por posición: la propuesta usa la de su posición y se puede cambiar al proponer', async () => {
+  const { server, call, t, id, data } = await setup();
+  try {
+    for (let i = 0; i < 6; i++) await data.insert('establecimientos', { tipo: 'clinica', nombre: `Clínica Extra ${i} (Ejemplo)`, provincia: 'Espaillat', municipio: 'Moca', estado: 'validado', fuente: 'manual' });
+    const v0 = (await call('GET', '/api/cronogramas/visitas-por-dia', null, t.gerente)).body.item;
+    assert.equal(v0.predeterminado, 8); assert.equal(v0.porPosicion.Visitador, null);
+    assert.equal((await call('POST', '/api/cronogramas/visitas-por-dia', { porPosicion: { Visitador: 3 } }, t.rep)).status, 403);
+    assert.equal((await call('POST', '/api/cronogramas/visitas-por-dia', { porPosicion: { Visitador: 40 } }, t.gerente)).status, 422);
+    const g = await call('POST', '/api/cronogramas/visitas-por-dia', { porPosicion: { Visitador: 3, Promotora: '' } }, t.gerente);
+    assert.equal(g.body.item.porPosicion.Visitador, 3); assert.equal(g.body.item.porPosicion.Promotora, null);
+    const pr = (await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-11' }, t.admin)).body.item;
+    assert.equal(pr.porDia, 3); assert.ok(pr.dias.every((d) => d.lugares.length <= 3));
+    assert.equal((await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-11', porDia: 5 }, t.admin)).body.item.porDia, 5);
+  } finally { server.close(); }
+});

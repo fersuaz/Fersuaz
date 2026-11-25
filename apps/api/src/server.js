@@ -436,6 +436,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   // Cronogramas (los crea y aprueba el administrador)
   ruta('GET', '/api/cronogramas', async ({ me, q }) => ({ items: await v.listarCronogramas(me, { representanteId: q.get('representanteId') || undefined, mes: q.get('mes') || undefined }) }));
   ruta('POST', '/api/cronogramas', async ({ me, body }) => [201, { items: await v.crearCronograma(me, body) }]);
+  ruta('GET', '/api/cronogramas/visitas-por-dia', async ({ me }) => ({ item: await v.verVisitasPorDia(me) }));
+  ruta('POST', '/api/cronogramas/visitas-por-dia', async ({ me, body }) => ({ item: await v.guardarVisitasPorDia(me, body ?? {}) }));
   ruta('POST', '/api/cronogramas/propuesta', async ({ me, body }) => ({ item: await v.proponerCronograma(me, body ?? {}) }));
   ruta('POST', '/api/cronogramas/copiar-mes-anterior', async ({ me, body }) => ({ item: await v.copiarMesAnterior(me, body ?? {}) }));
   ruta('POST', /^\/api\/cronogramas\/([\w-]+)\/hotel$/, async ({ me, p, body }) => ({ item: await v.hotelDeCronograma(me, p[1], body ?? {}) }));
