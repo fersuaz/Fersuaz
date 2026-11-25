@@ -476,7 +476,11 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('GET', '/api/territorio/zonas-ocupadas', async ({ me, q }) => ({ items: await t.zonasOcupadas(me, q.get('posicion'), q.get('excluir') || null) }));
   ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p, body }) => ({ item: await t.asignarZona(me, p[1], body ?? {}) }));
   ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)\/lugares$/, async ({ me, p }) => t.lugaresDeZona(me, p[1]));
+  ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)\/cartera$/, async ({ me, p }) => ({ item: await t.verCartera(me, p[1]) }));
+  ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)\/cartera$/, async ({ me, p, body }) => ({ item: await t.guardarCartera(me, p[1], body ?? {}) }));
   ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)\/excluidos$/, async ({ me, p, body }) => ({ item: await t.excluirLugares(me, p[1], body ?? {}) }));
+  ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)\/cartera$/, async ({ me, p }) => ({ item: await t.verCartera(me, p[1]) }));
+  ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)\/cartera$/, async ({ me, p, body }) => ({ item: await t.guardarCartera(me, p[1], body ?? {}) }));
   ruta('POST', /^\/api\/territorio\/zonas\/([\w-]+)\/excluidos$/, async ({ me, p, body }) => ({ item: await t.excluirLugares(me, p[1], body ?? {}) }));
   ruta('GET', '/api/territorio/preregistros', async ({ me }) => ({ items: await t.listarPreregistros(me) }));
   ruta('POST', /^\/api\/territorio\/preregistros\/([\w-]+)\/anular$/, async ({ me, p }) => ({ item: await t.anularPreregistro(me, p[1]) }));

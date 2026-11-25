@@ -1,3 +1,4 @@
+import { centrosDeMedico } from './propuesta-cronograma.js';
 // Territorio: provincias y municipios oficiales, establecimientos de salud, zonas de cada representante,
 // pre-registro de representantes e importación por Excel. Toda regla de permiso vive aquí, en el servidor.
 import { AuthError as HttpError } from './auth.js';
@@ -213,6 +214,69 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     }
     const resumen = [...porMun.values()].sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es'));
     return { zona: { provincias: z.provincias, municipios: z.municipios ?? {} }, farmacias, establecimientos, resumen, excluidos };
+  }
+  // ------------------------------------------------------------ cartera de médicos (visitador y PVC)
+  const CON_MEDICOS = ['Visitador', 'PVC'];
+  /** Médicos que trabajan en los centros de su ruta: uno por cada centro donde trabaja. */
+  async function medicosDeRuta(z) {
+    const fuera = new Set(z.excluidos ?? []);
+    const centros = new Map((await data.list('establecimientos')).filter((x) => !['inactivo', 'inactiva'].includes(x.estado) && dentroDeZona(z, x.provincia, x.municipio) && !fuera.has(x.id)).map((x) => [x.id, x]));
+    const out = [];
+    for (const m of await data.list('medicos')) {
+      if (m.estado === 'inactivo') continue;
+      for (const cid of centrosDeMedico(m)) {
+        const c = centros.get(cid); if (!c) continue;
+        out.push({ medicoId: m.id, nombre: m.nombre, especialidad: m.especialidad ?? null, establecimientoId: c.id, centro: c.nombre, tipoCentro: c.tipo, municipio: c.municipio, provincia: c.provincia });
+      }
+    }
+    return out.sort((a, b) => a.centro.localeCompare(b.centro, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
+  }
+  const clave = (x) => `${x.medicoId}|${x.establecimientoId}`;
+  async function verCartera(actor, repId) {
+    permitir(actor.id === repId || rol(actor, [...GESTION, 'finanzas']));
+    const rep = await users.findUserById(repId);
+    if (!rep || rep.role !== 'representante') throw new HttpError(404, 'El representante no existe.');
+    const z = await zonaDe(repId);
+    const disponibles = z?.provincias?.length ? await medicosDeRuta(z) : [];
+    const por = new Map(disponibles.map((x) => [clave(x), x]));
+    const c = z?.cartera ?? {};
+    const medicos = (c.medicos ?? []).map((x) => por.get(clave(x))).filter(Boolean);
+    return { aplica: CON_MEDICOS.includes(rep.position), posicion: rep.position, medicos, centroInicioId: medicos.some((m) => m.establecimientoId === c.centroInicioId) ? c.centroInicioId : null,
+      visitas: { medicos: c.visitas?.medicos ?? null, farmacias: c.visitas?.farmacias ?? null }, disponibles };
+  }
+  async function guardarCartera(actor, repId, input = {}) {
+    permitir(rol(actor, GESTION), 'Solo la administración, la gerencia o la supervisión arman la cartera de médicos.');
+    const rep = await users.findUserById(repId);
+    if (!rep || rep.role !== 'representante') throw new HttpError(404, 'El representante no existe.');
+    if (!CON_MEDICOS.includes(rep.position)) throw new HttpError(409, 'Solo los visitadores y los PVC tienen cartera de médicos. Los vendedores visitan farmacias.');
+    const z = await zonaDe(repId);
+    if (!z?.provincias?.length) throw new HttpError(409, 'Asigna primero su zona de trabajo.');
+    const e = {};
+    const por = new Map((await medicosDeRuta(z)).map((x) => [clave(x), x]));
+    const lista = Array.isArray(input.medicos) ? input.medicos : [];
+    if (lista.length > 1000) e.medicos = 'Máximo 1,000 médicos.';
+    const medicos = []; const vistos = new Set();
+    for (const x of lista) {
+      const k = clave({ medicoId: String(x?.medicoId ?? ''), establecimientoId: String(x?.establecimientoId ?? '') });
+      if (!por.has(k)) { e.medicos = 'Hay médicos que no trabajan en un centro de su ruta.'; continue; }
+      if (!vistos.has(k)) { vistos.add(k); medicos.push({ medicoId: por.get(k).medicoId, establecimientoId: por.get(k).establecimientoId }); }
+    }
+    const ini = input.centroInicioId ? String(input.centroInicioId) : null;
+    if (ini && !medicos.some((m) => m.establecimientoId === ini)) e.centroInicioId = 'El centro de inicio debe tener médicos en su cartera.';
+    const visitas = {};
+    for (const k of ['medicos', 'farmacias']) {
+      const v = input.visitas?.[k];
+      if (v === '' || v == null) { visitas[k] = null; continue; }
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 0 || n > 40) e[`visitas.${k}`] = 'Escribe entre 0 y 40.'; else visitas[k] = n;
+    }
+    if (rep.position === 'Visitador') visitas.farmacias = null;
+    if (Object.keys(e).length) invalido(e);
+    const antes = z.cartera ?? null;
+    const cartera = { medicos, centroInicioId: ini, visitas };
+    await data.update('zonas', z.id, { cartera, actualizadoPor: actor.id });
+    await audit({ actorId: actor.id, action: 'cartera_medicos', entity: 'user', entityId: repId, before: antes ? { medicos: antes.medicos?.length ?? 0, centroInicioId: antes.centroInicioId ?? null, visitas: antes.visitas ?? null } : null, after: { medicos: medicos.length, centroInicioId: ini, visitas } });
+    return verCartera(actor, repId);
   }
   /**
    * Quita lugares de la ruta de un representante (o los vuelve a poner). No toca el catálogo ni a otros
@@ -546,7 +610,7 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
 
   return {
     division: () => ({ provincias: PROVINCIAS, municipios: DIVISION, tipos: TIPOS_ESTABLECIMIENTO }),
-    provinciasDe, zonaActor, asignarZona, verZona, listarZonas, conflictosZona, mensajeConflicto, zonasOcupadas, lugaresDeZona, excluirLugares, descartarEstablecimientos, restaurarEstablecimiento,
+    provinciasDe, zonaActor, asignarZona, verZona, listarZonas, conflictosZona, mensajeConflicto, zonasOcupadas, lugaresDeZona, excluirLugares, verCartera, guardarCartera, descartarEstablecimientos, restaurarEstablecimiento,
     crearEstablecimiento, listarEstablecimientos, validarEstablecimiento,
     buscarPreregistro, confirmarPreregistro, listarPreregistros, anularPreregistro,
     importar, historialPrecio, cambiarPrecio,

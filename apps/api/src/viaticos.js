@@ -8,7 +8,7 @@ import { esFechaISO, hoyRD } from './periodos.js';
 import { normalizeName, leerCoordenadas } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
 import { dentroDeZona, excluidoDeRuta } from './territorio.js';
-import { proponer, diasLaborables, copiarFechas } from './propuesta-cronograma.js';
+import { proponer, proponerConMedicos, centrosDeMedico, diasLaborables, copiarFechas } from './propuesta-cronograma.js';
 import { elegirHotel } from './hoteles.js';
 
 const COMBUSTIBLES = ['gasolina_premium', 'gasolina_regular', 'gasoil_optimo', 'gasoil_regular', 'glp', 'hibrido', 'electrico'];
@@ -244,7 +244,16 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     const col = ref?.refTipo === 'farmacia' ? 'farmacias' : ref?.refTipo === 'establecimiento' ? 'establecimientos' : null;
     const x = col && ref.refId && (await data.get(col, String(ref.refId)));
     if (!x || ['inactivo', 'inactiva'].includes(x.estado)) return null;
-    return { refTipo: ref.refTipo, refId: x.id, lugar: x.nombre, municipio: x.municipio, provincia: x.provincia, ...(x.lat != null && x.lng != null ? { lat: Number(x.lat), lng: Number(x.lng) } : {}) };
+    // Médicos a visitar en ese centro: nombre y especialidad salen de la base y deben trabajar ahí.
+    let medicos;
+    if (ref.refTipo === 'establecimiento' && Array.isArray(ref.medicos) && ref.medicos.length) {
+      medicos = [];
+      for (const m0 of ref.medicos.slice(0, 40)) {
+        const m = await data.get('medicos', String(m0?.medicoId ?? ''));
+        if (m && m.estado !== 'inactivo' && centrosDeMedico(m).includes(x.id) && !medicos.some((y) => y.medicoId === m.id)) medicos.push({ medicoId: m.id, nombre: m.nombre, especialidad: m.especialidad ?? null });
+      }
+    }
+    return { refTipo: ref.refTipo, refId: x.id, lugar: x.nombre, municipio: x.municipio, provincia: x.provincia, ...(x.lat != null && x.lng != null ? { lat: Number(x.lat), lng: Number(x.lng) } : {}), ...(medicos?.length ? { medicos } : {}) };
   }
   /** Valida un día de cronograma sin guardarlo. Devuelve { rep, fechas, lugares, nota }. */
   async function prepararCronograma(actor, input) {
@@ -307,7 +316,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
    * Propuesta del mes para un representante: lugares de su zona que aún no están programados ese mes,
    * repartidos en los días laborables libres, por municipio y cercanía. No guarda nada.
    */
-  async function proponerCronograma(actor, { representanteId, mes, porDia, sabados = false, dias, feriados = [] }) {
+  async function proponerCronograma(actor, { representanteId, mes, porDia, farmaciasPorDia, sabados = false, dias, feriados = [] }) {
     permitir(rol(actor, ['administrador']), 'Solo el administrador crea cronogramas.');
     const rep = await users.findUserById(String(representanteId ?? ''));
     if (!rep || rep.role !== 'representante' || rep.status !== 'activo') throw new HttpError(404, 'El representante no existe o no está activo.');
@@ -334,9 +343,35 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     ].filter((l) => !programados.has(`${l.refTipo}:${l.refId}`));
     const fechas = diasLaborables(mes, { desde: hoy(), excluir: [...crons.map((c) => c.fecha), ...libresQuitados], sabados: sabados === true || sabados === 'true', dias: semana ?? undefined });
     const perfil = await perfilDe(rep.id);
-    const r = proponer({ lugares, residencia: perfil?.residencia, fechas, porDia: n });
+    // Visitador y PVC con cartera de médicos: el día se arma con médicos por centro (y farmacias, si es PVC).
+    const cart = zona.cartera;
+    const conCartera = ['Visitador', 'PVC'].includes(rep.position) && cart?.medicos?.length;
+    let r; let nM = n; let nF = 0; let modo = 'lugares';
+    if (conCartera) {
+      modo = 'medicos';
+      const enviado = porDia != null && porDia !== '';
+      nM = enviado ? n : cart.visitas?.medicos ?? n;
+      if (rep.position === 'PVC') {
+        const fEnviado = farmaciasPorDia != null && farmaciasPorDia !== '';
+        nF = fEnviado ? Number(farmaciasPorDia) : cart.visitas?.farmacias ?? Math.floor(n / 2);
+        if (!enviado && cart.visitas?.medicos == null) nM = Math.max(n - nF, 0);
+        if (!Number.isInteger(nF) || nF < 0 || nF > MAX_LUGARES) invalido({ farmaciasPorDia: `Escribe entre 0 y ${MAX_LUGARES} farmacias por día.` });
+      }
+      if (!Number.isInteger(nM) || nM < 0 || nM > 40 || nM + nF < 1) invalido({ porDia: 'Escribe cuántos médicos (y farmacias) visita por día.' });
+      const meds = new Map((await data.list('medicos')).map((m) => [m.id, m]));
+      const progMed = new Set(crons.flatMap((c) => c.lugares.flatMap((l) => (l.medicos ?? []).map((m) => `${m.medicoId}|${l.refId}`))));
+      const porCentro = new Map();
+      for (const x of cart.medicos) {
+        const m = meds.get(x.medicoId);
+        if (!m || m.estado === 'inactivo' || !centrosDeMedico(m).includes(x.establecimientoId) || progMed.has(`${x.medicoId}|${x.establecimientoId}`)) continue;
+        porCentro.set(x.establecimientoId, [...(porCentro.get(x.establecimientoId) ?? []), { medicoId: m.id, nombre: m.nombre, especialidad: m.especialidad ?? null }]);
+      }
+      const centros = lugares.filter((l) => l.refTipo === 'establecimiento' && porCentro.has(l.refId)).map((l) => ({ ...l, medicos: porCentro.get(l.refId) }));
+      const farmacias = rep.position === 'PVC' ? lugares.filter((l) => l.refTipo === 'farmacia') : [];
+      r = proponerConMedicos({ centros, farmacias, residencia: perfil?.residencia, fechas, medicosPorDia: nM, farmaciasPorDia: nF, centroInicioId: cart.centroInicioId });
+    } else r = proponer({ lugares, residencia: perfil?.residencia, fechas, porDia: n });
     return {
-      representanteId: rep.id, mes, porDia: n, dias: r.dias, sinDia: r.sinDia,
+      representanteId: rep.id, mes, porDia: conCartera ? nM : n, farmaciasPorDia: nF, modo, dias: r.dias, sinDia: r.sinDia,
       resumen: { lugares: lugares.length, yaProgramados: programados.size, diasLibres: fechas.length, diasSemana: semana ?? [1, 2, 3, 4, 5, ...(sabados === true || sabados === 'true' ? [6] : [])], feriados: libresQuitados, desde: hoy(), diasPropuestos: r.dias.length, sinUbicacion: lugares.filter((l) => l.lat == null).length },
       sinResidencia: !perfil,
     };
