@@ -1,3 +1,4 @@
+import { recetaAprobada } from './comercial.js';
 // Movimiento por territorio: qué medicamentos y cuánto volumen se movió en cada provincia y municipio.
 // Junta tres fuentes del mes:
 // - Recetas (prescripciones de las promotoras): unidades y volumen a precio del catálogo.
@@ -66,7 +67,7 @@ export function createMovimiento({ data, users }) {
     const farmacias = new Map((await data.list('farmacias')).map((f) => [f.id, f]));
     const usuarios = new Map((await users.listUsers()).map((u) => [u.id, u]));
     const enProv = (x) => !provincia || x.provincia === provincia;
-    const recetas = (await data.list('recetas')).filter((r) => String(r.fecha).startsWith(mes) && enProv(r));
+    const recetas = (await data.list('recetas')).filter((r) => recetaAprobada(r) && String(r.fecha).startsWith(mes) && enProv(r));
     const farmaciaDe = (v) => { const d = usuarios.get(v.dependienteId); const f = d?.farmaciaId ? farmacias.get(d.farmaciaId) : null; return f && enProv(f) ? f : null; };
     const vouchers = (await data.list('vouchers')).filter((v) => String(v.fecha).startsWith(mes));
     const ventas = (await data.list('ventasFarmacia')).filter((s) => String(s.fecha).startsWith(mes) && enProv(s));

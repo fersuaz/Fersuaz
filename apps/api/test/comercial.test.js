@@ -197,6 +197,10 @@ test('promotoras: operativo, médico, receta con foto y alerta de inventario al 
     assert.equal((await call('POST', '/api/inventario', { farmaciaId: f.id, medicamentoId: tioDex.id, unidades: 25 }, t.promo)).status, 403);
     assert.equal((await call('POST', '/api/inventario', { farmaciaId: f.id, medicamentoId: tioDex.id, unidades: 25 }, t.vendedor)).status, 201);
 
+    // Solo las recetas aprobadas cuentan: la gerencia aprueba la primera
+    assert.equal(r1.body.receta.estado, 'pendiente');
+    assert.equal((await call('POST', `/api/recetas/${r1.body.receta.id}/aprobar`, {}, t.promo)).status, 403);
+    assert.equal((await call('POST', `/api/recetas/${r1.body.receta.id}/aprobar`, {}, t.gerente)).status, 200);
     // 18/25 = 72 % → sin alerta; +1 = 19/25 = 76 % → alerta
     let al = (await call('GET', '/api/alertas', null, t.promo)).body;
     assert.equal(al.umbral, 0.75); assert.equal(al.items[0].estado, 'ok'); assert.equal(al.items[0].recetado, 18);
@@ -228,7 +232,10 @@ test('promotoras: operativo, médico, receta con foto y alerta de inventario al 
     assert.equal(delSup.length, 2); assert.equal(delSup[0].paciente.telefono, '···-···-0101', 'la supervisión ve el teléfono oculto');
     assert.equal((await call('GET', '/api/recetas?mes=2026-11', null, t.promo)).body.items[0].paciente.telefono, '809-555-0101');
 
-    // reportes
+    // reportes: solo aprobadas (la segunda aún está pendiente) → aprobar en lote
+    assert.equal((await call('GET', '/api/reportes/recetas?mes=2026-11&agrupar=medicamento', null, t.gerente)).body.totalRecetas, 1);
+    assert.equal((await call('POST', '/api/recetas/decidir', { ids: [r2.body.receta.id], aprobar: false }, t.gerente)).status, 422, 'rechazar pide motivo');
+    assert.equal((await call('POST', '/api/recetas/decidir', { ids: [r2.body.receta.id, r1.body.receta.id], aprobar: true }, t.gerente)).body.hechos, 1, 'la ya aprobada no se repite');
     const rep2 = (await call('GET', '/api/reportes/recetas?mes=2026-11&agrupar=medicamento', null, t.gerente)).body;
     assert.equal(rep2.totalRecetas, 2);
     assert.deepEqual(rep2.filas.find((x) => x.clave === 'Tio-Dex'), { clave: 'Tio-Dex', recetas: 2, unidades: 19 });

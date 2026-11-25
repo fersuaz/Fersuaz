@@ -79,7 +79,7 @@ export function createMedicos({ data, audit, lector, users }) {
   const invalido = (f) => { throw new HttpError(422, 'Revisa los campos marcados.', f); };
   // Las dependientes y todos los representantes también registran: así el médico de un voucher o una receta
 // se agrega una vez y después solo se elige.
-  const puedeRegistrar = (u) => activo(u) && (GESTION.includes(u.role) || ['supervisor', 'representante', 'dependiente'].includes(u.role));
+  const puedeRegistrar = (u) => activo(u) && (GESTION.includes(u.role) || ['supervisor', 'representante', 'dependiente', 'medico'].includes(u.role));
   /** Provincia y municipio cuando no se dicen: los de la farmacia de la dependiente o los del operativo. */
   async function ubicacionPorDefecto(actor, input) {
     if (input.operativoId) {
@@ -164,6 +164,79 @@ export function createMedicos({ data, audit, lector, users }) {
     const m = await data.insert('medicos', { ...datos, estado, fuente, creadoPor: actor.id });
     await audit({ actorId: actor.id, action: 'medico_creado', entity: 'medico', entityId: m.id, after: { nombre, especialidad, municipio, fuente } });
     return { item: m, accion: 'creado' };
+  }
+
+  // ---- Médico con cuenta: registro, perfil y lugares de trabajo ----
+  const TIPOS_TRABAJO = ['hospital', 'clinica', 'consultorio', 'diagnostico', 'cpn', 'unap'];
+  /** Lugares para el registro del médico: clínicas, hospitales y consultorios de las provincias y municipios elegidos. */
+  async function lugaresParaRegistro({ provincias = [], municipios = [] } = {}) {
+    const ps = new Set(provincias); const ms = new Set(municipios);
+    return (await data.list('establecimientos')).filter((x) => x.estado !== 'inactivo' && TIPOS_TRABAJO.includes(x.tipo) && (!ps.size || ps.has(x.provincia)) && (!ms.size || ms.has(x.municipio)))
+      .sort((a, b) => a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'))
+      .map((x) => ({ id: x.id, nombre: x.nombre, tipo: x.tipo, provincia: x.provincia, municipio: x.municipio }));
+  }
+  /** Revisa especialidad y lugares. lugares: [{ establecimientoId }] o [{ nombre, tipo, provincia, municipio }] si no está en la lista. */
+  async function validarRegistro(input = {}) {
+    const e = {};
+    const especialidad = ESPECIALIDADES.find((x) => x.toLowerCase() === String(input.especialidad ?? '').trim().toLowerCase());
+    if (!especialidad || especialidad === POR_CONFIRMAR) e.especialidad = 'Elige tu especialidad.';
+    const lista = Array.isArray(input.lugares) ? input.lugares.slice(0, 20) : [];
+    const lugares = [];
+    for (const [i, l] of lista.entries()) {
+      if (l?.establecimientoId) {
+        const x = await data.get('establecimientos', String(l.establecimientoId));
+        if (!x || x.estado === 'inactivo') { e[`lugares.${i}`] = 'Ese lugar ya no está en la lista.'; continue; }
+        if (!lugares.some((y) => y.establecimientoId === x.id)) lugares.push({ establecimientoId: x.id, nombre: x.nombre, tipo: x.tipo, provincia: x.provincia, municipio: x.municipio });
+      } else {
+        const nombre = normalizeName(l?.nombre);
+        const tipo = TIPOS_TRABAJO.includes(l?.tipo) ? l.tipo : 'clinica';
+        if (nombre.length < 3) { e[`lugares.${i}`] = 'Escribe el nombre del lugar donde trabajas.'; continue; }
+        const prov = provinciaOficial(l?.provincia); const mun = prov && municipioOficial(prov, l?.municipio);
+        if (!mun) { e[`lugares.${i}`] = 'Elige la provincia y el municipio de ese lugar.'; continue; }
+        lugares.push({ nuevo: true, nombre, tipo, provincia: prov, municipio: mun });
+      }
+    }
+    if (!lugares.length && !Object.keys(e).some((k) => k.startsWith('lugares.'))) e.lugares = 'Elige al menos un lugar donde trabajas.';
+    return Object.keys(e).length ? { errores: e } : { datos: { especialidad, lugares } };
+  }
+  /** Al registrarse: crea los lugares nuevos (pendientes) y su ficha de médico ligada a la cuenta, o la liga a una que ya existía. */
+  async function crearDesdeRegistro(user, { especialidad, lugares }) {
+    const finales = [];
+    for (const l of lugares) {
+      if (!l.nuevo) { finales.push(l); continue; }
+      const x = await data.insert('establecimientos', { nombre: l.nombre, tipo: l.tipo, provincia: l.provincia, municipio: l.municipio, estado: 'pendiente', fuente: 'manual', creadoPor: user.id });
+      finales.push({ establecimientoId: x.id, nombre: x.nombre, tipo: x.tipo, provincia: x.provincia, municipio: x.municipio });
+    }
+    const clave = sinTilde(limpiarNombre(user.fullName).nombre);
+    const munis = new Set(finales.map((l) => l.municipio));
+    const existente = (await data.list('medicos')).find((m) => !m.usuarioId && m.estado !== 'inactivo' && sinTilde(limpiarNombre(m.nombre).nombre) === clave && munis.has(m.municipio));
+    const base = { especialidad, lugares: finales, usuarioId: user.id, establecimientoId: finales[0].establecimientoId, centro: finales[0].nombre, provincia: finales[0].provincia, municipio: finales[0].municipio };
+    const m = existente ? await data.update('medicos', existente.id, base) : await data.insert('medicos', { nombre: limpiarNombre(user.fullName).nombre, ...base, estado: 'pendiente', fuente: 'registro', creadoPor: user.id });
+    await audit({ actorId: user.id, action: existente ? 'medico_ligado_cuenta' : 'medico_registro', entity: 'medico', entityId: m.id, after: { especialidad, lugares: finales.length } });
+    return m;
+  }
+  async function alDecidirCuenta(user, aprobado) {
+    const m = (await data.list('medicos')).find((x) => x.usuarioId === user.id);
+    if (m && aprobado && m.estado === 'pendiente') await data.update('medicos', m.id, { estado: 'validado' });
+  }
+  /** Ficha del médico de una cuenta. */
+  async function deCuenta(userId) { return (await data.list('medicos')).find((x) => x.usuarioId === userId) ?? null; }
+  /** El médico cambia sus lugares de trabajo y su especialidad. */
+  async function actualizarMiPerfil(actor, input = {}) {
+    permitir(activo(actor) && actor.role === 'medico', 'Solo el médico cambia su perfil.');
+    const m = await deCuenta(actor.id);
+    if (!m) throw new HttpError(404, 'No encontramos tu ficha de médico.');
+    const r = await validarRegistro({ especialidad: input.especialidad ?? m.especialidad, lugares: input.lugares ?? m.lugares });
+    if (r.errores) invalido(r.errores);
+    const finales = [];
+    for (const l of r.datos.lugares) {
+      if (!l.nuevo) { finales.push(l); continue; }
+      const x = await data.insert('establecimientos', { nombre: l.nombre, tipo: l.tipo, provincia: l.provincia, municipio: l.municipio, estado: 'pendiente', fuente: 'manual', creadoPor: actor.id });
+      finales.push({ establecimientoId: x.id, nombre: x.nombre, tipo: x.tipo, provincia: x.provincia, municipio: x.municipio });
+    }
+    const out = await data.update('medicos', m.id, { especialidad: r.datos.especialidad, lugares: finales, establecimientoId: finales[0].establecimientoId, centro: finales[0].nombre, provincia: finales[0].provincia, municipio: finales[0].municipio });
+    await audit({ actorId: actor.id, action: 'medico_perfil', entity: 'medico', entityId: m.id, after: { especialidad: out.especialidad, lugares: finales.length } });
+    return out;
   }
 
   async function editar(actor, id, input = {}) {
@@ -269,5 +342,6 @@ export function createMedicos({ data, audit, lector, users }) {
     return { resumen, errores };
   }
 
-  return { registrar, editar, listar, leerDocumento, confirmarDocumento, especialidades: () => ESPECIALIDADES, iaActiva: () => Boolean(lector?.activo) };
+  return { registrar, editar, listar, leerDocumento, confirmarDocumento, especialidades: () => ESPECIALIDADES, iaActiva: () => Boolean(lector?.activo),
+    lugaresParaRegistro, validarRegistro, crearDesdeRegistro, alDecidirCuenta, deCuenta, actualizarMiPerfil };
 }

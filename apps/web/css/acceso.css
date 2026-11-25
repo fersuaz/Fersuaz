@@ -99,3 +99,22 @@
 .farmacia-opcion small { display: block; margin-top: .15rem; line-height: 1.4; }
 .farmacia-buscar .check { margin-top: .75rem; }
 @media (max-width: 520px) { .farmacia-buscar { padding: 1rem 1rem 1.1rem; } }
+/* Registro de médico: varias provincias, municipios y lugares */
+.medico-reg .etq { display: block; font-weight: 600; color: var(--marino); margin-bottom: .35rem; }
+.lista-marcas { max-height: 220px; overflow: auto; border: 1.5px solid var(--linea); border-radius: 12px; padding: .4rem; background: #fff; display: grid; gap: .1rem; }
+.lista-marcas .grupo { font-size: .8rem; color: var(--texto-2); padding: .45rem .4rem .15rem; font-weight: 600; }
+.marca { display: flex; gap: .55rem; align-items: center; padding: .45rem .5rem; border-radius: 8px; cursor: pointer; }
+.marca:hover { background: rgba(48, 133, 172, .08); }
+.marca input { width: 1.1rem; height: 1.1rem; accent-color: var(--marino); flex: none; }
+.marca:has(input:focus-visible) { outline: 3px solid var(--celeste); outline-offset: 1px; }
+#med-resultados { max-height: 300px; overflow: auto; border: 1.5px solid var(--linea); border-radius: 12px; padding: .4rem; background: #fff; }
+#med-resultados:empty { display: none; }
+.chips-elegidos { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .5rem 0; }
+.chip-quitar { font: inherit; font-size: .9rem; color: #fff; background: var(--marino); border: 0; border-radius: 999px; padding: .4rem .8rem; cursor: pointer; }
+.chip-quitar:focus-visible { outline: 3px solid var(--celeste); outline-offset: 2px; }
+.med-manual { display: grid; gap: .6rem; padding: .8rem; border: 1.5px dashed var(--linea); border-radius: 12px; margin-top: .5rem; }
+.med-manual[hidden] { display: none; }
+.field .lista-marcas .marca input { width: 1.1rem; height: 1.1rem; padding: 0; border-radius: 4px; flex: none; }
+.lista-marcas .marca { font-weight: 500; color: var(--tinta); }
+#med-m-agregar { justify-self: start; font: inherit; font-weight: 600; color: var(--marino); background: #fff; border: 1.5px solid var(--marino); border-radius: 999px; padding: .6rem 1.2rem; cursor: pointer; }
+#med-m-agregar:focus-visible { outline: 3px solid var(--celeste); outline-offset: 2px; }

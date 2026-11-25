@@ -1020,3 +1020,7 @@ tr.fila-sel td { background: #E9F0F6; }
   .visor-error strong { font-size: 1rem; }
   .visor-error span { font-size: .92rem; }
 }
+.med-otro { grid-column: 1 / -1; border: 1px solid #C7D6E3; border-radius: 10px; padding: .55rem .75rem; background: #F5F8FB; }
+.med-otro > summary { cursor: pointer; font-weight: 600; color: #003463; }
+.med-otro[open] > summary { margin-bottom: .6rem; }
+.med-otro .med-elegir { display: grid; gap: .25rem; }

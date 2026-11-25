@@ -1,3 +1,4 @@
+import { recetaAprobada } from './comercial.js';
 // Metas mensuales por posición (globales) y por representante (reemplazan la de su posición).
 // - Vendedor: visitas a farmacias.
 // - Visitador y PVC (visitador y vendedor a la vez): visitas a farmacias y a centros de salud.
@@ -112,7 +113,7 @@ export function createMetas({ data, users, audit, hoy }) {
     const { valor: config } = await leer();
     const precios = new Map((await data.list('medicamentos')).map((m) => [m.id, Number(m.precio) || 0]));
     const jornadas = (await data.list('jornadas')).filter((j) => j.fecha.startsWith(mes));
-    const recetas = (await data.list('recetas')).filter((r) => String(r.fecha).startsWith(mes));
+    const recetas = (await data.list('recetas')).filter((r) => recetaAprobada(r) && String(r.fecha).startsWith(mes));
     const dias = diasDe(mes);
     const zonas = new Map((await data.list('zonas')).map((z) => [z.representanteId, z]));
     const vivo = (x) => !['inactivo', 'inactiva'].includes(x.estado);
@@ -160,7 +161,7 @@ export function createMetas({ data, users, audit, hoy }) {
     const precios = new Map((await data.list('medicamentos')).map((m) => [m.id, Number(m.precio) || 0]));
     const vouchers = (await data.list('vouchers')).filter((v) => String(v.fecha).startsWith(mes) && !['rechazado', 'anulado'].includes(v.estado));
     const ventas = (await data.list('ventasFarmacia')).filter((v) => String(v.fecha).startsWith(mes));
-    const recetas = (await data.list('recetas')).filter((r) => String(r.fecha).startsWith(mes));
+    const recetas = (await data.list('recetas')).filter((r) => recetaAprobada(r) && String(r.fecha).startsWith(mes));
     const enEquipo = new Set();
     const lista = reps.filter((u) => u.position === 'Vendedor' && zonas.get(u.id)?.provincias?.length).map((ven) => {
       const zv = zonas.get(ven.id);
