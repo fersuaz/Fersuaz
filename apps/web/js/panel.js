@@ -3654,10 +3654,13 @@ async function pasoRep(paso, ctx) {
           tabla(cols, vs, activos ? ['Ningún lugar con estos filtros', 'Cambia o limpia los filtros.'] : ['', ''], { porPagina: 15 }));
       }) : h('div', { class: 'tarjeta vacio' }, h('strong', {}, fuera.length ? 'Quitaste todos los lugares de su ruta' : 'Su zona no tiene lugares'), fuera.length ? 'Vuelve a agregar los que visitará en "Quitados de su ruta" o búscalos abajo.' : 'Búscalos abajo en Google Maps.');
       const quitados = fuera.length ? h('details', { class: 'tarjeta asis-quitados', open: abierto || !todos.length, ontoggle: (e) => { abierto = e.target.open; } }, h('summary', {}, `Quitados de su ruta (${fmtN.format(fuera.length)})`),
-        h('div', { class: 'asis-quitados-cabeza' }, h('p', { class: 'hint' }, 'No entran en su cronograma ni en su meta de visitas. Siguen en el catálogo.'),
-          h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver(fuera.map((x) => x.id)) }, `Volver a agregar todos (${fmtN.format(fuera.length)})`)),
-        tabla([{ t: 'Lugar', v: (x) => x.nombre }, { t: 'Tipo', v: (x) => TIP[x.tipo] ?? x.tipo }, { t: 'Municipio', v: (x) => x.municipio },
-          { t: '', v: (x) => h('button', { class: 'btn btn-peq', type: 'button', onclick: () => volver([x.id]) }, 'Volver a agregar') }], fuera, ['', ''], { porPagina: 10 })) : null;
+        h('div', { class: 'asis-quitados-cabeza' }, h('p', { class: 'hint' }, 'No entran en su cronograma ni en su meta de visitas. Siguen en el catálogo. Filtra, marca los que visitará y agrégalos.')),
+        listaMarcable({ clave: `asis-quitados-${rep}`, filas: fuera, verbo: 'Agregar', accion: (ids) => volver(ids),
+          campos: [{ id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Nombre o dirección', valor: (x) => `${x.nombre} ${x.direccion ?? ''}` },
+            { id: 'mun', etiqueta: 'Municipios', tipo: 'opciones', plural: 'municipios', opciones: uni(fuera.map((x) => x.municipio)), valor: (x) => x.municipio },
+            { id: 'tipo', etiqueta: 'Tipos', tipo: 'opciones', plural: 'tipos', opciones: uni(fuera.map((x) => x.tipo)).map((t) => ({ value: t, label: TIP[t] ?? t })), valor: (x) => x.tipo }],
+          cols: [{ t: 'Lugar', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion ?? '')] }, { t: 'Tipo', v: (x) => TIP[x.tipo] ?? x.tipo }, { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` },
+            { t: '', v: (x) => h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver([x.id]) }, 'Volver a agregar') }] })) : null;
       cont.replaceChildren(
         deshacer ? h('div', { class: 'asis-deshacer', role: 'status' }, h('span', {}, deshacer.texto), h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => cambiar(deshacer.cuerpo, null) }, 'Deshacer')) : null,
         h('div', { class: 'tarjeta' }, h('h2', {}, `Establecimientos que visitará (${fmtN.format(todos.length)})`),
@@ -3733,10 +3736,12 @@ async function pasoRep(paso, ctx) {
           tabla(cols, vs, activos ? ['Ningún hotel con estos filtros', 'Cambia o limpia los filtros.'] : ['', ''], { porPagina: 10 }));
       }) : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay hoteles en uso en su zona'), 'Si nunca duerme fuera, puedes seguir. Para agregar uno, búscalo abajo.');
       const quitados = fuera.length && puedeEditar ? h('details', { class: 'tarjeta asis-quitados', open: abierto, ontoggle: (e) => { abierto = e.target.open; } }, h('summary', {}, `Hoteles que no se usan (${fmtN.format(fuera.length)})`),
-        h('div', { class: 'asis-quitados-cabeza' }, h('p', { class: 'hint' }, 'No se usan para las noches fuera. Su historial se conserva.'),
-          h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver(fuera.map((x) => x.id)) }, `Volver a usar todos (${fmtN.format(fuera.length)})`)),
-        tabla([{ t: 'Hotel', v: (x) => x.nombre }, { t: 'Municipio', v: (x) => x.municipio }, { t: 'Precio', num: true, v: (x) => (Number(x.precioNoche) > 0 ? RD(x.precioNoche) : '') },
-          { t: '', v: (x) => h('button', { class: 'btn btn-peq', type: 'button', onclick: () => volver([x.id]) }, 'Volver a usar') }], fuera, ['', ''], { porPagina: 10 })) : null;
+        h('div', { class: 'asis-quitados-cabeza' }, h('p', { class: 'hint' }, 'No se usan para las noches fuera. Su historial se conserva.')),
+        listaMarcable({ clave: `asis-hq-${rep}`, filas: fuera, verbo: 'Volver a usar', accion: (ids) => volver(ids),
+          campos: [{ id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Nombre o teléfono', valor: (x) => `${x.nombre} ${x.telefono ?? ''}` },
+            { id: 'mun', etiqueta: 'Municipios', tipo: 'opciones', plural: 'municipios', opciones: [...new Set(fuera.map((x) => x.municipio))].sort((a, b) => a.localeCompare(b, 'es')), valor: (x) => x.municipio }],
+          cols: [{ t: 'Hotel', v: (x) => x.nombre }, { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` }, { t: 'Precio', num: true, v: (x) => (Number(x.precioNoche) > 0 ? RD(x.precioNoche) : '') },
+            { t: '', v: (x) => h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver([x.id]) }, 'Volver a usar') }] })) : null;
       cont.replaceChildren(
         deshacer ? h('div', { class: 'asis-deshacer', role: 'status' }, h('span', {}, deshacer.texto), h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => lote(deshacer.ids, deshacer.estado, null) }, 'Deshacer')) : null,
         h('div', { class: 'tarjeta' }, h('h2', {}, `Hoteles de su zona (${fmtN.format(hs.length)})`),
@@ -3879,6 +3884,33 @@ function campoPuntoSalida(valor, res) {
     res0,
     h('div', { class: 'field' }, h('label', { for: 'res-dir' }, 'Nombre del lugar de salida ', h('small', {}, '(se puede editar; solo lo ven la gerencia y el representante)')), nombre, h('p', { class: 'error', dataset: { for: 'residencia.direccion' } })));
   return { nodo, leer: () => (esEnlace(coords.value) ? { error: 'Pulsa «Buscar el lugar» para leer el enlace.' } : leerPunto(coords.value)) };
+}
+/**
+ * Lista con filtros y casillas: marcar uno a uno o todos los que se ven, y aplicar una acción a los marcados
+ * o a todos los que se ven. `accion(ids)` recibe los ids elegidos.
+ */
+function listaMarcable({ clave, filas, campos, cols, verbo, accion, porPagina = 10, vacio = ['Nada con estos filtros', 'Cambia o limpia los filtros.'] }) {
+  const sel = new Set(); let vistos = [];
+  const todos = h('input', { type: 'checkbox', 'aria-label': 'Marcar todos los que se ven' });
+  const bMarc = h('button', { class: 'btn btn-peq', type: 'button', disabled: true });
+  const bTodos = h('button', { class: 'btn-sec btn-peq', type: 'button' });
+  const contar = () => {
+    const n = vistos.filter((x) => sel.has(x.id)).length;
+    todos.checked = n > 0 && n === vistos.length; todos.indeterminate = n > 0 && n < vistos.length;
+    bMarc.disabled = !sel.size; bMarc.textContent = sel.size ? `${verbo} ${fmtN.format(sel.size)} marcado(s)` : `${verbo} marcados`;
+    bTodos.textContent = `${verbo} todos los que se ven (${fmtN.format(vistos.length)})`; bTodos.disabled = !vistos.length;
+  };
+  const caja = h('div', {});
+  todos.addEventListener('change', () => { vistos.forEach((x) => (todos.checked ? sel.add(x.id) : sel.delete(x.id))); caja.querySelectorAll('input[data-marca]').forEach((c) => { c.checked = sel.has(c.dataset.marca); }); contar(); });
+  bMarc.addEventListener('click', () => accion([...sel]));
+  bTodos.addEventListener('click', () => accion(vistos.map((x) => x.id)));
+  const colsM = [{ t: '', v: (x) => h('input', { type: 'checkbox', 'data-marca': x.id, checked: sel.has(x.id), 'aria-label': `Marcar ${x.nombre ?? ''}`, onchange: (e) => { e.target.checked ? sel.add(x.id) : sel.delete(x.id); contar(); } }) }, ...cols];
+  caja.append(listaFiltrada(clave, filas, campos, (vs, activos) => {
+    vistos = vs; contar();
+    return h('div', {}, h('div', { class: 'lote-barra asis-lote' }, h('label', { class: 'check' }, todos, h('span', {}, 'Marcar los que se ven')), bMarc, bTodos),
+      tabla(colsM, vs, activos ? vacio : ['', ''], { porPagina }));
+  }));
+  return caja;
 }
 /** Editar un hotel: nombre, teléfono, dirección, precio por noche, requisitos y notas. Devuelve true si se guardó. */
 async function editarHotel(x, reqs) {
