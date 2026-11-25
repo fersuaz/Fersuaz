@@ -1826,7 +1826,7 @@ V.jornadas = async () => {
   // Marcar qué lugares visitó: cada visita hecha cuenta para sus metas.
   const marcarVisitas = async (j) => {
     const d = $('#dialogo'); $('#dialogo-titulo').textContent = `Visitas del ${fecha(j.fecha)}`;
-    const cajas = j.paradas.map((p, i) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'visita', value: i, checked: p.hecha === true }), h('span', {}, p.lugar, h('small', { style: 'display:block;color:var(--texto-2)' }, `${p.refTipo === 'farmacia' ? 'Farmacia' : 'Centro de salud'} · ${p.municipio ?? ''}`))));
+    const cajas = j.paradas.map((p, i) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'visita', value: i, checked: p.hecha === true }), h('span', {}, p.lugar, h('small', { style: 'display:block;color:var(--texto-2)' }, `${p.refTipo === 'farmacia' ? 'Farmacia' : 'Centro de salud'} · ${p.municipio ?? ''}`), p.medicos?.length ? h('small', { style: 'display:block;color:var(--celeste-texto)' }, `Médicos: ${p.medicos.map((m) => `${m.nombre}${m.especialidad ? ` (${m.especialidad})` : ''}`).join(', ')}`) : null)));
     $('#dialogo-cuerpo').replaceChildren(h('p', { class: 'hint' }, 'Marca los lugares que visitaste. Solo las visitas marcadas cuentan para tus metas del mes.'), h('div', { class: 'dialogo-checks' }, cajas));
     $('#dialogo-ok').textContent = 'Guardar visitas'; d.showModal();
     const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
@@ -1888,7 +1888,7 @@ V.jornadas = async () => {
     const form = h('form', { class: 'tarjeta', novalidate: true },
       h('h2', {}, `Ruta del ${fecha(r.fecha)}`),
       h('p', { class: 'hint' }, r.optimizado ? 'Ordenada por distancia para que recorras menos y gastes menos combustible.' : r.km != null ? 'Ruta calculada por carretera.' : 'El mapa aún no está conectado: se respeta el orden del cronograma y escribes los km por carretera.'),
-      h('ol', { class: 'ruta-orden' }, h('li', { class: 'casa' }, h('span', {}, 'Sales de tu residencia')), ...r.paradas.map((p) => h('li', {}, h('span', {}, h('strong', {}, p.lugar), h('small', { style: 'display:block;color:var(--texto-2)' }, `${p.municipio}, ${p.provincia}`)))), h('li', { class: 'casa' }, h('span', {}, 'Regresas a tu residencia'))),
+      h('ol', { class: 'ruta-orden' }, h('li', { class: 'casa' }, h('span', {}, 'Sales de tu residencia')), ...r.paradas.map((p) => h('li', {}, h('span', {}, h('strong', {}, p.lugar), h('small', { style: 'display:block;color:var(--texto-2)' }, `${p.municipio}, ${p.provincia}`), p.medicos?.length ? h('small', { style: 'display:block;color:var(--celeste-texto)' }, `${p.medicos.length} médico(s): ${p.medicos.map((m) => m.nombre).join(', ')}`) : null))), h('li', { class: 'casa' }, h('span', {}, 'Regresas a tu residencia'))),
       r.km != null ? h('dl', { class: 'rejilla', style: 'margin-top:1.25rem' }, h('div', { class: 'cifra' }, h('dt', {}, 'Recorrido por carretera'), h('dd', {}, `${fmtN.format(r.km)} km`)), r.minutos ? h('div', { class: 'cifra' }, h('dt', {}, 'Manejo aproximado'), h('dd', {}, `${fmtN.format(Math.round(r.minutos / 6) / 10)} h`)) : null)
         : h('div', { class: 'form-fila', style: 'margin-top:1rem' }, campo('kmEstimados', 'Km por carretera (ida, paradas y regreso)', { type: 'number', min: 0, step: 0.1, inputmode: 'decimal' })),
       c?.nota ? h('p', { class: 'aviso' }, `Nota del administrador: ${c.nota}`) : null,
@@ -1966,7 +1966,8 @@ function revisarDias(salida, diasIn, rep, mes, div, intro, avisos = [], alAproba
   const tarjetas = diasIn.map((d) => {
     const lista = h('ol', { class: 'propuesta-lugares' }, d.lugares.map((l) => {
       const k = `${d.fecha}|${l.refId}`;
-      const li = h('li', {}, h('span', {}, h('strong', {}, l.lugar), h('small', {}, `${etiqueta(l)} · ${l.municipio}${l.lat == null ? ' · sin ubicación' : ''}`)),
+      const li = h('li', {}, h('span', {}, h('strong', {}, l.lugar), h('small', {}, `${etiqueta(l)} · ${l.municipio}${l.lat == null ? ' · sin ubicación' : ''}`),
+        l.medicos?.length ? h('small', { class: 'propuesta-medicos' }, `${fmtN.format(l.medicos.length)} médico(s): ${l.medicos.map((m) => `${m.nombre}${m.especialidad ? ` (${m.especialidad})` : ''}`).join(', ')}`) : null),
         h('button', { class: 'btn-enlace', type: 'button', 'aria-label': `Quitar ${l.lugar}`, onclick: (ev) => {
           const fuera = !quitados.has(k); fuera ? quitados.add(k) : quitados.delete(k);
           li.classList.toggle('quitado', fuera); ev.target.textContent = fuera ? 'Volver a poner' : 'Quitar'; contar();
@@ -1983,10 +1984,11 @@ function revisarDias(salida, diasIn, rep, mes, div, intro, avisos = [], alAproba
   });
   aprobar.addEventListener('click', async () => {
     const dias = diasIn.filter((d) => !diasFuera.has(d.fecha))
-      .map((d) => ({ fecha: d.fecha, duermeFuera: noches.has(d.fecha), hotelId: noches.has(d.fecha) ? d.hotelId ?? null : null, lugares: d.lugares.filter((l) => !quitados.has(`${d.fecha}|${l.refId}`)).map(({ refTipo, refId }) => ({ refTipo, refId })) }))
+      .map((d) => ({ fecha: d.fecha, duermeFuera: noches.has(d.fecha), hotelId: noches.has(d.fecha) ? d.hotelId ?? null : null, lugares: d.lugares.filter((l) => !quitados.has(`${d.fecha}|${l.refId}`)).map(({ refTipo, refId, medicos }) => ({ refTipo, refId, ...(medicos?.length ? { medicos: medicos.map((m) => ({ medicoId: m.medicoId })) } : {}) })) }))
       .filter((d) => d.lugares.length);
     const nf = dias.filter((d) => d.duermeFuera).length;
-    if (!(await confirmar('Aprobar cronograma', `Se aprobarán ${dias.length} día(s) con ${dias.reduce((n, d) => n + d.lugares.length, 0)} lugares${nf ? ` y ${nf} noche(s) fuera, que entran al presupuesto con el precio del hotel verificado o el de referencia` : ''}. El representante recibirá un aviso y podrá crear sus jornadas.`, { okTexto: 'Aprobar' }))) return;
+    const nMed = dias.reduce((n, d) => n + d.lugares.reduce((x, l) => x + (l.medicos?.length ?? 0), 0), 0);
+    if (!(await confirmar('Aprobar cronograma', `Se aprobarán ${dias.length} día(s) con ${dias.reduce((n, d) => n + d.lugares.length, 0)} lugares${nMed ? ` (${nMed} médicos)` : ''}${nf ? ` y ${nf} noche(s) fuera, que entran al presupuesto con el precio del hotel verificado o el de referencia` : ''}. El representante recibirá un aviso y podrá crear sus jornadas.`, { okTexto: 'Aprobar' }))) return;
     aprobar.disabled = true; aprobar.textContent = 'Aprobando…';
     try { await api('POST', '/api/cronogramas/lote', { representanteId: rep, dias }); if (alAprobar) alAprobar(); else irA('cronogramas', { mes, rep, sec: 'dias' }); }
     catch (err) { const a = h('div', { role: 'status' }); estado(a, 'error', err.message); salida.prepend(a); contar(); }
@@ -2018,7 +2020,13 @@ function copiarMes(rep, mes, div, alAprobar = null) {
 async function propuestaMes(rep, mes, div, alAprobar = null, posicion = null) {
   const vpd = await api('GET', '/api/cronogramas/visitas-por-dia').then((x) => x.item).catch(() => null);
   const n0 = (posicion && vpd?.porPosicion?.[posicion]) || vpd?.predeterminado || 8;
-  const fpd = campo('porDia', 'Visitas por día', { type: 'number', min: 1, max: 15, step: 1, value: n0, inputmode: 'numeric' }, posicion ? `(${posicion}: ${n0}${vpd?.porPosicion?.[posicion] ? ', configurado' : ', predeterminado'})` : '');
+  const cart = ['Visitador', 'PVC'].includes(posicion) ? await api('GET', `/api/territorio/zonas/${rep}/cartera`).then((x) => x.item).catch(() => null) : null;
+  const conMed = !!cart?.medicos?.length; const esPVC = posicion === 'PVC';
+  const nF0 = esPVC ? cart?.visitas?.farmacias ?? Math.floor(n0 / 2) : 0;
+  const nM0 = cart?.visitas?.medicos ?? (esPVC ? Math.max(n0 - nF0, 0) : n0);
+  const fpd = conMed ? h('div', { class: 'form-fila' }, campo('porDia', 'Médicos por día', { type: 'number', min: 0, max: 40, step: 1, value: nM0, inputmode: 'numeric' }, `(de su cartera de ${fmtN.format(cart.medicos.length)})`),
+    esPVC ? campo('farmaciasPorDia', 'Farmacias por día', { type: 'number', min: 0, max: 15, step: 1, value: nF0, inputmode: 'numeric' }) : null)
+    : campo('porDia', 'Visitas por día', { type: 'number', min: 1, max: 15, step: 1, value: n0, inputmode: 'numeric' }, posicion ? `(${posicion}: ${n0}${vpd?.porPosicion?.[posicion] ? ', configurado' : ', predeterminado'})` : '');
   // Días de la semana que trabaja (por defecto, lunes a viernes) y fechas que no trabaja
   const SEMANA = [[1, 'Lun', 'lunes'], [2, 'Mar', 'martes'], [3, 'Mié', 'miércoles'], [4, 'Jue', 'jueves'], [5, 'Vie', 'viernes'], [6, 'Sáb', 'sábado'], [0, 'Dom', 'domingo']];
   const sab = h('fieldset', { class: 'dias-semana' }, h('legend', {}, 'Días laborables'),
@@ -2038,11 +2046,11 @@ async function propuestaMes(rep, mes, div, alAprobar = null, posicion = null) {
   const b = h('button', { class: 'btn', type: 'submit' }, 'Proponer el mes');
   const salida = h('div', { 'aria-live': 'polite' });
   const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Propuesta automática del mes'),
-    h('p', { class: 'hint' }, 'El sistema reparte las farmacias, hospitales, clínicas y UNAP de su zona que aún no tienen día este mes, en los días laborables libres. Empieza por su municipio de residencia y agrupa por cercanía para gastar menos combustible. Nada se guarda hasta que apruebes.'),
+    h('p', { class: 'hint' }, conMed ? `Reparte los médicos de su cartera por centro${cart.centroInicioId ? ', empezando por su centro de inicio' : ''} y sigue por cercanía${esPVC ? '; cada día lleva también farmacias de su zona' : ''}. Un centro puede llenar el día entero. Nada se guarda hasta que apruebes.` : 'El sistema reparte las farmacias, hospitales, clínicas y UNAP de su zona que aún no tienen día este mes, en los días laborables libres. Empieza por su municipio de residencia y agrupa por cercanía para gastar menos combustible. Nada se guarda hasta que apruebes.'),
     h('div', { class: 'form-fila' }, fpd), sab, fer, h('p', { class: 'error', dataset: { for: 'dias' } }), h('div', { class: 'acciones' }, b), salida);
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const r = await enviar(f, b, () => api('POST', '/api/cronogramas/propuesta', { representanteId: rep, mes, porDia: Number(f.porDia.value), dias: [...f.querySelectorAll('[name=dia]:checked')].map((x) => Number(x.value)), feriados: [...feriados] }));
+    const r = await enviar(f, b, () => api('POST', '/api/cronogramas/propuesta', { representanteId: rep, mes, porDia: Number(f.porDia.value), ...(f.farmaciasPorDia ? { farmaciasPorDia: Number(f.farmaciasPorDia.value) } : {}), dias: [...f.querySelectorAll('[name=dia]:checked')].map((x) => Number(x.value)), feriados: [...feriados] }));
     if (!r) return;
     const p = r.item;
     if (!p.dias.length) {
@@ -2112,7 +2120,7 @@ V.cronogramas = async () => {
   };
   const anular = async (c) => { const m = await confirmar('Anular cronograma', `El representante dejará de ver el día ${fecha(c.fecha)}. Escribe el motivo.`, { okTexto: 'Anular', pedirMotivo: true }); if (m == null) return; try { await api('POST', `/api/cronogramas/${c.id}/anular`, { motivo: m }); } catch (e) { alert(e.message); } router(); };
   bloques.push(S('dias', `Días programados (${fmtN.format(crons.filter((c) => c.estado === 'aprobado').length)})`,
-    tabla([{ t: 'Día', v: (c) => fecha(c.fecha) }, { t: 'Lugares', v: (c) => c.lugares.map((l) => l.lugar).join(', ') },
+    tabla([{ t: 'Día', v: (c) => fecha(c.fecha) }, { t: 'Lugares', v: (c) => c.lugares.map((l) => (l.medicos?.length ? `${l.lugar} (${l.medicos.length} médicos)` : l.lugar)).join(', ') },
       { t: 'Estado', v: (c) => c.estado === 'anulado' ? [h('span', { class: 'chip anulado' }, 'Anulado'), c.motivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, c.motivo) : null] : c.jornadaId ? h('span', { class: 'chip aprobado' }, 'Jornada creada') : h('span', { class: 'chip pendiente' }, 'Aprobado') },
       { t: 'Noche', v: (c) => (c.duermeFuera ? h('span', { class: 'chip noche' }, 'Duerme fuera') : '') },
       { t: '', v: (c) => c.estado === 'aprobado' && !c.jornadaId ? h('div', { class: 'acciones-fila' }, puedeNoche ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => noche(c) }, c.duermeFuera ? 'Quitar noche fuera' : 'Noche fuera') : null, esAdmin ? h('button', { class: 'btn-sec btn-peq', onclick: () => anular(c) }, 'Anular') : null) : '' }],
@@ -3436,7 +3444,7 @@ V.representantes = async () => {
 
 
 // ---------------------------------------------------------------- configurar representante: todo en un solo lugar, paso a paso
-const PASOS_REP = [['datos', 'Datos'], ['zona', 'Zona de trabajo'], ['vehiculo', 'Vehículo y comida'], ['lugares', 'Establecimientos'], ['hoteles', 'Hoteles'], ['cronograma', 'Cronograma'], ['resumen', 'Resumen']];
+const PASOS_REP = [['datos', 'Datos'], ['zona', 'Zona de trabajo'], ['vehiculo', 'Vehículo y comida'], ['lugares', 'Establecimientos'], ['medicos', 'Médicos'], ['hoteles', 'Hoteles'], ['cronograma', 'Cronograma'], ['resumen', 'Resumen']];
 /** Barra de progreso + control segmentado de pasos. Un paso bloqueado no se puede abrir hasta completar el anterior. */
 function barraPasosRep(actual, hechos, maxAbierto, ir) {
   const i0 = PASOS_REP.findIndex(([id]) => id === actual);
@@ -3476,8 +3484,9 @@ V.configurar = async () => {
   const r = rep ? reps.find((x) => x.id === rep) : null;
   if (rep && !r) return vista('Configurar representante', null, h('div', { class: 'aviso error' }, 'Ese representante no está activo.'), h('a', { class: 'btn-sec', href: '#representantes' }, 'Volver a representantes'));
   if (!rep && !ES_GER()) return vista('Configurar representante', null, h('div', { class: 'aviso' }, 'Solo la gerencia registra representantes nuevos.'));
-  const [zona, pf, crons] = rep ? await Promise.all([api('GET', `/api/territorio/zonas/${rep}`).then((x) => x.item), api('GET', `/api/viaticos/perfiles/${rep}`).then((x) => x.item).catch(() => null), api('GET', `/api/cronogramas?representanteId=${rep}&mes=${mes}`).then((x) => x.items)]) : [null, null, []];
-  const diasAprob = crons.filter((c) => c.estado === 'aprobado');
+  const [zona, pf, todosCron] = rep ? await Promise.all([api('GET', `/api/territorio/zonas/${rep}`).then((x) => x.item), api('GET', `/api/viaticos/perfiles/${rep}`).then((x) => x.item).catch(() => null), api('GET', `/api/cronogramas?representanteId=${rep}`).then((x) => x.items)]) : [null, null, []];
+  const diasAprob = todosCron.filter((c) => c.estado === 'aprobado' && c.fecha.startsWith(mes));
+  const yaProgramado = todosCron.some((c) => c.estado === 'aprobado'); // ya tiene ruta en algún mes: los pasos de revisión cuentan como hechos
   // Qué está completo y hasta dónde se puede abrir
   const hechos = new Set();
   if (r?.position) hechos.add('datos');
@@ -3485,7 +3494,9 @@ V.configurar = async () => {
   if (pf?.vehiculo?.propiedad) hechos.add('vehiculo');
   const ses = (SESION_REP[rep ?? 'nuevo'] ??= new Set());
   for (const x of ses) hechos.add(x);
-  if (diasAprob.length && hechos.has('vehiculo')) ['lugares', 'hoteles', 'cronograma'].forEach((x) => hechos.add(x));
+  if (yaProgramado && hechos.has('vehiculo')) ['lugares', 'medicos', 'hoteles'].forEach((x) => hechos.add(x));
+  if (diasAprob.length && hechos.has('vehiculo')) hechos.add('cronograma');
+  if (hechos.has('lugares') && r && !['Visitador', 'PVC'].includes(r.position)) hechos.add('medicos'); // los vendedores no tienen cartera de médicos
   if (ses.has('cronograma')) hechos.add('cronograma');
   let maxAbierto = PASOS_REP.findIndex(([id]) => !hechos.has(id)); if (maxAbierto < 0) maxAbierto = PASOS_REP.length - 1;
   const pedido = param('paso'); const iPed = PASOS_REP.findIndex(([id]) => id === pedido);
@@ -3670,12 +3681,12 @@ async function pasoRep(paso, ctx) {
             { id: 'tipo', etiqueta: 'Tipos', tipo: 'opciones', plural: 'tipos', opciones: uni(fuera.map((x) => x.tipo)).map((t) => ({ value: t, label: TIP[t] ?? t })), valor: (x) => x.tipo }],
           cols: [{ t: 'Lugar', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion ?? '')] }, { t: 'Tipo', v: (x) => TIP[x.tipo] ?? x.tipo }, { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` },
             { t: '', v: (x) => h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver([x.id]) }, 'Volver a agregar') }] })) : null;
-      cont.replaceChildren(
+      cont.replaceChildren(...[
         deshacer ? h('div', { class: 'asis-deshacer', role: 'status' }, h('span', {}, deshacer.texto), h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => cambiar(deshacer.cuerpo, null) }, 'Deshacer')) : null,
         h('div', { class: 'tarjeta' }, h('h2', {}, `Establecimientos que visitará (${fmtN.format(todos.length)})`),
           h('p', { class: 'hint' }, 'Son los lugares de su zona que entran a su cronograma y a su meta de visitas. Quitar aquí lo saca solo de su ruta: no se borra del catálogo ni de la zona de los demás.'),
           porTipo.length ? h('div', { class: 'asis-chips' }, porTipo.map(([t, n]) => h('span', { class: 'asis-chip' }, h('strong', {}, fmtN.format(n)), ` ${TIP[t] ?? t}`))) : null, lista),
-        quitados);
+        quitados].filter(Boolean));
     }
     await pintar();
     const zprov = zona?.provincias ?? [];
@@ -3683,6 +3694,7 @@ async function pasoRep(paso, ctx) {
       { provincias: zprov, municipios: Object.fromEntries(zprov.map((p) => [p, zona.municipios?.[p]?.length ? zona.municipios[p] : div.municipios[p]])), titulo: 'Buscar y agregar lugares', nota: 'Busca en Google Maps dentro de su zona y agrega con un clic: entra al catálogo y a su ruta. Si ya está registrado pero lo quitaste, vuélvelo a agregar en "Quitados de su ruta".' });
     return [cont, buscador, nav.nodo];
   }
+  if (paso === 'medicos') return pasoMedicosRep({ rep, r, ir, ses });
   if (paso === 'hoteles') {
     const provs = zona?.provincias ?? [];
     const puedeEditar = ES_GER();
@@ -3751,13 +3763,13 @@ async function pasoRep(paso, ctx) {
             { id: 'mun', etiqueta: 'Municipios', tipo: 'opciones', plural: 'municipios', opciones: [...new Set(fuera.map((x) => x.municipio))].sort((a, b) => a.localeCompare(b, 'es')), valor: (x) => x.municipio }],
           cols: [{ t: 'Hotel', v: (x) => x.nombre }, { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` }, { t: 'Precio', num: true, v: (x) => (Number(x.precioNoche) > 0 ? RD(x.precioNoche) : '') },
             { t: '', v: (x) => h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => volver([x.id]) }, 'Volver a usar') }] })) : null;
-      cont.replaceChildren(
+      cont.replaceChildren(...[
         deshacer ? h('div', { class: 'asis-deshacer', role: 'status' }, h('span', {}, deshacer.texto), h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => lote(deshacer.ids, deshacer.estado, null) }, 'Deshacer')) : null,
         h('div', { class: 'tarjeta' }, h('h2', {}, `Hoteles de su zona (${fmtN.format(hs.length)})`),
           h('p', { class: 'hint' }, 'Cuando un día del cronograma está marcado "duerme fuera", la noche entra al presupuesto con el hotel recomendado de esa provincia: el más económico con precio confirmado que cumple todos los requisitos. Si ninguno cumple, se usa el precio de referencia.'),
           h('dl', { class: 'rejilla' }, provs.map((p, i) => h('div', { class: 'cifra' }, h('dt', {}, `Recomendado en ${p}`), h('dd', {}, recs[i]?.hotel ? `${recs[i].hotel.nombre}, ${RD(recs[i].hotel.precioNoche)}` : 'Sin hotel confirmado')))),
           recs.some((x) => !x) && puedeEditar ? h('p', { class: 'hint' }, 'Para tener recomendado, escribe el precio y marca los requisitos con "Editar".') : null, lista),
-        quitados);
+        quitados].filter(Boolean));
     }
     await pintar();
     const zm = Object.fromEntries(provs.map((p) => [p, zona.municipios?.[p]?.length ? zona.municipios[p] : div.municipios[p]]));
@@ -3921,6 +3933,62 @@ function listaMarcable({ clave, filas, campos, cols, verbo, accion, porPagina = 
   }));
   return caja;
 }
+/**
+ * Cartera de médicos del visitador o PVC: qué médicos visita (por centro y especialidad), por qué centro empieza
+ * y cuántos médicos (y farmacias, si es PVC) por día. La propuesta del cronograma los reparte.
+ */
+async function pasoMedicosRep({ rep, r, ir, ses }) {
+  const nav = navPasosRep('medicos', ir, { siguiente: () => { ses.add('medicos'); } });
+  let c = await api('GET', `/api/territorio/zonas/${rep}/cartera`).then((x) => x.item);
+  if (!c.aplica) return [h('div', { class: 'tarjeta vacio' }, h('strong', {}, `${r?.position ?? 'Esta posición'}: sin cartera de médicos`), c.posicion === 'Vendedor' ? 'Los vendedores visitan farmacias; sus visitas por día se configuran en Cronogramas → Visitas por día.' : 'Solo los visitadores y los PVC visitan médicos en los centros.'), nav.nodo];
+  const vpd = await api('GET', '/api/cronogramas/visitas-por-dia').then((x) => x.item).catch(() => null);
+  const nPos = vpd?.porPosicion?.[c.posicion] ?? vpd?.predeterminado ?? 8;
+  const cont = h('div', { class: 'asis-lista', 'aria-live': 'polite' }); let deshacer = null;
+  const id = (x) => `${x.medicoId}|${x.establecimientoId}`;
+  const guardar = async (medicos, extra = {}, hecho = null, previo = null) => {
+    try { c = await api('POST', `/api/territorio/zonas/${rep}/cartera`, { medicos: medicos.map((x) => ({ medicoId: x.medicoId, establecimientoId: x.establecimientoId })), centroInicioId: extra.centroInicioId !== undefined ? extra.centroInicioId : c.centroInicioId, visitas: extra.visitas ?? c.visitas }).then((x) => x.item); }
+    catch (e) { alert(e.fields ? Object.values(e.fields).join(' ') : e.message); return; }
+    deshacer = hecho ? { texto: hecho, medicos: previo } : null; pintar();
+  };
+  const esp = (xs) => [...new Set(xs.map((x) => x.especialidad).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  const uni = (xs) => [...new Set(xs)].sort((a, b) => a.localeCompare(b, 'es'));
+  const campos = (xs) => [
+    { id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Nombre del médico', valor: (x) => `${x.nombre} ${x.especialidad ?? ''}` },
+    { id: 'esp', etiqueta: 'Especialidades', tipo: 'opciones', plural: 'especialidades', opciones: esp(xs), valor: (x) => x.especialidad ?? '' },
+    { id: 'centro', etiqueta: 'Centros', tipo: 'opciones', plural: 'centros', opciones: uni(xs.map((x) => x.centro)), valor: (x) => x.centro },
+    { id: 'mun', etiqueta: 'Municipios', tipo: 'opciones', plural: 'municipios', opciones: uni(xs.map((x) => x.municipio)), valor: (x) => x.municipio },
+  ];
+  const cols = [{ t: 'Médico', v: (x) => x.nombre }, { t: 'Especialidad', v: (x) => x.especialidad ?? '' }, { t: 'Centro', v: (x) => [x.centro, h('small', { style: 'display:block;color:var(--texto-2)' }, `${x.municipio}, ${x.provincia}`)] }];
+  function pintar() {
+    const en = new Set(c.medicos.map(id));
+    const libres = c.disponibles.filter((x) => !en.has(id(x))).map((x) => ({ ...x, id: id(x) }));
+    const mios = c.medicos.map((x) => ({ ...x, id: id(x) }));
+    const centrosC = [...new Map(c.medicos.map((x) => [x.establecimientoId, x])).values()];
+    // Visitas por día y centro de inicio
+    const fM = campo('vis-med', 'Médicos por día', { type: 'number', min: 0, max: 40, step: 1, inputmode: 'numeric', value: c.visitas.medicos ?? '', placeholder: String(c.posicion === 'PVC' ? Math.max(nPos - Math.floor(nPos / 2), 0) : nPos) });
+    const fF = c.posicion === 'PVC' ? campo('vis-far', 'Farmacias por día', { type: 'number', min: 0, max: 40, step: 1, inputmode: 'numeric', value: c.visitas.farmacias ?? '', placeholder: String(Math.floor(nPos / 2)) }) : null;
+    const fI = campo('centro-inicio', 'Centro de inicio', { options: centrosC.map((x) => ({ value: x.establecimientoId, label: `${x.centro} (${x.municipio})` })), value: c.centroInicioId ?? '', placeholder: 'El más cercano a su casa' });
+    const bG = h('button', { class: 'btn btn-peq', type: 'button' }, 'Guardar');
+    bG.addEventListener('click', () => guardar(c.medicos, { centroInicioId: fI.querySelector('select').value || null, visitas: { medicos: fM.querySelector('input').value, farmacias: fF?.querySelector('input').value ?? null } }));
+    const nMed = c.visitas.medicos ?? (c.posicion === 'PVC' ? Math.max(nPos - (c.visitas.farmacias ?? Math.floor(nPos / 2)), 0) : nPos);
+    const dias = nMed ? Math.ceil(c.medicos.length / nMed) : 0;
+    cont.replaceChildren(...[
+      deshacer ? h('div', { class: 'asis-deshacer', role: 'status' }, h('span', {}, deshacer.texto), h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => guardar(deshacer.medicos) }, 'Deshacer')) : null,
+      h('div', { class: 'tarjeta' }, h('h2', {}, 'Cómo se arma su día'),
+        h('p', { class: 'hint' }, c.posicion === 'PVC' ? 'El PVC hace promoción, ventas y cobros: cada día visita médicos de su cartera y también farmacias. Vacío = lo de su posición.' : 'Cada médico visitado cuenta como una visita: puede ver 10 médicos en un solo centro. Vacío = lo de su posición.'),
+        h('div', { class: 'form-fila' }, fM, fF, fI), h('div', { class: 'acciones', style: 'margin-top:.25rem' }, bG),
+        c.medicos.length ? h('p', { class: 'hint' }, `Con ${fmtN.format(c.medicos.length)} médico(s) a ${fmtN.format(nMed)} por día, necesita unos ${fmtN.format(dias)} día(s) para verlos a todos una vez.`) : null),
+      h('div', { class: 'tarjeta' }, h('h2', {}, `Su cartera (${fmtN.format(mios.length)} médicos)`),
+        mios.length ? listaMarcable({ clave: `asis-cartera-${rep}`, filas: mios, campos: campos(mios), cols, verbo: 'Quitar', accion: (ids) => { const prev = c.medicos; guardar(c.medicos.filter((x) => !ids.includes(id(x))), {}, `${fmtN.format(ids.length)} médico(s) quitado(s) de su cartera.`, prev); } })
+          : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Aún no tiene médicos'), 'Agrégalos abajo. Sin cartera, la propuesta reparte centros y farmacias como antes.')),
+      h('div', { class: 'tarjeta' }, h('h2', {}, `Agregar médicos (${fmtN.format(libres.length)} en los centros de su ruta)`),
+        h('p', { class: 'hint' }, 'Filtra por especialidad, centro o municipio, marca los que visitará y agrégalos. Si falta un médico, regístralo en ', h('a', { href: '#catalogo?ver=medicos' }, 'Catálogo → Médicos'), ' con su centro.'),
+        libres.length ? listaMarcable({ clave: `asis-libres-${rep}`, filas: libres, campos: campos(libres), cols, verbo: 'Agregar', accion: (ids) => { const prev = c.medicos; guardar([...c.medicos, ...libres.filter((x) => ids.includes(x.id))], {}, `${fmtN.format(ids.length)} médico(s) agregado(s) a su cartera.`, prev); } })
+          : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay más médicos en los centros de su ruta'), 'Registra médicos en el catálogo con el centro donde trabajan.'))].filter(Boolean));
+  }
+  pintar();
+  return [cont, nav.nodo];
+}
 /** Visitas por día de cada posición: el número con que la propuesta automática reparte los lugares. */
 async function formVisitasPorDia() {
   const { item } = await api('GET', '/api/cronogramas/visitas-por-dia');
@@ -3968,7 +4036,7 @@ async function nochesFuera(dias, recargar) {
   };
   const cols = [
     ...(puede ? [{ t: '', v: (c) => editable(c) ? h('input', { type: 'checkbox', 'data-dia': c.id, checked: sel.has(c.id), 'aria-label': `Marcar ${fecha(c.fecha)}`, onchange: (e) => { e.target.checked ? sel.add(c.id) : sel.delete(c.id); contar(); } }) : '' }] : []),
-    { t: 'Día', v: (c) => fecha(c.fecha) }, { t: 'Lugares', v: (c) => [c.lugares.map((l) => l.lugar).join(', '), h('small', { style: 'display:block;color:var(--texto-2)' }, [...new Set(c.lugares.map((l) => l.municipio))].join(', '))] },
+    { t: 'Día', v: (c) => fecha(c.fecha) }, { t: 'Lugares', v: (c) => { const nm = c.lugares.reduce((x, l) => x + (l.medicos?.length ?? 0), 0); return [c.lugares.map((l) => l.lugar).join(', '), h('small', { style: 'display:block;color:var(--texto-2)' }, [...new Set(c.lugares.map((l) => l.municipio))].join(', ') + (nm ? ` · ${nm} médico(s)` : ''))]; } },
     { t: 'Noche fuera', v: (c) => !c.duermeFuera ? (editable(c) ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => poner([c.id], true) }, 'Duerme fuera') : '')
       : h('div', { class: 'noche-celda' }, h('span', { class: 'chip noche' }, 'Duerme fuera'), editable(c) ? selHotel(c) : null, editable(c) ? h('button', { class: 'btn-enlace', type: 'button', onclick: () => poner([c.id], false) }, 'Quitar') : null,
         c.jornadaId ? h('small', { class: 'hint' }, 'Ya tiene jornada: el hotel lo reporta el representante.') : null) },

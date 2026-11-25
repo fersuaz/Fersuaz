@@ -15,9 +15,9 @@ test('valores del mes: solo visitas hechas; recetas, promedio, volumen y pacient
   ];
   const recetas = [{ pacienteId: 'p1', items: [{ medicamentoId: 'm1', unidades: 2 }, { medicamentoId: 'm2', unidades: 1 }] }, { pacienteId: 'p1', items: [{ medicamentoId: 'm1', unidades: 1 }] }];
   const v = valoresDelMes({ jornadas, recetas, precios: new Map([['m1', 250], ['m2', 99.5]]) });
-  assert.deepEqual(v, { visitasFarmacias: 1, visitasCentros: 1, recetas: 2, medicamentosPorReceta: 1.5, volumen: 849.5, pacientes: 1 });
+  assert.deepEqual(v, { visitasFarmacias: 1, visitasCentros: 1, visitasMedicos: 0, recetas: 2, medicamentosPorReceta: 1.5, volumen: 849.5, pacientes: 1 });
   const cfg = { porPosicion: { Visitador: { visitasFarmacias: 60, visitasCentros: 20 } }, porRep: { r1: { visitasCentros: 30 } } };
-  assert.deepEqual(metaEfectiva(cfg, { id: 'r1', position: 'Visitador' }), { visitasFarmacias: { meta: 60, fuente: 'posicion' }, visitasCentros: { meta: 30, fuente: 'representante' } });
+  assert.deepEqual(metaEfectiva(cfg, { id: 'r1', position: 'Visitador' }), { visitasFarmacias: { meta: 60, fuente: 'posicion' }, visitasCentros: { meta: 30, fuente: 'representante' }, visitasMedicos: { meta: null, fuente: null } });
   assert.deepEqual(metaEfectiva(cfg, { id: 'r2', position: 'Vendedor' }), { visitasFarmacias: { meta: null, fuente: null } });
 });
 
@@ -26,7 +26,7 @@ test('metas de visitas: veces por lugar × lugares de la zona; PVC mide farmacia
   assert.equal(metaVisitas(null, 100), null); assert.equal(metaVisitas(2, 0), 0);
   const paradas = [{ refTipo: 'farmacia', refId: 'a', hecha: true }, { refTipo: 'farmacia', refId: 'a', hecha: true }, { refTipo: 'farmacia', refId: 'b', hecha: true }, { refTipo: 'farmacia', refId: 'c', hecha: false }];
   assert.equal(lugaresCubiertos(paradas, 'farmacia', 2), 1); assert.equal(lugaresCubiertos(paradas, 'farmacia', 1), 2);
-  assert.deepEqual(METRICAS_POSICION.PVC, ['visitasFarmacias', 'visitasCentros']);
+  assert.deepEqual(METRICAS_POSICION.PVC, ['visitasFarmacias', 'visitasCentros', 'visitasMedicos']);
 });
 
 test('metas: la gerencia fija por posición y por representante; las visitas cuentan al marcarlas', async () => {
@@ -70,7 +70,7 @@ test('metas: la gerencia fija por posición y por representante; las visitas cue
     const av = (await call('GET', '/api/metas/avance?mes=2026-11', null, tok.ger)).body;
     assert.equal(av.items.length, 3);
     const vis = av.items.find((x) => x.representante.id === ids.vis);
-    assert.deepEqual(vis.metricas.map((m) => [m.clave, m.valor, m.vecesPorLugar, m.lugares, m.meta, m.porcentaje, m.cubiertos]), [['visitasFarmacias', 1, 2, 3, 6, 17, 0], ['visitasCentros', 1, 1, 1, 1, 100, 1]]);
+    assert.deepEqual(vis.metricas.map((m) => [m.clave, m.valor, m.vecesPorLugar, m.lugares, m.meta, m.porcentaje, m.cubiertos]), [['visitasFarmacias', 1, 2, 3, 6, 17, 0], ['visitasCentros', 1, 1, 1, 1, 100, 1], ['visitasMedicos', 0, null, 0, null, null, 0]]);
     assert.equal(av.items.find((x) => x.representante.id === ids.vis2).metricas[1].fuente, 'representante');
     const pro = av.items.find((x) => x.representante.id === ids.pro);
     assert.deepEqual(pro.metricas.map((m) => m.valor), [2, 1.5, 3000, 2]);

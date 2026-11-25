@@ -106,3 +106,37 @@ export function copiarFechas(mesDestino, fechas) {
   }
   return { mapa, sinDia };
 }
+
+/** Centros donde trabaja un médico (su centro principal y los lugares de su ficha). */
+export const centrosDeMedico = (m) => [...new Set([m.establecimientoId, ...(m.lugares ?? []).map((l) => l.establecimientoId)].filter(Boolean))];
+
+/**
+ * Propuesta con cartera de médicos (visitador y PVC). Cada día lleva `medicosPorDia` médicos, agrupados por
+ * centro (un centro puede llenar el día entero, por ejemplo 10 médicos en un hospital), y para el PVC además
+ * `farmaciasPorDia` farmacias. Empieza por `centroInicioId` y sigue por cercanía.
+ * centros: [{ refTipo: 'establecimiento', refId, lugar, provincia, municipio, lat?, lng?, medicos: [{ medicoId, nombre, especialidad }] }]
+ * Devuelve { dias: [{ fecha, lugares }], sinDia } con `lugares[i].medicos` en los centros.
+ */
+export function proponerConMedicos({ centros = [], farmacias = [], residencia, fechas, medicosPorDia, farmaciasPorDia = 0, centroInicioId = null }) {
+  const orden = (xs) => (xs.length ? proponer({ lugares: xs, residencia, fechas: ['x'], porDia: xs.length }).dias[0].lugares : []);
+  let cs = orden(centros.filter((c) => c.medicos?.length));
+  const i0 = cs.findIndex((c) => c.refId === centroInicioId);
+  if (i0 > 0) { const ini = cs[i0]; const resto = cs.filter((_, k) => k !== i0); cs = [ini, ...vecinoMasCercano(resto, ini)]; }
+  const cola = cs.flatMap((c) => c.medicos.map((m) => ({ c, m })));
+  const fs = orden(farmacias);
+  const dias = []; let im = 0; let jf = 0;
+  for (const fecha of fechas) {
+    if (im >= cola.length && jf >= fs.length) break;
+    const lugares = [];
+    for (const { c, m } of cola.slice(im, im + (medicosPorDia || 0))) {
+      const ult = lugares.at(-1);
+      if (ult && ult.refId === c.refId) ult.medicos.push(m); else { const { medicos, ...base } = c; lugares.push({ ...base, medicos: [m] }); }
+    }
+    im += medicosPorDia || 0;
+    lugares.push(...fs.slice(jf, jf + (farmaciasPorDia || 0))); jf += farmaciasPorDia || 0;
+    if (lugares.length) dias.push({ fecha, lugares });
+  }
+  const pendientes = new Map();
+  for (const { c, m } of cola.slice(im)) { const x = pendientes.get(c.refId) ?? { ...c, medicos: [] }; x.medicos.push(m); pendientes.set(c.refId, x); }
+  return { dias, sinDia: [...pendientes.values(), ...fs.slice(jf)] };
+}
