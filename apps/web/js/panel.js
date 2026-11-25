@@ -1562,7 +1562,7 @@ V.comisiones = async () => {
         campo('periodo', 'Período de pago', { options: [{ value: 'quincenal', label: 'Quincenal' }, { value: 'mensual', label: 'Mensual' }], value: cfg.global?.periodo })),
       h('div', { class: 'acciones' }, b));
     f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/comisiones/config', { porcentaje: f.porcentaje.value, periodo: f.periodo.value }))) router(); });
-    bloques.push(f);
+    bloques.push(S('config', 'Configuración general', f));
   }
   if (!cfg.global) bloques.push(h('div', { class: 'aviso' }, 'Todavía no hay porcentaje ni período configurados. Hasta entonces no se calculan comisiones.'));
   const sel = campo('dep', 'Dependiente', { options: deps.items.map((d) => ({ value: d.id, label: `${d.fullName}${d.pharmacy ? `, ${d.pharmacy}` : ''}` })), placeholder: 'Elige un dependiente' });
@@ -1607,8 +1607,8 @@ V.comisiones = async () => {
   };
   sel.querySelector('select').addEventListener('change', ver);
   selPer.addEventListener('change', ver);
-  bloques.push(h('div', { class: 'tarjeta' }, h('h2', {}, 'Comisión por dependiente'), deps.items.length ? h('div', { class: 'form-fila' }, sel, per) : h('p', { class: 'vacio' }, 'Aún no hay dependientes con cuenta activa.'), detalle));
-  return vista('Comisiones', 'Configura el porcentaje, revisa lo acumulado y cierra cada período para pagarlo.', ...bloques);
+  bloques.push(S('dep', 'Comisión por dependiente', h('div', { class: 'tarjeta' }, h('h2', {}, 'Comisión por dependiente'), deps.items.length ? h('div', { class: 'form-fila' }, sel, per) : h('p', { class: 'vacio' }, 'Aún no hay dependientes con cuenta activa.'), detalle)));
+  return vistaS('comisiones', ['dep', 'config'], 'Comisiones', 'Configura el porcentaje, revisa lo acumulado y cierra cada período para pagarlo.', ...bloques);
 };
 V.reportes = async () => {
   const q = new URLSearchParams(location.hash.split('?')[1]);
@@ -1952,7 +1952,7 @@ function nombresDias(ds = [1, 2, 3, 4, 5]) {
  * Revisión de días antes de aprobar (propuesta automática o copia del mes anterior):
  * quitar días o lugares y marcar las noches que duerme fuera. Aprueba todo junto con el lote.
  */
-function revisarDias(salida, diasIn, rep, mes, div, intro, avisos = []) {
+function revisarDias(salida, diasIn, rep, mes, div, intro, avisos = [], alAprobar = null) {
   const etiqueta = (l) => (l.refTipo === 'farmacia' ? 'Farmacia' : div.tipos[l.tipo] ?? 'Centro');
   const quitados = new Set(); const diasFuera = new Set();
   const noches = new Set(diasIn.filter((d) => d.duermeFuera).map((d) => d.fecha));
@@ -1987,7 +1987,7 @@ function revisarDias(salida, diasIn, rep, mes, div, intro, avisos = []) {
     const nf = dias.filter((d) => d.duermeFuera).length;
     if (!(await confirmar('Aprobar cronograma', `Se aprobarán ${dias.length} día(s) con ${dias.reduce((n, d) => n + d.lugares.length, 0)} lugares${nf ? ` y ${nf} noche(s) fuera, que entran al presupuesto con el precio del hotel verificado o el de referencia` : ''}. El representante recibirá un aviso y podrá crear sus jornadas.`, { okTexto: 'Aprobar' }))) return;
     aprobar.disabled = true; aprobar.textContent = 'Aprobando…';
-    try { await api('POST', '/api/cronogramas/lote', { representanteId: rep, dias }); irA('cronogramas', { mes, rep, sec: 'dias' }); }
+    try { await api('POST', '/api/cronogramas/lote', { representanteId: rep, dias }); if (alAprobar) alAprobar(); else irA('cronogramas', { mes, rep, sec: 'dias' }); }
     catch (err) { const a = h('div', { role: 'status' }); estado(a, 'error', err.message); salida.prepend(a); contar(); }
   });
   contar();
@@ -1995,7 +1995,7 @@ function revisarDias(salida, diasIn, rep, mes, div, intro, avisos = []) {
 }
 
 /** Copiar el cronograma del mes anterior: mismos lugares y noches fuera, en el mismo día de la semana. */
-function copiarMes(rep, mes, div) {
+function copiarMes(rep, mes, div, alAprobar = null) {
   const b = h('button', { class: 'btn', type: 'submit' }, 'Copiar del mes anterior');
   const salida = h('div', { 'aria-live': 'polite' });
   const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Copiar el mes anterior'),
@@ -2008,13 +2008,13 @@ function copiarMes(rep, mes, div) {
     const p = r.item;
     const avisos = p.omitidos.length ? [`${fmtN.format(p.omitidos.length)} día(s) no se copian: ${p.omitidos.map((o) => `${fecha(o.desde)} (${o.razon.replace(/\.$/, '').toLowerCase()})`).join('; ')}.`] : [];
     if (!p.dias.length) { salida.replaceChildren(...avisos.map((t) => h('div', { class: 'aviso' }, t)), h('div', { class: 'tarjeta vacio', style: 'margin-top:1rem' }, h('strong', {}, 'No hay días para copiar'), 'Ya están programados o ya pasaron.')); return; }
-    revisarDias(salida, p.dias, rep, mes, div, h('p', { class: 'hint', style: 'margin-top:1rem' }, `${fmtN.format(p.resumen.copiados)} de ${fmtN.format(p.resumen.origen)} día(s) de ${p.anterior} copiados${p.resumen.nochesFuera ? `, ${fmtN.format(p.resumen.nochesFuera)} con noche fuera` : ''}.`), avisos);
+    revisarDias(salida, p.dias, rep, mes, div, h('p', { class: 'hint', style: 'margin-top:1rem' }, `${fmtN.format(p.resumen.copiados)} de ${fmtN.format(p.resumen.origen)} día(s) de ${p.anterior} copiados${p.resumen.nochesFuera ? `, ${fmtN.format(p.resumen.nochesFuera)} con noche fuera` : ''}.`), avisos, alAprobar);
   });
   return f;
 }
 
 /** Propuesta automática del mes (solo administrador): el sistema reparte los lugares de la zona; el admin ajusta y aprueba. */
-async function propuestaMes(rep, mes, div) {
+async function propuestaMes(rep, mes, div, alAprobar = null) {
   const fpd = campo('porDia', 'Lugares por día', { type: 'number', min: 1, max: 15, step: 1, value: 8, inputmode: 'numeric' });
   // Días de la semana que trabaja (por defecto, lunes a viernes) y fechas que no trabaja
   const SEMANA = [[1, 'Lun', 'lunes'], [2, 'Mar', 'martes'], [3, 'Mié', 'miércoles'], [4, 'Jue', 'jueves'], [5, 'Vie', 'viernes'], [6, 'Sáb', 'sábado'], [0, 'Dom', 'domingo']];
@@ -2051,7 +2051,7 @@ async function propuestaMes(rep, mes, div) {
     if (p.sinDia.length) avisos.push(`${fmtN.format(p.sinDia.length)} lugar(es) no caben en los días libres de este mes; quedarán para el próximo.`);
     if (p.resumen.sinUbicacion) avisos.push(`${fmtN.format(p.resumen.sinUbicacion)} lugar(es) no tienen ubicación y van al final de su municipio.`);
     if (p.sinResidencia) avisos.push('Este representante no tiene perfil de viático: el recorrido no empieza en su residencia.');
-    revisarDias(salida, p.dias, rep, mes, div, h('p', { class: 'hint', style: 'margin-top:1rem' }, `${fmtN.format(p.resumen.lugares)} lugares pendientes en ${fmtN.format(p.resumen.diasLibres)} día(s) laborable(s) libre(s) (${nombresDias(p.resumen.diasSemana)}, desde ${fecha(p.resumen.desde > `${mes}-01` ? p.resumen.desde : `${mes}-01`)}${p.resumen.feriados?.length ? `, sin ${p.resumen.feriados.length} fecha(s) quitada(s)` : ''}). Quita lo que no quieras y marca las noches que duerme fuera antes de aprobar; el orden exacto de cada día lo calcula el mapa cuando el representante crea su jornada.`), avisos);
+    revisarDias(salida, p.dias, rep, mes, div, h('p', { class: 'hint', style: 'margin-top:1rem' }, `${fmtN.format(p.resumen.lugares)} lugares pendientes en ${fmtN.format(p.resumen.diasLibres)} día(s) laborable(s) libre(s) (${nombresDias(p.resumen.diasSemana)}, desde ${fecha(p.resumen.desde > `${mes}-01` ? p.resumen.desde : `${mes}-01`)}${p.resumen.feriados?.length ? `, sin ${p.resumen.feriados.length} fecha(s) quitada(s)` : ''}). Quita lo que no quieras y marca las noches que duerme fuera antes de aprobar; el orden exacto de cada día lo calcula el mapa cuando el representante crea su jornada.`), avisos, alAprobar);
   });
   return f;
 }
@@ -2234,7 +2234,7 @@ V.perfiles = async () => {
       h('small', { style: 'display:block;color:var(--texto-2)' }, `${combs.find((c) => c.value === r.perfil.vehiculo.combustible)?.label ?? ''}${r.perfil.vehiculo.rendimiento ? `, ${fmtN.format(r.perfil.vehiculo.rendimiento)} km/gal${r.perfil.vehiculo.rendimientoFuente === 'epa' ? ' (EPA)' : ''}` : ''}`)] },
     { t: 'Comida/día', num: true, v: (r) => !r.perfil ? '' : r.perfil.vehiculo.propiedad === 'ninguno' ? 'Por zona' : RD(r.perfil.tarifaAlimentacion) },
     { t: 'Tope combustible', num: true, v: (r) => r.perfil?.topeCombustible ? RD(r.perfil.topeCombustible) : r.perfil ? 'Global' : '' },
-    { t: '', v: (r) => puede ? h('a', { class: 'btn-sec btn-peq', href: `#perfiles?rep=${r.id}` }, r.perfil ? 'Editar' : 'Configurar') : '' },
+    { t: '', v: (r) => puede ? h('a', { class: 'btn-sec btn-peq', href: `#configurar?rep=${r.id}&paso=${r.perfil ? 'vehiculo' : 'zona'}` }, r.perfil ? 'Editar' : 'Configurar') : '' },
   ], reps, ['Aún no hay representantes activos', 'Aparecen aquí cuando se aprueban sus cuentas.']);
   if (!id || !puede) {
     const bloques = [];
@@ -2276,28 +2276,7 @@ V.perfiles = async () => {
     }
     return vistaS('perfiles', ['lista', 'tope'], 'Perfiles de viático', 'Vehículo, residencia, tarifa y tope de cada representante. La dirección exacta solo la ven la gerencia y el propio representante.', S('lista', 'Representantes', lista), ...bloques);
   }
-  const r = reps.find((x) => x.id === id);
-  const [pf, div, { item: globales }] = await Promise.all([api('GET', `/api/viaticos/perfiles/${id}`).then((x) => x.item), division(), api('GET', '/api/viaticos/tarifas-publico')]);
-  const veh = formularioVehiculo(pf, combs, globales, r?.position);
-  const res = residenciaCampos(div, pf?.residencia);
-  const b = h('button', { class: 'btn', type: 'submit' }, 'Guardar perfil');
-  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, r?.fullName ?? 'Representante'),
-    h('div', { class: 'form-fila' }, res.fp, res.fm, campo('residencia.direccion', 'Dirección desde donde sale', { value: pf?.residencia?.direccion ?? '' }, '(restringida)')),
-    h('h3', { class: 'subtitulo-form' }, 'Vehículo'), veh.el,
-    h('h3', { class: 'subtitulo-form' }, 'Viáticos'),
-    h('div', { class: 'form-fila' }, h('div', { class: 'solo-vehiculo' }, campo('tarifaAlimentacion', 'Comida por día RD$', { type: 'number', min: 0, step: 0.01, value: pf?.tarifaAlimentacion ?? '' })),
-      h('div', { class: 'solo-vehiculo' }, campo('reembolsoPorKm', 'Reembolso por km RD$', { type: 'number', min: 0, step: 0.01, value: pf?.reembolsoPorKm ?? '' }, '(solo vehículo propio; reemplaza al combustible)')),
-      campo('topeCombustible', 'Tope mensual de combustible o transporte RD$', { type: 'number', min: 0, step: 0.01, value: pf?.topeCombustible ?? '' }, '(vacío = usa el tope global)')),
-    h('div', { class: 'acciones' }, b, h('a', { class: 'btn-sec', href: '#perfiles' }, 'Volver')));
-  f.addEventListener('submit', async (e) => {
-    e.preventDefault(); const g = (k) => f.elements[k].value;
-    const body = { residencia: { provincia: res.sp.value, municipio: res.sm.value, direccion: g('residencia.direccion') }, ...veh.valores(f),
-      tarifaAlimentacion: veh.tiene() ? g('tarifaAlimentacion') : '', reembolsoPorKm: veh.tiene() ? g('reembolsoPorKm') : '', topeCombustible: g('topeCombustible') };
-    if (await enviar(f, b, () => api('POST', `/api/viaticos/perfiles/${id}`, body))) location.hash = '#perfiles';
-  });
-  const sincronizar = () => f.querySelectorAll('.solo-vehiculo').forEach((x) => { x.hidden = !veh.tiene(); });
-  veh.el.addEventListener('change', sincronizar); sincronizar();
-  return vista('Perfil de viático', null, f);
+  location.replace(`#configurar?rep=${id}&paso=vehiculo`); return [];
 };
 
 V.precios = async () => {
@@ -3099,6 +3078,8 @@ function residenciaCampos(div, valor) {
   const z = selectorZona(div.provincias, div.municipios, { provincia: valor?.provincia ?? '', municipio: valor?.municipio ?? '', prefijo: 'res' });
   z.fp.querySelector('label').textContent = 'Provincia donde vive'; z.fm.querySelector('label').textContent = 'Municipio donde vive';
   z.sp.name = 'residencia.provincia'; z.sm.name = 'residencia.municipio';
+  const err = (f, k) => { let e = f.querySelector('.error'); if (!e) { e = h('p', { class: 'error' }); f.append(e); } e.dataset.for = k; };
+  err(z.fp, 'residencia.provincia'); err(z.fm, 'residencia.municipio');
   return z;
 }
 
@@ -3199,47 +3180,6 @@ async function marcarOcupadas(cont, posicion, excluirId) {
     const ms = [...it.querySelectorAll('[name^="mun:"]')];
     if (ms.length && ms.every((x) => x.dataset.bloqueada)) { it.classList.add('prov-ocupada'); bloquear(it.querySelector('[name=prov]')); }
   });
-}
-
-/** Alta de representante por la administración: crea usuario y clave temporal, zona, residencia y vehículo. */
-async function altaRepresentante(div) {
-  const [{ items: combs }, { item: globales }] = await Promise.all([api('GET', '/api/viaticos/combustibles'), api('GET', '/api/viaticos/tarifas-publico')]);
-  const veh = formularioVehiculo(null, combs, globales);
-  const res = residenciaCampos(div, null);
-  const provs = h('div', { class: 'provincias provincias-zona' }, filasZona(div, null));
-  const b = h('button', { class: 'btn', type: 'submit' }, 'Registrar representante');
-  const salida = h('div', { 'aria-live': 'polite' });
-  const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo representante'),
-    h('p', { class: 'hint' }, 'El sistema crea su usuario y una contraseña temporal. Al entrar por primera vez, el representante elige su propia contraseña.'),
-    h('div', { class: 'form-fila' }, campo('nombre', 'Nombre', { autocomplete: 'off' }), campo('apellido', 'Apellido', { autocomplete: 'off' }),
-      campo('posicion', 'Posición', { options: ['Visitador', 'PVC', 'Vendedor', 'Promotora'].map((x) => ({ value: x, label: x })), placeholder: 'Elige la posición' }),
-      campo('telefono', 'Teléfono', { inputmode: 'tel', autocomplete: 'off' }, '(opcional)'), campo('correo', 'Correo', { type: 'email', autocomplete: 'off' }, '(opcional: le llega su usuario, los pasos y el enlace para entrar; también sirve para recuperar su clave)')),
-    h('h3', { class: 'subtitulo-form' }, 'Dónde vive'), h('div', { class: 'form-fila' }, res.fp, res.fm),
-    h('h3', { class: 'subtitulo-form' }, 'Provincias que visitará'), h('p', { class: 'hint' }, 'Con esto se conectan sus municipios, farmacias, hospitales, clínicas, UNAP y hoteles. Si solo visita algunos municipios, ábrela y márcalos. Dos representantes de la misma posición no pueden compartir zona; con otra posición sí. Elige primero la posición para ver lo que ya está cubierto.'),
-    h('p', { class: 'error', dataset: { for: 'provincias' } }), provs,
-    h('h3', { class: 'subtitulo-form' }, 'Vehículo'), veh.el,
-    h('div', { class: 'form-fila solo-vehiculo' }, campo('tarifaAlimentacion', 'Comida por día RD$', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal' })),
-    h('div', { class: 'acciones' }, b), salida);
-  const sincronizar = () => f.querySelectorAll('.solo-vehiculo').forEach((x) => { x.hidden = !veh.tiene(); });
-  f.posicion.addEventListener('change', () => marcarOcupadas(provs, f.posicion.value, null));
-  veh.el.addEventListener('change', sincronizar); sincronizar();
-  f.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const body = { nombre: f.nombre.value, apellido: f.apellido.value, posicion: f.posicion.value, telefono: f.telefono.value, correo: f.correo.value,
-      residencia: { provincia: res.sp.value, municipio: res.sm.value }, ...zonaDeForm(f),
-      tarifaAlimentacion: veh.tiene() ? f.tarifaAlimentacion.value : '', ...veh.valores(f) };
-    const r = await enviar(f, b, () => api('POST', '/api/representantes', body));
-    if (!r) return;
-    const copiar = h('button', { type: 'button', class: 'btn-sec' }, 'Copiar usuario y clave');
-    copiar.addEventListener('click', async () => { try { await navigator.clipboard.writeText(`Usuario: ${r.representante.usuario}\nContraseña: ${r.claveInicialGlobal ? 'la contraseña inicial de FERSUAZ' : r.claveTemporal}\nAl entrar por primera vez debe cambiarla.`); copiar.textContent = 'Copiado'; } catch { copiar.textContent = 'Cópialo a mano'; } });
-    salida.replaceChildren(h('div', { class: 'credenciales', role: 'status' }, h('h3', {}, `${r.representante.nombre} quedó registrado`),
-      h('dl', {}, h('div', {}, h('dt', {}, 'Usuario'), h('dd', {}, r.representante.usuario)), h('div', {}, h('dt', {}, r.claveInicialGlobal ? 'Contraseña' : 'Contraseña temporal'), h('dd', {}, r.claveInicialGlobal ? 'La contraseña inicial global' : r.claveTemporal))),
-      estadoCorreo(r.correoBienvenida),
-      h('p', {}, 'Entrégale estos datos en persona o por un medio seguro. Esta contraseña no se volverá a mostrar; si la pierde, genera una nueva desde la lista de representantes. Al entrar, deberá cambiarla.'),
-      h('div', { class: 'acciones' }, copiar, h('a', { class: 'btn', href: `#representantes?rep=${r.representante.id}&sec=lugares` }, 'Ver su zona'))));
-    salida.scrollIntoView({ block: 'nearest' });
-  });
-  return f;
 }
 
 /** Primera entrada con contraseña temporal: debe elegir la suya antes de usar el panel. */
@@ -3354,7 +3294,7 @@ V.representantes = async () => {
   const ver = param('ver') || 'zonas';
   const seg = segmentos('Representantes', [...(ES_GER() ? [['nuevo', 'Nuevo representante'], ['paquete', 'Importar desde Excel']] : []), ['zonas', 'Zonas por representante'], ['preregistro', 'Pre-registro por Excel'], ...(yo.role === 'administrador' ? [['clave', 'Contraseña inicial']] : [])], ver, (id) => irA('representantes', { ver: id }));
   if (ver === 'clave' && yo.role === 'administrador') return vista('Representantes', 'La contraseña con la que entra por primera vez cada representante nuevo o cuyo nombre cambió.', seg, await formClaveInicial());
-  if (ver === 'nuevo' && ES_GER()) return vista('Representantes', 'Registra a cada Promotora, Visitador, Vendedor o PVC: su usuario se crea solo y su zona, cronograma, km, combustible y viáticos quedan conectados.', seg, await altaRepresentante(await division()));
+  if (ver === 'nuevo' && ES_GER()) { borradorRep = {}; delete SESION_REP.nuevo; location.replace('#configurar?paso=datos'); return []; }
   if (ver === 'paquete' && ES_GER()) return vista('Representantes', 'Crea de una vez las cuentas de tu equipo desde el Excel del paquete de viáticos. Solo se toman nombre, posición y días en la zona y fuera de ella; el salario y los montos no se leen.', seg, importarPaquete());
   if (ver === 'preregistro') {
     const { items } = await api('GET', '/api/territorio/preregistros');
@@ -3478,12 +3418,299 @@ V.representantes = async () => {
     tabla([{ t: 'Representante', v: (r) => [r.fullName, h('small', { style: 'display:block;color:var(--texto-2)' }, r.position ?? '')] },
       { t: 'Zona', v: (r) => texto(zonas[reps.indexOf(r)]) || h('span', { class: 'chip pendiente' }, 'Sin asignar') },
       ...(planes.some(Boolean) ? [{ t: 'Días en zona / fuera', v: (r) => { const p = planes[reps.indexOf(r)]; return p ? `${fmtN.format(p.diasDentro)} / ${fmtN.format(p.diasFuera)}` : ''; } }] : []),
-      { t: '', v: (r) => [GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, texto(zonas[reps.indexOf(r)]) ? 'Editar zona' : 'Asignar zona') : null,
+      { t: '', v: (r) => [GESTION_T() ? h('a', { class: 'btn btn-peq', href: `#configurar?rep=${r.id}` }, 'Configurar todo') : null, GESTION_T() ? h('a', { class: 'btn-sec btn-peq', href: `#representantes?rep=${r.id}` }, texto(zonas[reps.indexOf(r)]) ? 'Editar zona' : 'Asignar zona') : null,
         ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => editarDatos(r) }, 'Editar datos') : null,
         ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => nuevaClave(r) }, 'Nueva clave') : null,
         ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-peligro', type: 'button', onclick: () => darBaja(r) }, 'Dar de baja') : null] }], reps, ['Aún no hay representantes activos', 'Regístralos en "Nuevo representante".']), bajas);
 };
 
+
+// ---------------------------------------------------------------- configurar representante: todo en un solo lugar, paso a paso
+const PASOS_REP = [['datos', 'Datos'], ['zona', 'Zona de trabajo'], ['vehiculo', 'Vehículo y comida'], ['lugares', 'Establecimientos'], ['hoteles', 'Hoteles'], ['cronograma', 'Cronograma'], ['resumen', 'Resumen']];
+/** Barra de progreso + control segmentado de pasos. Un paso bloqueado no se puede abrir hasta completar el anterior. */
+function barraPasosRep(actual, hechos, maxAbierto, ir) {
+  const i0 = PASOS_REP.findIndex(([id]) => id === actual);
+  const pct = Math.round(((i0 + 1) / PASOS_REP.length) * 100);
+  const botones = PASOS_REP.map(([id, label], i) => {
+    const bloqueado = i > maxAbierto; const hecho = hechos.has(id) && id !== actual;
+    return h('button', { type: 'button', role: 'tab', class: `asis-paso${hecho ? ' hecho' : ''}${bloqueado ? ' bloqueado' : ''}`, 'aria-selected': String(id === actual), 'aria-disabled': bloqueado ? 'true' : null,
+      tabindex: id === actual ? '0' : '-1', title: bloqueado ? 'Completa el paso anterior para abrirlo' : null, onclick: () => { if (!bloqueado && id !== actual) ir(id); } },
+    h('span', { class: 'asis-num', 'aria-hidden': 'true' }, hecho ? '✓' : String(i + 1)), h('span', { class: 'asis-txt' }, label));
+  });
+  const seg = h('div', { class: 'asis-pasos', role: 'tablist', 'aria-label': 'Pasos de la configuración' }, ...botones);
+  seg.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    const i = botones.indexOf(document.activeElement); if (i < 0) return;
+    e.preventDefault(); let j = i;
+    do { j = (j + (e.key === 'ArrowRight' ? 1 : -1) + botones.length) % botones.length; } while (j > maxAbierto && j !== i);
+    botones[j].focus();
+  });
+  return h('div', { class: 'asis-barra' },
+    h('p', { class: 'asis-texto' }, `Paso ${i0 + 1} de ${PASOS_REP.length}: ${PASOS_REP[i0][1]}`),
+    h('div', { class: 'asis-riel', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct), 'aria-label': 'Avance de la configuración' }, h('span', { style: `width:${pct}%` })),
+    seg);
+}
+/** Botones Atrás / Siguiente del asistente. */
+function navPasosRep(paso, ir, { siguiente, textoSiguiente = 'Siguiente', bloqueado = false, motivo = null } = {}) {
+  const i = PASOS_REP.findIndex(([id]) => id === paso);
+  const sig = PASOS_REP[i + 1];
+  const b = sig ? h('button', { class: 'btn', type: siguiente === 'submit' ? 'submit' : 'button', disabled: bloqueado, title: bloqueado ? motivo : null }, textoSiguiente) : null;
+  if (b && siguiente !== 'submit') b.addEventListener('click', async () => { if (typeof siguiente === 'function') { b.disabled = true; const ok = await siguiente(); b.disabled = false; if (ok === false) return; } ir(sig[0]); });
+  return { nodo: h('div', { class: 'acciones asis-nav' }, i > 0 ? h('button', { class: 'btn-sec', type: 'button', onclick: () => ir(PASOS_REP[i - 1][0]) }, 'Atrás') : null, b, bloqueado && motivo ? h('p', { class: 'hint asis-motivo' }, motivo) : null), boton: b };
+}
+const SESION_REP = {}; // pasos abiertos por representante en esta sesión
+V.configurar = async () => {
+  if (!GESTION_T()) return vista('Configurar representante', null, h('div', { class: 'aviso' }, 'Solo la gerencia y la administración configuran representantes.'));
+  const rep = param('rep'); const mesP = param('mes'); const mes = /^\d{4}-\d{2}$/.test(mesP ?? '') ? mesP : mesActual();
+  const [div, { items: combs }, { item: globales }, { items: reps }] = await Promise.all([division(), api('GET', '/api/viaticos/combustibles'), api('GET', '/api/viaticos/tarifas-publico'), api('GET', '/api/viaticos/representantes')]);
+  const r = rep ? reps.find((x) => x.id === rep) : null;
+  if (rep && !r) return vista('Configurar representante', null, h('div', { class: 'aviso error' }, 'Ese representante no está activo.'), h('a', { class: 'btn-sec', href: '#representantes' }, 'Volver a representantes'));
+  if (!rep && !ES_GER()) return vista('Configurar representante', null, h('div', { class: 'aviso' }, 'Solo la gerencia registra representantes nuevos.'));
+  const [zona, pf, crons] = rep ? await Promise.all([api('GET', `/api/territorio/zonas/${rep}`).then((x) => x.item), api('GET', `/api/viaticos/perfiles/${rep}`).then((x) => x.item).catch(() => null), api('GET', `/api/cronogramas?representanteId=${rep}&mes=${mes}`).then((x) => x.items)]) : [null, null, []];
+  const diasAprob = crons.filter((c) => c.estado === 'aprobado');
+  // Qué está completo y hasta dónde se puede abrir
+  const hechos = new Set();
+  if (r?.position) hechos.add('datos');
+  if (zona?.provincias?.length && pf?.residencia?.provincia) hechos.add('zona');
+  if (pf?.vehiculo?.propiedad) hechos.add('vehiculo');
+  const ses = (SESION_REP[rep ?? 'nuevo'] ??= new Set());
+  for (const x of ses) hechos.add(x);
+  if (diasAprob.length && hechos.has('vehiculo')) ['lugares', 'hoteles', 'cronograma'].forEach((x) => hechos.add(x));
+  if (ses.has('cronograma')) hechos.add('cronograma');
+  let maxAbierto = PASOS_REP.findIndex(([id]) => !hechos.has(id)); if (maxAbierto < 0) maxAbierto = PASOS_REP.length - 1;
+  const pedido = param('paso'); const iPed = PASOS_REP.findIndex(([id]) => id === pedido);
+  const paso = iPed >= 0 && iPed <= maxAbierto ? pedido : PASOS_REP[Math.min(maxAbierto, rep ? maxAbierto : 0)][0];
+  const ir = (id) => irA('configurar', { ...(rep ? { rep } : {}), paso: id, mes });
+  const titulo = r ? `Configurar a ${r.fullName}` : 'Nuevo representante';
+  const sub = 'Todo su territorio en un solo lugar: datos, zona, establecimientos, vehículo, comida, hoteles y cronograma. Al terminar verás el resumen de km y gastos del mes. El salario no forma parte de los viáticos.';
+  const barra = barraPasosRep(paso, hechos, maxAbierto, ir);
+  const cuerpo = await pasoRep(paso, { rep, r, zona, pf, div, combs, globales, mes, diasAprob, ir, ses });
+  return vista(titulo, sub, h('p', { class: 'asis-volver' }, h('a', { href: '#representantes' }, 'Volver a representantes')), barra, ...[cuerpo].flat());
+};
+
+/** Borrador del representante nuevo (pasos 1 a 3), se guarda todo junto al crear la cuenta. */
+let borradorRep = {};
+async function pasoRep(paso, ctx) {
+  const { rep, r, zona, pf, div, combs, globales, mes, diasAprob, ir, ses } = ctx;
+  const nuevo = !rep; const B = borradorRep;
+  if (paso === 'datos') {
+    const [n0, ...a0] = (r?.fullName ?? '').split(' ');
+    const v = (k, x) => (nuevo ? B[k] ?? '' : x ?? '');
+    const pos = campo('posicion', 'Posición', { options: POSICIONES.map((x) => ({ value: x, label: x })), placeholder: 'Elige la posición', value: v('posicion', r?.position) });
+    const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Datos del representante'),
+      h('p', { class: 'hint' }, nuevo ? 'El sistema crea su usuario y una contraseña temporal cuando termines el paso 3. Al entrar por primera vez, elige su propia contraseña.' : 'Si cambias el nombre o el apellido, se le crea un usuario nuevo y vuelve a la contraseña inicial.'),
+      h('div', { class: 'form-fila' }, campo('nombre', 'Nombre', { autocomplete: 'off', value: v('nombre', n0) }), campo('apellido', 'Apellido', { autocomplete: 'off', value: v('apellido', a0.join(' ')) }), pos),
+      h('div', { class: 'form-fila' }, campo('telefono', 'Teléfono', { inputmode: 'tel', autocomplete: 'off', value: v('telefono', r?.phone) }, '(opcional)'), campo('correo', 'Correo', { type: 'email', autocomplete: 'off', value: v('correo', r?.email) }, '(opcional: le llega su usuario y el enlace para entrar)')));
+    const nav = navPasosRep('datos', ir, { siguiente: 'submit' }); f.append(nav.nodo);
+    if (nuevo && B.errores) { const e0 = B.errores; delete B.errores; setTimeout(() => errPaso(f, e0, 'Revisa los campos marcados.'), 0); }
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const g = (k) => f.elements[k].value.trim();
+      const err = {};
+      if (g('nombre').length < 2) err.nombre = 'Escribe el nombre.';
+      if (g('apellido').length < 2) err.apellido = 'Escribe el apellido.';
+      if (!g('posicion')) err.posicion = 'Elige la posición.';
+      if (Object.keys(err).length) { errPaso(f, err); return; }
+      if (nuevo) { Object.assign(B, { nombre: g('nombre'), apellido: g('apellido'), posicion: g('posicion'), telefono: g('telefono'), correo: g('correo') }); ses.add('datos'); ir('zona'); return; }
+      const cambio = {}; if (`${g('nombre')} ${g('apellido')}` !== r.fullName) Object.assign(cambio, { nombre: g('nombre'), apellido: g('apellido') });
+      if (g('telefono') !== (r.phone ?? '')) cambio.telefono = g('telefono'); if (g('correo') !== (r.email ?? '')) cambio.correo = g('correo');
+      const ok = await enviar(f, nav.boton, async () => {
+        let x = {}; if (Object.keys(cambio).length) x = await api('POST', `/api/representantes/${rep}/editar`, cambio);
+        if (g('posicion') !== r.position && zona?.provincias?.length) await api('POST', `/api/territorio/zonas/${rep}`, { provincias: zona.provincias, municipios: zona.municipios ?? {}, posicion: g('posicion') });
+        return x;
+      });
+      if (!ok) return;
+      ses.add('datos');
+      if (ok.usuario) mostrarCredenciales('Nombre cambiado: acceso nuevo', ok, () => ir('zona')); else ir('zona');
+    });
+    return f;
+  }
+  if (paso === 'zona') {
+    const res = residenciaCampos(div, nuevo ? B.residencia : pf?.residencia);
+    const provs = h('div', { class: 'provincias provincias-zona' }, filasZona(div, nuevo ? B.zona : zona));
+    const posicion = nuevo ? B.posicion : r.position;
+    const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Dónde vive y dónde trabaja'),
+      h('h3', { class: 'subtitulo-form' }, 'Dónde vive'), h('p', { class: 'hint' }, 'De aquí sale y aquí regresa cada día: con esto se calculan los km.'),
+      h('div', { class: 'form-fila' }, res.fp, res.fm, campo('residencia.direccion', 'Dirección desde donde sale', { value: (nuevo ? B.residencia?.direccion : pf?.residencia?.direccion) ?? '' }, '(opcional, restringida)')),
+      h('h3', { class: 'subtitulo-form' }, 'Provincias y municipios que trabajará'),
+      h('p', { class: 'hint' }, `Con esto se conectan sus farmacias, hospitales, clínicas, UNAP y hoteles. Si solo trabaja algunos municipios, abre la provincia y márcalos. Lo marcado en gris ya lo cubre otro ${posicion ?? 'representante'} de la misma posición.`),
+      h('p', { class: 'error', dataset: { for: 'provincias' } }), h('p', { class: 'error', dataset: { for: 'municipios' } }), provs);
+    marcarOcupadas(provs, posicion, rep);
+    const nav = navPasosRep('zona', ir, { siguiente: 'submit' }); f.append(nav.nodo);
+    if (nuevo && B.errores) { const e0 = B.errores; delete B.errores; setTimeout(() => errPaso(f, e0, 'Revisa los campos marcados.'), 0); }
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const z = zonaDeForm(f); const residencia = { provincia: res.sp.value, municipio: res.sm.value, direccion: f.elements['residencia.direccion'].value.trim() };
+      const err = {};
+      if (!residencia.provincia) err['residencia.provincia'] = 'Elige la provincia donde vive.'; else if (!residencia.municipio) err['residencia.municipio'] = 'Elige el municipio donde vive.';
+      if (!z.provincias.length) err.provincias = 'Elige al menos una provincia que trabajará.';
+      if (Object.keys(err).length) { errPaso(f, err); return; }
+      if (nuevo) { B.residencia = residencia; B.zona = z; ses.add('zona'); ir('vehiculo'); return; }
+      const ok = await enviar(f, nav.boton, async () => {
+        await api('POST', `/api/territorio/zonas/${rep}`, { ...z, posicion: r.position });
+        // La residencia vive en el perfil de viático: si ya hay perfil, se actualiza solo la residencia.
+        if (pf?.vehiculo) await api('POST', `/api/viaticos/perfiles/${rep}`, { ...perfilBody(pf), residencia });
+        else ctx.ses.residencia = residencia;
+        return true;
+      });
+      if (ok) { ses.add('zona'); ir('vehiculo'); }
+    });
+    return f;
+  }
+  if (paso === 'vehiculo') {
+    const base = nuevo ? B.perfil ?? null : pf;
+    const veh = formularioVehiculo(base, combs, globales, nuevo ? B.posicion : r.position);
+    const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Vehículo, comida y tope'),
+      veh.el,
+      h('h3', { class: 'subtitulo-form' }, 'Comida y tope'),
+      h('div', { class: 'form-fila' }, h('div', { class: 'solo-vehiculo' }, campo('tarifaAlimentacion', 'Comida por día RD$', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal', value: base?.tarifaAlimentacion ?? '' }, '(vacío = monto de su posición)')),
+        h('div', { class: 'solo-vehiculo' }, campo('reembolsoPorKm', 'Reembolso por km RD$', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal', value: base?.reembolsoPorKm ?? '' }, '(solo vehículo propio; reemplaza al combustible)')),
+        campo('topeCombustible', 'Tope mensual de combustible o transporte RD$', { type: 'number', min: 0, step: 0.01, inputmode: 'decimal', value: base?.topeCombustible ?? '' }, '(vacío = tope global)')));
+    const sincronizar = () => f.querySelectorAll('.solo-vehiculo').forEach((x) => { x.hidden = !veh.tiene(); });
+    veh.el.addEventListener('change', sincronizar); sincronizar();
+    const nav = navPasosRep('vehiculo', ir, { siguiente: 'submit', textoSiguiente: nuevo ? 'Crear representante y seguir' : 'Guardar y seguir' }); f.append(nav.nodo);
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault(); const g = (k) => f.elements[k].value;
+      const extra = { tarifaAlimentacion: veh.tiene() ? g('tarifaAlimentacion') : '', reembolsoPorKm: veh.tiene() ? g('reembolsoPorKm') : '', topeCombustible: g('topeCombustible') };
+      if (nuevo) {
+        const body = { nombre: B.nombre, apellido: B.apellido, posicion: B.posicion, telefono: B.telefono, correo: B.correo, residencia: B.residencia, ...B.zona, ...veh.valores(f), ...extra };
+        let x = null; const txt = nav.boton.textContent; nav.boton.disabled = true; nav.boton.textContent = 'Creando…';
+        try { x = await api('POST', '/api/representantes', body); }
+        catch (err) {
+          const k = Object.keys(err.fields ?? {});
+          const aDatos = k.some((c) => ['nombre', 'apellido', 'posicion', 'telefono', 'correo'].includes(c));
+          const aZona = k.some((c) => c.startsWith('residencia') || ['provincias', 'municipios'].includes(c));
+          if (aDatos || aZona) { B.errores = err.fields; ses.delete(aDatos ? 'datos' : 'zona'); ir(aDatos ? 'datos' : 'zona'); return; }
+          errPaso(f, err.fields, err.message); return;
+        } finally { nav.boton.disabled = false; nav.boton.textContent = txt; }
+        borradorRep = {}; SESION_REP[x.representante.id] = new Set(['datos', 'zona', 'vehiculo']);
+        mostrarCredenciales(`${x.representante.nombre} quedó registrado`, { ...x, usuario: x.representante.usuario }, () => irA('configurar', { rep: x.representante.id, paso: 'lugares', mes }));
+        return;
+      }
+      const residencia = pf?.residencia ?? ses.residencia;
+      if (!residencia) { ir('zona'); return; }
+      const ok = await enviar(f, nav.boton, () => api('POST', `/api/viaticos/perfiles/${rep}`, { residencia, ...veh.valores(f), ...extra }));
+      if (ok) { ses.add('vehiculo'); ir('lugares'); }
+    });
+    return f;
+  }
+  if (paso === 'lugares') {
+    const lz = await api('GET', `/api/territorio/zonas/${rep}/lugares`);
+    const TIP = { farmacia: 'Farmacia', hospital: 'Hospital', clinica: 'Clínica', unap: 'UNAP', cpn: 'Primer nivel', diagnostico: 'Centro diagnóstico', consultorio: 'Consultorio' };
+    const todos = [...lz.farmacias.map((x) => ({ ...x, tipo: 'farmacia' })), ...lz.establecimientos].sort((a, b) => a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
+    const porTipo = Object.entries(todos.reduce((m, x) => ((m[x.tipo] = (m[x.tipo] ?? 0) + 1), m), {})).sort((a, b) => b[1] - a[1]);
+    const uni = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), 'es'));
+    const quitar = async (x) => {
+      const m = await confirmar('Quitar de su zona', `${x.nombre} saldrá de las zonas, los cronogramas y las metas de visitas.`, { okTexto: 'Quitar', pedirMotivo: true, etiquetaMotivo: 'Motivo', sugerencias: [{ texto: 'No es un centro de salud.' }, { texto: 'Está cerrado.' }, { texto: 'Repetido.' }, { texto: 'No está en esta zona.' }] });
+      if (m == null) return;
+      try { await api('POST', '/api/territorio/establecimientos/descartar', { ids: [x.id], motivo: m }); aviso(`${x.nombre} quitado.`, 'ok'); router(); } catch (e) { alert(e.message); }
+    };
+    const campos = [
+      { id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Nombre o dirección', valor: (x) => `${x.nombre} ${x.direccion ?? ''}` },
+      { id: 'mun', etiqueta: 'Municipios', tipo: 'opciones', plural: 'municipios', opciones: uni(todos.map((x) => x.municipio)), valor: (x) => x.municipio },
+      { id: 'tipo', etiqueta: 'Tipos', tipo: 'opciones', plural: 'tipos', opciones: uni(todos.map((x) => x.tipo)).map((t) => ({ value: t, label: TIP[t] ?? t })), valor: (x) => x.tipo },
+    ];
+    const cols = [{ t: 'Lugar', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion ?? '')] }, { t: 'Tipo', v: (x) => TIP[x.tipo] ?? x.tipo }, { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` },
+      { t: 'Ubicación', v: (x) => (x.lat == null ? h('span', { class: 'chip pendiente' }, 'Sin ubicación') : 'Sí') }, { t: '', v: (x) => h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => quitar(x) }, 'Quitar') }];
+    const nav = navPasosRep('lugares', ir, { siguiente: () => { ses.add('lugares'); }, bloqueado: !todos.length, motivo: todos.length ? null : 'Su zona no tiene lugares registrados. Regístralos en Establecimientos y vuelve.' });
+    return [h('div', { class: 'tarjeta' }, h('h2', {}, `Establecimientos que visitará (${fmtN.format(todos.length)})`),
+      h('p', { class: 'hint' }, 'Son los lugares de su zona: entran a su cronograma y a su meta de visitas. Quita los que no visita; para agregar uno nuevo, regístralo en Establecimientos.'),
+      porTipo.length ? h('div', { class: 'asis-chips' }, porTipo.map(([t, n]) => h('span', { class: 'asis-chip' }, h('strong', {}, fmtN.format(n)), ` ${TIP[t] ?? t}`))) : null,
+      todos.length ? listaFiltrada(`asis-lugares-${rep}`, todos, campos, (vs, activos) => tabla(cols, vs, activos ? ['Ningún lugar con estos filtros', 'Cambia o limpia los filtros.'] : ['', ''], { porPagina: 15 }))
+        : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Su zona no tiene lugares'), h('a', { href: '#establecimientos' }, 'Registrar establecimientos'))), nav.nodo];
+  }
+  if (paso === 'hoteles') {
+    const provs = zona?.provincias ?? [];
+    const listas = await Promise.all(provs.map((p) => api('GET', `/api/hoteles?provincia=${encodeURIComponent(p)}`).then((x) => x.items).catch(() => [])));
+    const recs = await Promise.all(provs.map((p) => api('GET', `/api/hoteles/recomendado?provincia=${encodeURIComponent(p)}`).then((x) => x.item).catch(() => null)));
+    const enZona = (x) => !zona.municipios?.[x.provincia]?.length || zona.municipios[x.provincia].includes(x.municipio);
+    const hs = listas.flat().filter((x) => x.estado !== 'inactivo' && enZona(x)).sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || (Number(a.precioNoche) || 9e9) - (Number(b.precioNoche) || 9e9));
+    const recIds = new Set(recs.map((x) => x?.hotel?.id).filter(Boolean));
+    const nav = navPasosRep('hoteles', ir, { siguiente: () => { ses.add('hoteles'); } });
+    return [h('div', { class: 'tarjeta' }, h('h2', {}, `Hoteles de su zona (${fmtN.format(hs.length)})`),
+      h('p', { class: 'hint' }, 'Cuando un día del cronograma está marcado "duerme fuera", la noche entra al presupuesto con el hotel recomendado de esa provincia (el más económico con precio confirmado que cumple los requisitos) o con el precio de referencia.'),
+      h('dl', { class: 'rejilla' }, provs.map((p, i) => h('div', { class: 'cifra' }, h('dt', {}, `Recomendado en ${p}`), h('dd', {}, recs[i]?.hotel ? `${recs[i].hotel.nombre}, ${RD(recs[i].hotel.precioNoche)}` : 'Sin hotel confirmado')))),
+      hs.length ? tabla([{ t: 'Hotel', v: (x) => [x.nombre, recIds.has(x.id) ? h('span', { class: 'chip ok', style: 'margin-left:.4rem' }, 'Recomendado') : null] }, { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` },
+        { t: 'Precio por noche', num: true, v: (x) => (Number(x.precioNoche) > 0 ? RD(x.precioNoche) : h('span', { class: 'chip pendiente' }, 'Sin precio')) }, { t: 'Teléfono', v: (x) => x.telefono ?? '' }], hs, ['', ''], { porPagina: 10 })
+        : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'No hay hoteles registrados en su zona'), 'Si nunca duerme fuera, puedes seguir. Para agregar uno, ve a ', h('a', { href: '#hoteles' }, 'Hoteles'), '.')), nav.nodo];
+  }
+  if (paso === 'cronograma') {
+    const esAdmin = yo.role === 'administrador';
+    const sig = (() => { const [y, m] = mesActual().split('-').map(Number); const d = new Date(Date.UTC(y, m, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; })();
+    const meses = [[mesActual(), `Este mes (${nombreMesLargo(mesActual())})`], [sig, `Próximo mes (${nombreMesLargo(sig)})`]];
+    if (!meses.some(([m]) => m === mes)) meses.push([mes, nombreMesLargo(mes)]);
+    const segMes = segmentos('Mes del cronograma', meses, mes, (m) => irA('configurar', { rep, paso: 'cronograma', mes: m }));
+    const recargar = () => { ses.add('cronograma'); router(); };
+    const nav = navPasosRep('cronograma', ir, { siguiente: () => { ses.add('cronograma'); }, textoSiguiente: 'Ver resumen', bloqueado: !diasAprob.length && esAdmin, motivo: 'Aprueba al menos un día del cronograma de este mes para ver el resumen.' });
+    const nLug = diasAprob.reduce((n, c) => n + c.lugares.length, 0); const nNoche = diasAprob.filter((c) => c.duermeFuera).length;
+    const partes = [h('div', { class: 'asis-mes' }, h('span', { class: 'asis-mes-etq' }, 'Mes'), segMes),
+      h('div', { class: 'tarjeta' }, h('h2', {}, `Días aprobados en ${nombreMesLargo(mes)} (${fmtN.format(diasAprob.length)})`),
+        diasAprob.length ? [h('p', { class: 'hint' }, `${fmtN.format(nLug)} visitas programadas${nNoche ? ` y ${fmtN.format(nNoche)} noche(s) fuera` : ''}. Para quitar días o marcar noches fuera, usa `, h('a', { href: `#cronogramas?rep=${rep}&mes=${mes}&sec=dias` }, 'Cronogramas'), '.'),
+          tabla([{ t: 'Día', v: (c) => fecha(c.fecha) }, { t: 'Lugares', v: (c) => c.lugares.map((l) => l.lugar).join(', ') }, { t: 'Noche', v: (c) => (c.duermeFuera ? h('span', { class: 'chip noche' }, 'Duerme fuera') : '') }], diasAprob, ['', ''], { porPagina: 10 })]
+          : h('p', { class: 'hint' }, esAdmin ? 'Aún no tiene días este mes. Copia la ruta del mes anterior o deja que el sistema la proponga; revisas y apruebas.' : 'Aún no tiene días este mes. El administrador programa y aprueba el cronograma.'))];
+    if (esAdmin) partes.push(h('div', { class: 'asis-dos' }, await propuestaMes(rep, mes, div, recargar), copiarMes(rep, mes, div, recargar)));
+    if (!esAdmin && !diasAprob.length) partes.push(h('div', { class: 'aviso' }, 'Sin cronograma, el resumen no tendrá km ni gastos del mes.'));
+    partes.push(nav.nodo);
+    return partes;
+  }
+  // ---- resumen
+  const [{ calculo: c, guardado: p }, av] = await Promise.all([api('GET', `/api/viaticos/presupuesto?representanteId=${rep}&mes=${mes}`), api('GET', `/api/metas/avance?mes=${mes}&representanteId=${rep}`).catch(() => ({ items: [] }))]);
+  const lz = await api('GET', `/api/territorio/zonas/${rep}/lugares`).catch(() => ({ farmacias: [], establecimientos: [] }));
+  const v = pf?.vehiculo ?? {};
+  const s = c?.supuestos ?? {};
+  const pub = v.propiedad === 'ninguno';
+  const det = c?.detalle ?? {};
+  const cifra = (t, val, extra) => h('div', { class: `cifra${extra ? ' destacada' : ''}` }, h('dt', {}, t), h('dd', {}, val));
+  const fila = (t, val) => [h('dt', {}, t), h('dd', {}, val || '—')];
+  const zonaTxt = (zona?.provincias ?? []).map((pr) => (zona.municipios?.[pr]?.length ? `${pr} (${zona.municipios[pr].join(', ')})` : pr)).join('; ');
+  const vehTxt = pub ? 'Transporte público' : [v.propiedad === 'propio' ? 'Propio' : 'Asignado por FERSUAZ', [v.marca, v.modelo, v.anio].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const rend = v.rendimiento ? `${fmtN.format(v.rendimiento)} km por galón${v.rendimientoFuente === 'epa' ? ' (EPA)' : ''}` : '';
+  const metas = av.items?.[0]?.metricas ?? [];
+  const diasMes = (s.semanas ?? []).reduce((n, w) => n + (w.dias || 0), 0) || (s.jornadas ?? 0);
+  const bloques = [];
+  if (c?.faltan?.length) bloques.push(h('div', { class: 'aviso' }, h('strong', {}, 'Para calcular todo falta: '), c.faltan.join(' ')));
+  for (const a of c?.avisos ?? []) bloques.push(h('div', { class: 'aviso' }, a));
+  bloques.push(h('div', { class: 'tarjeta asis-resumen' }, h('h2', {}, `Viáticos estimados de ${nombreMesLargo(mes)}`),
+    h('dl', { class: 'rejilla' },
+      pub ? cifra('Transporte', RD(det.transporte ?? 0)) : [cifra('Km a recorrer', `${fmtN.format(s.km ?? 0)} km`), cifra('Combustible', RD(det.combustible ?? 0))],
+      cifra('Comida', RD(det.alimentacion ?? 0)), cifra('Hoteles', RD(det.hospedaje ?? 0)),
+      ((det.peajes ?? 0) + (det.estacionamiento ?? 0) + (det.otros ?? 0)) ? cifra('Peajes y otros', RD((det.peajes ?? 0) + (det.estacionamiento ?? 0) + (det.otros ?? 0))) : null,
+      cifra('Total del mes', RD(c?.total ?? 0), true)),
+    h('p', { class: 'hint', style: 'margin-top:.75rem' }, pub ? `${fmtN.format(diasMes)} día(s): ${fmtN.format(s.diasDentro ?? 0)} dentro de su zona y ${fmtN.format(s.diasFuera ?? 0)} fuera. El salario va aparte y no forma parte de estos viáticos.` : `${fmtN.format(diasMes)} día(s) de trabajo, ${fmtN.format(s.km ?? 0)} km (${s.kmTipo ?? 'estimados'})${s.galones ? `, ${fmtN.format(s.galones)} galones` : ''}${s.diasAlimentacion ? `, ${fmtN.format(s.diasAlimentacion)} día(s) de comida` : ''}. El salario va aparte y no forma parte de estos viáticos.`),
+    p && !['borrador', 'rechazado'].includes(p.estado) ? h('div', { class: 'aviso ok' }, `Viáticos de este mes: ${EST_P[p.estado].toLowerCase()} por ${RD(p.total)}.`) : null));
+  const dc = c?.detalle ? detalleCalculo(c, true) : null;
+  if (dc?.semana) bloques.push(dc.semana);
+  bloques.push(h('div', { class: 'asis-dos' },
+    h('div', { class: 'tarjeta' }, h('h2', {}, 'Perfil'), h('dl', { class: 'asis-ficha' },
+      fila('Nombre', r.fullName), fila('Posición', r.position), fila('Teléfono', r.phone), fila('Correo', r.email),
+      fila('Vive en', pf?.residencia ? `${pf.residencia.municipio}, ${pf.residencia.provincia}` : ''),
+      fila('Vehículo', vehTxt), pub ? null : fila('Rendimiento', rend), pub ? null : fila('Combustible', COMB_NOMBRE[v.combustible] ?? ''),
+      fila('Comida por día', pub ? 'Por zona (dentro o fuera)' : pf?.tarifaAlimentacion ? RD(pf.tarifaAlimentacion) : 'Monto de su posición'),
+      fila('Tope mensual', pf?.topeCombustible ? RD(pf.topeCombustible) : 'Tope global'))),
+    h('div', { class: 'tarjeta' }, h('h2', {}, 'Territorio y ruta'), h('dl', { class: 'asis-ficha' },
+      fila('Zona', zonaTxt), fila('Farmacias', fmtN.format(lz.farmacias.length)), fila('Centros de salud', fmtN.format(lz.establecimientos.length)),
+      fila('Días aprobados', fmtN.format(diasAprob.length)), fila('Visitas programadas', fmtN.format(diasAprob.reduce((n, x) => n + x.lugares.length, 0))),
+      fila('Noches fuera', fmtN.format(diasAprob.filter((x) => x.duermeFuera).length)),
+      ...metas.filter((m) => m.meta != null).flatMap((m) => fila(`Meta: ${m.nombre.toLowerCase()}`, `${fmtN.format(m.meta)} ${m.unidad}${m.vecesPorLugar ? ` (${m.vecesPorLugar} por lugar × ${fmtN.format(m.lugares)})` : ''}`))))));
+  if (dc?.como) bloques.push(dc.como);
+  bloques.push(h('div', { class: 'acciones asis-nav' }, h('button', { class: 'btn-sec', type: 'button', onclick: () => ir('cronograma') }, 'Atrás'),
+    h('a', { class: 'btn', href: `#viatico?rep=${rep}&mes=${mes}` }, p && !['borrador', 'rechazado'].includes(p.estado) ? 'Ver sus viáticos' : 'Asignar viáticos del mes'),
+    h('button', { class: 'btn-sec', type: 'button', onclick: () => print() }, 'Imprimir resumen')));
+  return bloques;
+}
+/** Errores de un paso: cada campo marcado y un aviso general. */
+function errPaso(f, fields, msg = 'Completa este paso para seguir.') {
+  mostrarErrores(f, { fields });
+  const st = f.querySelector(':scope > .aviso') ?? f.appendChild(h('div', { class: 'aviso', role: 'status' }));
+  estado(st, 'error', msg);
+}
+/** Cuerpo para guardar el perfil sin cambiar nada más que lo indicado. */
+function perfilBody(pf) {
+  const v = pf.vehiculo ?? {};
+  return { vehiculo: v, publico: pf.publico ?? null, tarifaAlimentacion: pf.tarifaAlimentacion ?? '', reembolsoPorKm: pf.reembolsoPorKm ?? '', topeCombustible: pf.topeCombustible ?? '' };
+}
+const MESES_L = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const nombreMesLargo = (m) => { const [y, n] = m.split('-').map(Number); return `${MESES_L[n - 1]} ${y}`; };
 
 // ---------------------------------------------------------------- panel de inicio (tipo tablero)
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -3736,7 +3963,7 @@ function menuPara(u) {
   }
   if (!G) return [[null, [['inicio', 'Inicio']]]];
   return [
-    [null, [['inicio', 'Inicio'], ...(u.role !== 'finanzas' ? [['tareas', 'Tareas sugeridas']] : []), ['cronogramas', 'Cronogramas'], ['viaticos', 'Presupuestos'], ['revisar', 'Vouchers por revisar'], ...(u.role !== 'finanzas' ? [['revisarRecetas', 'Recetas por revisar']] : []), ['viatico', null]]],
+    [null, [['inicio', 'Inicio'], ...(u.role !== 'finanzas' ? [['tareas', 'Tareas sugeridas']] : []), ['cronogramas', 'Cronogramas'], ['viaticos', 'Presupuestos'], ['revisar', 'Vouchers por revisar'], ...(u.role !== 'finanzas' ? [['revisarRecetas', 'Recetas por revisar']] : []), ['viatico', null], ['configurar', null]]],
     ['Territorio', [...(u.role !== 'finanzas' ? [['representantes', 'Representantes']] : []), ['establecimientos', 'Establecimientos'], ['hoteles', 'Hoteles'], ['catalogo', 'Catálogo'], ['metas', 'Metas']]],
     ['Ventas y recetas', [['territorio', 'Movimiento por territorio'], ['comisiones', 'Comisiones'], ['reportes', 'Reporte de recetas'], ['misRecetas', 'Recetas'], ['alertas', 'Alertas'], ['inventario', 'Inventario']]],
     ['Viáticos', [['perfiles', 'Perfiles de viático'], ['precios', 'Precios de combustible']]],
@@ -3745,7 +3972,7 @@ function menuPara(u) {
   ];
 }
 function pintarMenu(secciones, actual) {
-  const padre = { viatico: 'viaticos' }[actual] ?? actual;
+  const padre = { viatico: 'viaticos', configurar: 'representantes' }[actual] ?? actual;
   const enlace = ([id, label]) => h('a', { href: `#${id}`, 'aria-current': id === padre ? 'page' : null, 'data-tip': label }, icono(id), h('span', { class: 'etq' }, label));
   const grupo = ([titulo, items]) => {
     const vis = items.filter(([, label]) => label);
