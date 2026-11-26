@@ -103,3 +103,26 @@ test('Visitas por día por posición: la propuesta usa la de su posición y se p
     assert.equal((await call('POST', '/api/cronogramas/propuesta', { representanteId: id.rep, mes: '2026-11', porDia: 5 }, t.admin)).body.item.porDia, 5);
   } finally { server.close(); }
 });
+
+test('Google: un hotel ya registrado en otro municipio sale como registrado y no da error al agregarlo', async () => {
+  const store = new MemoryStore(); const data = new MemoryData();
+  const lugares = { activo: true,
+    buscar: async () => [{ placeId: 'g-marien', nombre: 'Hotel Marien (Ejemplo)', direccion: 'Sabaneta', telefono: '809-555-0100' }],
+    detalle: async () => ({ placeId: 'g-marien', nombre: 'Hotel Marien (Ejemplo)', direccion: 'Sabaneta', telefono: '809-555-0100', lat: 19.47, lng: -71.34 }) };
+  const server = createServer(createApp({ store, data, files: new MemoryFiles(), sessionSecret: SECRET, lugares })).listen(0);
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const call = async (m, p, b, tk) => { const r = await fetch(url + p, { method: m, headers: { 'content-type': 'application/json', ...(tk && { authorization: `Bearer ${tk}` }) }, body: b && JSON.stringify(b) }); return { status: r.status, body: await r.json() }; };
+  await store.createUser({ fullName: 'g', email: 'g@x.do', phone: null, status: 'activo', role: 'gerencia', passwordHash: await hashPassword('claveg12345') });
+  const tk = (await call('POST', '/api/auth/login', { email: 'g@x.do', password: 'claveg12345' })).body.token;
+  try {
+    await data.insert('hoteles', { nombre: 'Hotel Marien (Ejemplo)', provincia: 'Santiago Rodríguez', municipio: 'Villa Los Almácigos', placeId: 'g-marien', fuente: 'google', requisitos: {}, estado: 'activo' });
+    const b = await call('GET', `/api/territorio/google/buscar?${new URLSearchParams({ tipo: 'hotel', provincia: 'Santiago Rodríguez', municipio: 'San Ignacio de Sabaneta' })}`, null, tk);
+    assert.equal(b.status, 200); assert.equal(b.body.items[0].registrado, true); assert.equal(b.body.items[0].registradoEn, 'Villa Los Almácigos, Santiago Rodríguez');
+    const a = await call('POST', '/api/territorio/google/agregar', { tipo: 'hotel', provincia: 'Santiago Rodríguez', municipio: 'San Ignacio de Sabaneta', placeId: 'g-marien' }, tk);
+    assert.equal(a.status, 409); assert.match(a.body.error, /ya está registrado en Villa Los Almácigos/);
+    // Todos los municipios de la provincia: una búsqueda por municipio, sin repetir el mismo lugar
+    const t = await call('GET', `/api/territorio/google/buscar?${new URLSearchParams({ tipo: 'hotel', provincia: 'Santiago Rodríguez', municipio: 'todos' })}`, null, tk);
+    assert.equal(t.status, 200); assert.equal(t.body.items.length, 1); assert.equal(t.body.items[0].municipio, 'Monción', 'queda con el primer municipio donde salió');
+    assert.equal(t.body.items[0].registrado, true);
+  } finally { server.close(); }
+});

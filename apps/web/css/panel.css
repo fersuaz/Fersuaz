@@ -49,6 +49,7 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .95rem; }
 .aviso { padding: .9rem 1.1rem; border-radius: 12px; background: #FFF4DE; color: #6B4700; margin-bottom: 1rem; }
 .aviso.error { background: #FBE6E1; color: #8A2F1C; }
 .aviso.ok { background: #E2EEF5; color: #164B66; border-left: 3px solid var(--celeste); }
+.aviso:empty { display: none; }
 
 .dialogo { border: 0; border-radius: 20px; padding: 0; width: min(40rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); box-shadow: 0 30px 60px -20px rgba(0,30,60,.45); color: var(--tinta); overflow: hidden; }
 .dialogo[open] { display: flex; }

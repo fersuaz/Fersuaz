@@ -54,8 +54,11 @@ export function createHoteles({ data, audit, now = () => new Date() }) {
     const municipio = provincia && municipioOficial(provincia, input.municipio);
     if (provincia && !municipio) e.municipio = `Ese municipio no pertenece a ${provincia}.`;
     if (Object.keys(e).length) invalido(e);
+    // El mismo lugar de Google solo se registra una vez (aunque se busque desde otro municipio).
+    const mismo = fuente === 'google' && input.placeId ? (await data.list('hoteles')).find((h) => h.placeId === input.placeId) : null;
+    if (mismo) throw new HttpError(409, `${mismo.nombre} ya está registrado en ${mismo.municipio}, ${mismo.provincia}.`, { nombre: 'Ya está registrado.' });
     const todos = await data.list('hoteles', { municipio });
-    if (todos.some((h) => (input.placeId && h.placeId === input.placeId) || sin(h.nombre) === sin(nombre))) throw new HttpError(409, `${nombre} ya está registrado en ${municipio}.`, { nombre: 'Ya existe en este municipio.' });
+    if (todos.some((h) => sin(h.nombre) === sin(nombre))) throw new HttpError(409, `${nombre} ya está registrado en ${municipio}.`, { nombre: 'Ya existe en este municipio.' });
     const ok = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
     const h = await data.insert('hoteles', {
       nombre, provincia, municipio, direccion: normalizeName(input.direccion) || null, telefono: normalizeName(input.telefono) || null,
