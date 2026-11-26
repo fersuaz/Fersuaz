@@ -77,6 +77,18 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
 
   const GESTION_LUGARES = ['administrador', 'gerencia', 'supervisor'];
   const sinAcento = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  /** Provincia y municipio oficiales del lugar según Google, si se pueden reconocer. */
+  function zonaGoogle(r) {
+    const limpio = (x) => String(x ?? '').replace(/^(Provincia|Municipio)( de)?\s+/i, '').replace(/\s+Province$/i, '').trim();
+    const prov = r?.zona?.provincia ? provinciaOficial(limpio(r.zona.provincia)) : null;
+    if (!prov || !r.zona.municipio) return null;
+    let mun = municipioOficial(prov, limpio(r.zona.municipio));
+    if (!mun) { // "Sabaneta" → "San Ignacio de Sabaneta": si un solo municipio oficial contiene el nombre
+      const k = sinAcento(limpio(r.zona.municipio)); const xs = t.division().municipios[prov].filter((m) => sinAcento(m).includes(k));
+      if (k.length >= 4 && xs.length === 1) mun = xs[0];
+    }
+    return mun ? { provincia: prov, municipio: mun } : null;
+  }
   async function buscarGoogle(me, q) {
     if (!me || me.status !== 'activo' || !GESTION_LUGARES.includes(me.role)) throw new AuthError(403, 'No tienes permiso para esta acción.');
     if (!lugares.activo) throw new AuthError(503, 'La búsqueda en Google Maps no está conectada todavía (falta MAPS_API_KEY).');
@@ -89,7 +101,11 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     // "Todos los municipios": una búsqueda por municipio de la provincia, sin repetir lugares.
     try {
       for (const m of todosMun ? municipios[provincia] : [municipio]) {
-        for (const r of await lugares.buscar({ tipo, municipio: m, provincia, texto })) if (!res.some((y) => y.placeId === r.placeId)) res.push({ ...r, municipio: m });
+        for (const r of await lugares.buscar({ tipo, municipio: m, provincia, texto })) {
+          if (res.some((y) => y.placeId === r.placeId)) continue;
+          const zg = zonaGoogle(r); // si Google dice que está en otro municipio, se usa ese
+          res.push({ ...r, provincia: zg?.provincia ?? provincia, municipio: zg?.municipio ?? m, ...(zg && zg.municipio !== m ? { buscadoEn: m } : {}) });
+        }
       }
     } catch (err) { if (!res.length) throw new AuthError(502, err.message); }
     const col = tipo === 'farmacia' ? 'farmacias' : tipo === 'hotel' ? 'hoteles' : 'establecimientos';
@@ -97,7 +113,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     const todos = await data.list(col);
     const porPlace = new Map(todos.filter((x) => x.placeId).map((x) => [x.placeId, x]));
     const nombres = new Set(todos.map((x) => `${x.municipio}|${sinAcento(x.nombre)}`));
-    return { items: res.map((r) => { const x = porPlace.get(r.placeId); return { ...r, registrado: Boolean(x) || nombres.has(`${r.municipio}|${sinAcento(r.nombre)}`), ...(x && x.municipio !== r.municipio ? { registradoEn: `${x.municipio}, ${x.provincia}` } : {}) }; }) };
+    return { items: res.map((r) => { const x = porPlace.get(r.placeId); return { ...r, registrado: Boolean(x) || nombres.has(`${r.municipio}|${sinAcento(r.nombre)}`), ...(x ? { registradoId: x.id } : {}), ...(x && x.municipio !== r.municipio ? { registradoEn: `${x.municipio}, ${x.provincia}` } : {}) }; }) };
   }
   /** Nombre del lugar en unas coordenadas exactas (para la dirección desde donde sale un representante). */
   async function ubicacionGoogle(me, q) {
@@ -141,6 +157,9 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     let d;
     try { d = await lugares.detalle(body.placeId); } catch (err) { throw new AuthError(502, err.message); }
     if (!d) throw new AuthError(404, 'Google no encontró ese lugar.');
+    // Se registra en el municipio que dice Google (si lo reconoce), no en el que se buscó.
+    const zg = zonaGoogle(d);
+    if (zg) body = { ...body, provincia: zg.provincia, municipio: zg.municipio };
     const base = { nombre: d.nombre, provincia: body.provincia, municipio: body.municipio, direccion: d.direccion, telefono: d.telefono, lat: d.lat, lng: d.lng, placeId: d.placeId };
     if (body.tipo === 'farmacia') {
       const item = await c.catalogo.crearFarmacia(me, { nombre: d.nombre, provincia: body.provincia, municipio: body.municipio }, d);
@@ -165,11 +184,11 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   // Registro automático desde Google Maps (recorre municipios y guarda lo que falte)
   const barrido = createBarrido({
     data, lugares, now: now ?? (() => new Date()), pausa: barridoPausa ?? 250, aceptar: (tipo, l) => tipo !== 'medico' || pareceMedico(l.nombre), notificar: n.notificar, audit: (e) => store.addAudit(e),
-    guardar: (actor, tipo, l) => tipo === 'farmacia'
+    guardar: (actor, tipo, l0) => { const zg = zonaGoogle(l0); const l = zg ? { ...l0, ...zg } : l0; return tipo === 'farmacia'
       ? c.catalogo.crearFarmacia(actor, { nombre: l.nombre, provincia: l.provincia, municipio: l.municipio }, l, { revisado: true })
       : tipo === 'hotel' ? hoteles.crear(actor, l, { fuente: 'google' })
       : tipo === 'medico' ? medicos.registrar(actor, { provincia: l.provincia, municipio: l.municipio }, { fuente: 'google', google: l })
-      : t.crearEstablecimiento(actor, { nombre: l.nombre, tipo, provincia: l.provincia, municipio: l.municipio, direccion: l.direccion, telefono: l.telefono, lat: l.lat, lng: l.lng, placeId: l.placeId }, { fuente: 'google', verificado: true }),
+      : t.crearEstablecimiento(actor, { nombre: l.nombre, tipo, provincia: l.provincia, municipio: l.municipio, direccion: l.direccion, telefono: l.telefono, lat: l.lat, lng: l.lng, placeId: l.placeId }, { fuente: 'google', verificado: true }); },
   });
   const puedeBarrido = (me) => {
     if (!me || me.status !== 'activo' || !['administrador', 'gerencia'].includes(me.role)) throw new AuthError(403, 'Solo la administración o la gerencia pueden usar el registro automático.');
