@@ -30,6 +30,39 @@ function h(tag, attrs = {}, ...kids) {
   return el;
 }
 const chip = (estado) => h('span', { class: `chip ${estado}` }, ESTADOS[estado] ?? estado);
+/** URL de una foto de Google de un lugar (la sirve la API; la clave de Google no llega al navegador). */
+const urlFoto = (f, w = 400) => `${API}/api/lugares/foto?n=${encodeURIComponent(f.nombre)}&w=${w}`;
+/** Celda con miniatura de la foto del lugar (clic: todas sus fotos en el visor, con su atribución). */
+function conFoto(x, contenido) {
+  const fs = x.fotos?.items ?? [];
+  if (!fs.length) return h('div', { class: 'lugar-celda' }, h('span', { class: 'lugar-mini vacia', 'aria-hidden': 'true' }), h('div', {}, contenido));
+  const abrir = () => verGaleria(fs.map((f) => ({ url: urlFoto(f, 1200), nombre: x.nombre, detalle: `Foto de Google Maps${f.autores?.length ? `: ${f.autores.map((a) => a.nombre).filter(Boolean).join(', ')}` : ''}` })), 0);
+  return h('div', { class: 'lugar-celda' },
+    h('button', { type: 'button', class: 'lugar-mini', onclick: abrir, 'aria-label': `Ver ${fs.length} foto(s) de ${x.nombre}` },
+      h('img', { src: urlFoto(fs[0], 200), alt: '', loading: 'lazy', decoding: 'async', onerror: (e) => { e.target.closest('.lugar-mini').classList.add('vacia'); e.target.remove(); } }),
+      fs.length > 1 ? h('span', { class: 'lugar-mini-n' }, String(fs.length)) : null),
+    h('div', {}, contenido));
+}
+/** Botón para traer de Google las fotos de los lugares registrados que aún no las tienen (por tandas). */
+function botonFotos(tipo) {
+  if (!['administrador', 'gerencia', 'supervisor'].includes(yo.role)) return null;
+  const b = h('button', { class: 'btn-sec btn-peq', type: 'button' }, 'Traer fotos de Google');
+  const st = h('span', { class: 'hint', 'aria-live': 'polite' });
+  b.addEventListener('click', async () => {
+    b.disabled = true; let total = 0; let con = 0;
+    try {
+      for (;;) {
+        const r = (await api('POST', '/api/lugares/fotos/traer', { tipo, limite: 40 })).item;
+        total += r.consultados; con += r.conFotos;
+        st.textContent = r.faltan ? `Revisados ${fmtN.format(total)}; faltan ${fmtN.format(r.faltan)}…` : `Listo: ${fmtN.format(total)} revisado(s), ${fmtN.format(con)} con fotos.`;
+        if (!r.faltan || !r.consultados) break;
+      }
+      if (total) router(); else st.textContent = 'Todos los lugares de Google ya tienen sus fotos revisadas.';
+    } catch (e) { st.textContent = e.message; }
+    finally { b.disabled = false; }
+  });
+  return h('div', { class: 'acciones acciones-fotos' }, b, st);
+}
 
 // ---------------------------------------------------------------- sesión y API
 const API = apiBase() || (['localhost', '127.0.0.1'].includes(location.hostname) ? 'http://localhost:8080' : '');
@@ -2699,8 +2732,8 @@ V.catalogo = async () => {
     const filtro = campo('fprov', 'Filtrar por provincia', { options: div.provincias.map((p) => ({ value: p, label: p })), value: fprov, placeholder: 'Todas las provincias' });
     filtro.querySelector('select').addEventListener('change', (e) => irA('catalogo', { ver: 'farmacias', provincia: e.target.value }));
     const lista = fs.items.filter((x) => !fprov || x.provincia === fprov).sort((a, b) => a.provincia.localeCompare(b.provincia, 'es') || a.municipio.localeCompare(b.municipio, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
-    bloques.push(S('lista', `Farmacias (${fmtN.format(lista.length)})`, h('div', { style: 'max-width:20rem;margin-bottom:1rem' }, filtro),
-      tabla([{ t: 'Nombre', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
+    bloques.push(S('lista', `Farmacias (${fmtN.format(lista.length)})`, h('div', { style: 'max-width:20rem;margin-bottom:1rem' }, filtro), botonFotos('farmacia'),
+      tabla([{ t: 'Nombre', v: (x) => conFoto(x, [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null]) }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` }, { t: 'Estado', v: (x) => chip(x.estado) },
         { t: '', v: (x) => ES_GER() && x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar('farmacias', x.id) }, 'Validar') : '' }], lista, ['Aún no hay farmacias', 'Agrégalas a mano, impórtalas desde Excel o búscalas en Google Maps.'], { exportar: { nombre: 'farmacias-fersuaz', titulo: 'Farmacias' } })));
     if (GESTION_T()) bloques.push(S('importar', 'Importar Excel', importador('farmacias', 'Importar farmacias', 'Provincia y municipio deben ser oficiales. Las que ya existen en el mismo municipio no se duplican.', router)),
       S('google', 'Buscar en Google', await buscadorGoogle([['farmacia', 'Farmacias']], null)), ES_GER() ? S('auto', 'Registro automático', await registroAutomatico([['farmacia', 'Farmacias']])) : null);
@@ -2880,14 +2913,14 @@ V.establecimientos = async () => {
   const restaurar = async (x) => { try { await api('POST', `/api/territorio/establecimientos/${x.id}/restaurar`); router(); } catch (e) { alert(e.message); } };
   const columnas = [
     ...(GESTION_T() && fver !== 'descartados' ? [{ t: marcaTodosE, etiqueta: 'Marcar', v: (x) => h('input', { type: 'checkbox', class: 'marca', 'data-marca': x.id, 'aria-label': `Marcar ${x.nombre}`, checked: marcados.has(x.id), onchange: (e) => { e.target.checked ? marcados.add(x.id) : marcados.delete(x.id); contar(); } }) }] : []),
-    { t: 'Nombre', v: (x) => [x.nombre, x.revisar && GESTION_T() ? h('span', { class: 'chip pendiente', style: 'margin-left:.5rem' }, 'Revisar') : null, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] },
+    { t: 'Nombre', v: (x) => conFoto(x, [x.nombre, x.revisar && GESTION_T() ? h('span', { class: 'chip pendiente', style: 'margin-left:.5rem' }, 'Revisar') : null, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null]) },
     { t: 'Tipo', v: (x) => div.tipos[x.tipo] }, { t: 'Zona', v: (x) => `${x.sector ? `${x.sector}, ` : ''}${x.municipio}, ${x.provincia}` },
     { t: 'Estado', v: (x) => (x.estado === 'inactivo' ? [h('span', { class: 'chip anulado' }, 'No es centro de salud'), x.descarteMotivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.descarteMotivo) : null] : chip(x.estado)) },
     { t: '', v: (x) => !GESTION_T() ? '' : x.estado === 'inactivo' ? h('button', { class: 'btn-sec btn-peq', onclick: () => restaurar(x) }, 'Restaurar')
       : [x.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: () => validar(x) }, 'Validar') : null, h('button', { class: 'btn-enlace', onclick: () => descartar([x.id]) }, 'No es centro de salud')] },
   ];
   const vacioTxt = fver === 'revisar' ? ['No hay posibles errores con estos filtros', 'Todos los nombres parecen de centros de salud.'] : fver === 'descartados' ? ['Nada descartado', 'Aquí aparecen los registros que marques como "no es centro de salud".'] : ['No hay establecimientos con estos filtros', 'Regístralos en "Nuevo"; tu supervisor también puede importarlos desde Excel.'];
-  const bloques = [S('nuevo', 'Nuevo', f), S('lista', `Registrados (${fmtN.format(items.length)})`, h('div', { class: 'form-fila' }, fz.fp, fz.fm, ft, fv),
+  const bloques = [S('nuevo', 'Nuevo', f), S('lista', `Registrados (${fmtN.format(items.length)})`, h('div', { class: 'form-fila' }, fz.fp, fz.fm, ft, fv), botonFotos('establecimiento'),
     fver === 'revisar' ? h('div', { class: 'aviso' }, 'Nombres que parecen una dirección, un negocio ajeno (spa, hotel, colmado…) o que no dicen ser de salud. Revisa y marca los que no son centros de salud; los que sí lo son, déjalos.') : null,
     GESTION_T() && fver !== 'descartados' ? h('div', { class: 'acciones', style: 'margin:0 0 .75rem' }, bDesc) : null,
     tabla(columnas, items, vacioTxt, { exportar: { nombre: 'establecimientos-fersuaz', titulo: 'Establecimientos de salud' } }))];
@@ -2942,9 +2975,9 @@ V.hoteles = async () => {
   const bloques = [];
   if (rec) bloques.push(h('div', { class: 'tarjeta recomendado' }, h('h2', {}, 'Recomendado'), h('p', {}, h('strong', {}, rec.hotel.nombre), ` en ${rec.hotel.municipio}: ${RD(rec.hotel.precioNoche)} por noche. Es el más económico ${rec.alcance === 'municipio' ? 'del municipio' : 'de la provincia'} que cumple todos los requisitos.`)));
   else if (fprov) bloques.push(h('div', { class: 'aviso' }, `Aún no hay un hotel verificado en ${fmun || fprov} que cumpla todos los requisitos.`));
-  bloques.push(S('lista', `Hoteles (${fmtN.format(items.length)})`, h('div', { class: 'form-fila' }, fz.fp, fz.fm),
+  bloques.push(S('lista', `Hoteles (${fmtN.format(items.length)})`, h('div', { class: 'form-fila' }, fz.fp, fz.fm), botonFotos('hotel'),
     tabla([
-      { t: 'Hotel', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, [x.direccion, x.telefono].filter(Boolean).join('. '))] },
+      { t: 'Hotel', v: (x) => conFoto(x, [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, [x.direccion, x.telefono].filter(Boolean).join('. '))]) },
       { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` },
       { t: 'Calificación', num: true, v: (x) => x.calificacion != null ? `${fmtN.format(x.calificacion)} de 5` : '' },
       { t: 'Por noche', num: true, v: (x) => [x.precioNoche ? RD(x.precioFinal ?? x.precioNoche) : 'Sin confirmar', x.itbis ? h('small', { style: 'display:block;color:var(--texto-2)' }, `${RD(x.precioNoche)} + ITBIS`) : x.comprobanteFiscal ? h('small', { style: 'display:block;color:var(--texto-2)' }, 'Con comprobante, ITBIS incluido') : null, x.desayunoIncluido ? h('small', { style: 'display:block;color:var(--celeste-texto)' }, x.valorDesayuno ? `Con desayuno (${RD(x.valorDesayuno)})` : 'Con desayuno') : null] },
@@ -3388,7 +3421,7 @@ V.representantes = async () => {
     ];
     const colsL = [
       ...(ES_GER() ? [{ t: marcaTodosL, etiqueta: 'Marcar', clase: 'td-sel', v: (x) => { const c = h('input', { type: 'checkbox', 'data-marca-l': x.id, 'aria-label': `Marcar ${x.nombre}`, checked: selL.has(x.id) }); c.addEventListener('change', () => { c.checked ? selL.add(x.id) : selL.delete(x.id); contarL(); }); return h('span', { class: 'celda-sel' }, c); } }] : []),
-      { t: 'Lugar', v: (x) => [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null] },
+      { t: 'Lugar', v: (x) => conFoto(x, [x.nombre, x.direccion ? h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion) : null]) },
       { t: 'Tipo', v: (x) => TIPOS_L[x.tipo] ?? x.tipo }, { t: 'Municipio', v: (x) => [x.municipio, h('small', { style: 'display:block;color:var(--texto-2)' }, x.provincia)] },
       { t: 'Cómo entró', v: (x) => [ORIGEN[x.fuente ?? 'manual'] ?? x.fuente, x.createdAt ? h('small', { style: 'display:block;color:var(--texto-2)' }, fecha(String(x.createdAt).slice(0, 10))) : null] },
       { t: 'Estado', v: (x) => [chip(x.estado), x.lat == null ? h('small', { style: 'display:block;color:var(--alerta)' }, 'Sin ubicación') : null] },
@@ -3672,7 +3705,7 @@ async function pasoRep(paso, ctx) {
       });
       const cols = [
         { t: '', v: (x) => h('input', { type: 'checkbox', 'data-lugar': x.id, checked: sel.has(x.id), 'aria-label': `Marcar ${x.nombre}`, onchange: (e) => { e.target.checked ? sel.add(x.id) : sel.delete(x.id); contar(); } }) },
-        { t: 'Lugar', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion ?? '')] }, { t: 'Tipo', v: (x) => TIP[x.tipo] ?? x.tipo },
+        { t: 'Lugar', v: (x) => conFoto(x, [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion ?? '')]) }, { t: 'Tipo', v: (x) => TIP[x.tipo] ?? x.tipo },
         { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` }, { t: 'Ubicación', v: (x) => (x.lat == null ? h('span', { class: 'chip pendiente' }, 'Sin ubicación') : 'Sí') },
         { t: '', v: (x) => h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => quitar([x.id]) }, 'Quitar') }];
       const campos = [
@@ -3753,7 +3786,7 @@ async function pasoRep(paso, ctx) {
       const estadoReq = (x) => x.cumple ? h('span', { class: 'chip validado' }, 'Cumple todo') : h('span', { class: 'chip pendiente', title: (x.faltan ?? []).map((k) => reqs.find((q) => q.value === k)?.label ?? k).join(', ') }, `Faltan ${fmtN.format(x.faltan?.length ?? reqs.length)} requisito(s)`);
       const cols = [
         ...(puedeEditar ? [{ t: '', v: (x) => h('input', { type: 'checkbox', 'data-hotel': x.id, checked: sel.has(x.id), 'aria-label': `Marcar ${x.nombre}`, onchange: (e) => { e.target.checked ? sel.add(x.id) : sel.delete(x.id); contar(); } }) }] : []),
-        { t: 'Hotel', v: (x) => [h('span', {}, x.nombre, recIds.has(x.id) ? h('span', { class: 'chip ok', style: 'margin-left:.4rem' }, 'Recomendado') : null), h('small', { style: 'display:block;color:var(--texto-2)' }, [x.telefono, x.direccion].filter(Boolean).join('. '))] },
+        { t: 'Hotel', v: (x) => conFoto(x, [h('span', {}, x.nombre, recIds.has(x.id) ? h('span', { class: 'chip ok', style: 'margin-left:.4rem' }, 'Recomendado') : null), h('small', { style: 'display:block;color:var(--texto-2)' }, [x.telefono, x.direccion].filter(Boolean).join('. '))]) },
         { t: 'Municipio', v: (x) => `${x.municipio}, ${x.provincia}` },
         { t: 'Precio por noche', v: precio }, { t: 'Requisitos', v: estadoReq },
         ...(puedeEditar ? [{ t: '', v: (x) => h('div', { class: 'acciones-fila' }, h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: async () => { if (await editarHotel(x, reqs)) pintar(); } }, 'Editar'), h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => quitar([x.id]) }, 'Quitar')) }] : []),
