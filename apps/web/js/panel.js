@@ -112,7 +112,7 @@ function campo(name, label, attrs = {}, hint) {
   return h('div', { class: 'field' }, h('label', { for: id }, label, hint ? h('span', { class: 'hint' }, ` ${hint}`) : null), input, h('p', { class: 'error', id: `${id}-e`, dataset: { for: name } }));
 }
 function mostrarErrores(form, err) {
-  form.querySelectorAll('.error').forEach((e) => { e.textContent = ''; });
+  form.querySelectorAll('.error:not(.aviso)').forEach((e) => { e.textContent = ''; });
   form.querySelectorAll('[aria-invalid]').forEach((e) => e.removeAttribute('aria-invalid'));
   const f = err?.fields ?? {};
   let primero = null;
@@ -126,7 +126,7 @@ function estado(el, kind, msg) { el.className = `aviso ${kind}`; el.textContent 
 async function enviar(form, boton, fn) {
   const st = form.querySelector('.aviso') ?? form.appendChild(h('div', { class: 'aviso', role: 'status', hidden: true }));
   const txt = boton.textContent; boton.disabled = true; boton.textContent = 'Guardando…'; accionPendiente = txt;
-  try { mostrarErrores(form); const r = await fn(); return r; }
+  try { mostrarErrores(form); st.hidden = true; st.textContent = ''; const r = await fn(); return r; }
   catch (e) { mostrarErrores(form, e); estado(st, 'error', e.message); return null; }
   finally { boton.disabled = false; boton.textContent = txt; }
 }
@@ -2527,6 +2527,9 @@ async function buscadorGoogle(tipos, alAgregar, { provincias = null, municipios 
   const [{ activo }, div] = await Promise.all([api('GET', '/api/territorio/google/estado'), division()]);
   if (!activo) return h('div', { class: 'tarjeta' }, h('h2', {}, titulo), h('p', { class: 'hint' }, 'La búsqueda en Google Maps se activa cuando se configure la clave del mapa (MAPS_API_KEY) en el servidor. Mientras tanto, registra a mano o importa un Excel.'));
   const z = selectorZona(provincias ?? div.provincias, municipios ?? div.municipios, provincias?.length === 1 ? { provincia: provincias[0] } : {});
+  // Opción "Todos los municipios" de la provincia elegida (busca en cada uno).
+  const conTodos = () => { if (z.sp.value && !z.sm.querySelector('option[value="todos"]')) z.sm.insertBefore(h('option', { value: 'todos' }, 'Todos los municipios'), z.sm.options[1] ?? null); };
+  z.sp.addEventListener('change', () => setTimeout(conTodos, 0)); conTodos();
   const ft = campo('tipo', 'Tipo', { options: tipos.map(([value, label]) => ({ value, label })), value: tipos[0][0] });
   const ftx = campo('texto', 'Nombre o palabra', {}, '(opcional)');
   const b = h('button', { class: 'btn-sec', type: 'submit' }, 'Buscar en Google Maps');
@@ -2540,11 +2543,12 @@ async function buscadorGoogle(tipos, alAgregar, { provincias = null, municipios 
     if (!r) return;
     res.replaceChildren(tabla([
       { t: 'Nombre', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion)] },
+      ...(q.municipio === 'todos' ? [{ t: 'Municipio', v: (x) => x.municipio }] : []),
       { t: 'Teléfono', v: (x) => x.telefono ?? '' },
-      { t: '', v: (x) => x.registrado ? h('span', { class: 'chip validado' }, 'Ya registrado') : h('button', { class: 'btn btn-peq', type: 'button', onclick: async (ev) => {
+      { t: '', v: (x) => x.registrado ? h('span', { class: 'chip validado', title: x.registradoEn ? `Registrado en ${x.registradoEn}` : null }, x.registradoEn ? `Ya registrado en ${x.registradoEn.split(',')[0]}` : 'Ya registrado') : h('button', { class: 'btn btn-peq', type: 'button', onclick: async (ev) => {
         ev.target.disabled = true;
-        try { await api('POST', '/api/territorio/google/agregar', { ...q, placeId: x.placeId }); ev.target.replaceWith(h('span', { class: 'chip validado' }, 'Agregado')); alAgregar?.(); }
-        catch (err) { ev.target.disabled = false; alert(err.message); }
+        try { await api('POST', '/api/territorio/google/agregar', { ...q, municipio: x.municipio ?? q.municipio, placeId: x.placeId }); ev.target.replaceWith(h('span', { class: 'chip validado' }, 'Agregado')); alAgregar?.(); }
+        catch (err) { if (err.status === 409) ev.target.replaceWith(h('span', { class: 'chip validado', title: err.message }, 'Ya registrado')); else { ev.target.disabled = false; alert(err.message); } }
       } }, 'Agregar') },
     ], r.items, ['Google no encontró resultados', 'Prueba con otro tipo o escribe parte del nombre.']));
   });

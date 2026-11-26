@@ -365,7 +365,8 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     if (Object.keys(e).length) invalido(e);
     permitir(!zona || dentroDeZona(zona, d.provincia, d.municipio), 'Ese municipio no está asignado a tu zona.');
     const existentes = await data.list('establecimientos', { municipio: d.municipio });
-    const dup = existentes.find((x) => claveLugar(x) === claveLugar(d) || (d.placeId && x.placeId === d.placeId));
+    const dup = existentes.find((x) => claveLugar(x) === claveLugar(d) || (d.placeId && x.placeId === d.placeId))
+      || (d.placeId ? (await data.list('establecimientos')).find((x) => x.placeId === d.placeId) : null); // el mismo lugar de Google, en otro municipio
     if (dup) throw new HttpError(409, `${dup.nombre} ya está registrado en ${dup.municipio}.`, { nombre: 'Ya existe en este municipio.' });
     const estado = rol(actor, GESTION) ? 'validado' : 'pendiente';
     const x = await data.insert('establecimientos', { ...d, fuente, estado, creadoPor: actor.id });

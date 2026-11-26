@@ -82,14 +82,22 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     if (!lugares.activo) throw new AuthError(503, 'La búsqueda en Google Maps no está conectada todavía (falta MAPS_API_KEY).');
     const { provincias, municipios, tipos } = t.division();
     const provincia = q.get('provincia'); const municipio = q.get('municipio'); const tipo = q.get('tipo');
-    if (!provincias.includes(provincia) || !municipios[provincia].includes(municipio)) throw new AuthError(422, 'Elige provincia y municipio.');
+    const todosMun = municipio === 'todos';
+    if (!provincias.includes(provincia) || (!todosMun && !municipios[provincia].includes(municipio))) throw new AuthError(422, 'Elige provincia y municipio.');
     if (tipo !== 'farmacia' && tipo !== 'hotel' && !tipos[tipo]) throw new AuthError(422, 'Elige el tipo de establecimiento.');
-    let res;
-    try { res = await lugares.buscar({ tipo, municipio, provincia, texto: (q.get('texto') || '').slice(0, 60) }); } catch (err) { throw new AuthError(502, err.message); }
+    let res = []; const texto = (q.get('texto') || '').slice(0, 60);
+    // "Todos los municipios": una búsqueda por municipio de la provincia, sin repetir lugares.
+    try {
+      for (const m of todosMun ? municipios[provincia] : [municipio]) {
+        for (const r of await lugares.buscar({ tipo, municipio: m, provincia, texto })) if (!res.some((y) => y.placeId === r.placeId)) res.push({ ...r, municipio: m });
+      }
+    } catch (err) { if (!res.length) throw new AuthError(502, err.message); }
     const col = tipo === 'farmacia' ? 'farmacias' : tipo === 'hotel' ? 'hoteles' : 'establecimientos';
-    const existentes = await data.list(col, { municipio });
-    const ids = new Set(existentes.map((x) => x.placeId).filter(Boolean)); const nombres = new Set(existentes.map((x) => sinAcento(x.nombre)));
-    return { items: res.map((r) => ({ ...r, registrado: ids.has(r.placeId) || nombres.has(sinAcento(r.nombre)) })) };
+    // Ya registrado: el mismo lugar de Google en cualquier municipio, o el mismo nombre en este municipio.
+    const todos = await data.list(col);
+    const porPlace = new Map(todos.filter((x) => x.placeId).map((x) => [x.placeId, x]));
+    const nombres = new Set(todos.map((x) => `${x.municipio}|${sinAcento(x.nombre)}`));
+    return { items: res.map((r) => { const x = porPlace.get(r.placeId); return { ...r, registrado: Boolean(x) || nombres.has(`${r.municipio}|${sinAcento(r.nombre)}`), ...(x && x.municipio !== r.municipio ? { registradoEn: `${x.municipio}, ${x.provincia}` } : {}) }; }) };
   }
   /** Nombre del lugar en unas coordenadas exactas (para la dirección desde donde sale un representante). */
   async function ubicacionGoogle(me, q) {
