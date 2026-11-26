@@ -471,6 +471,8 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', /^\/api\/territorio\/establecimientos\/([\w-]+)\/restaurar$/, async ({ me, p }) => ({ item: await t.restaurarEstablecimiento(me, p[1]) }));
   ruta('POST', '/api/territorio/establecimientos', async ({ me, body }) => [201, { item: await t.crearEstablecimiento(me, body) }]);
   ruta('POST', /^\/api\/territorio\/establecimientos\/([\w-]+)\/validar$/, async ({ me, p }) => ({ item: await t.validarEstablecimiento(me, p[1]) }));
+  ruta('POST', '/api/territorio/cartera/agregar', async ({ me, body }) => t.carteraAgregar(me, body ?? {}));
+  ruta('POST', '/api/territorio/cartera/quitar', async ({ me, body }) => t.carteraQuitar(me, body ?? {}));
   ruta('GET', '/api/territorio/zonas', async ({ me }) => ({ items: await t.listarZonas(me) }));
   ruta('GET', /^\/api\/territorio\/zonas\/([\w-]+)$/, async ({ me, p }) => ({ item: await t.verZona(me, p[1]) }));
   ruta('GET', '/api/territorio/zonas-ocupadas', async ({ me, q }) => ({ items: await t.zonasOcupadas(me, q.get('posicion'), q.get('excluir') || null) }));

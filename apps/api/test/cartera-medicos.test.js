@@ -71,3 +71,38 @@ test('cartera: solo visitador y PVC; médicos de centros de su ruta; propuesta y
     assert.equal(pr2.dias.length, 0);
   } finally { server.close(); }
 });
+
+test('cartera en lote: agrega a varios visitadores solo los de su ruta, informa el resto y se deshace', async () => {
+  const store = new MemoryStore(); const data = new MemoryData();
+  const server = createServer(createApp({ store, data, files: new MemoryFiles(), sessionSecret: 'x'.repeat(40) })).listen(0);
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const call = async (m, p, b, t) => { const r = await fetch(url + p, { method: m, headers: { 'content-type': 'application/json', ...(t && { authorization: `Bearer ${t}` }) }, body: b && JSON.stringify(b) }); return { status: r.status, body: await r.json() }; };
+  try {
+    const tok = {}; const ids = {};
+    for (const [k, props] of Object.entries({ ger: { role: 'gerencia' }, v1: { role: 'representante', position: 'Visitador' }, v2: { role: 'representante', position: 'PVC' }, ven: { role: 'representante', position: 'Vendedor' } })) {
+      ids[k] = (await store.createUser({ fullName: `${k} Ejemplo`, email: `${k}@x.do`, status: 'activo', passwordHash: await hashPassword('clave123456'), ...props })).id;
+      tok[k] = (await call('POST', '/api/auth/login', { email: `${k}@x.do`, password: 'clave123456' })).body.token;
+    }
+    await call('POST', `/api/territorio/zonas/${ids.v1}`, { provincias: ['Espaillat'] }, tok.ger);
+    await call('POST', `/api/territorio/zonas/${ids.v2}`, { provincias: ['Santiago'] }, tok.ger);
+    await call('POST', `/api/territorio/zonas/${ids.ven}`, { provincias: ['Espaillat'] }, tok.ger);
+    const hm = await data.insert('establecimientos', { tipo: 'hospital', nombre: 'Hospital Ejemplo Moca', provincia: 'Espaillat', municipio: 'Moca', estado: 'validado', fuente: 'manual' });
+    const a = await data.insert('medicos', { nombre: 'Dra. Ejemplo Uno', especialidad: 'Pediatría', provincia: 'Espaillat', municipio: 'Moca', establecimientoId: hm.id, estado: 'validado' });
+    const b = await data.insert('medicos', { nombre: 'Dr. Ejemplo Dos', especialidad: 'Cardiología', provincia: 'Espaillat', municipio: 'Moca', establecimientoId: hm.id, estado: 'validado' });
+    const medicos = [a, b].map((m) => ({ medicoId: m.id, establecimientoId: hm.id }));
+    assert.equal((await call('POST', '/api/territorio/cartera/agregar', { representanteIds: [ids.v1], medicos }, tok.v1)).status, 403);
+    assert.equal((await call('POST', '/api/territorio/cartera/agregar', { representanteIds: [], medicos }, tok.ger)).status, 422);
+    const r = (await call('POST', '/api/territorio/cartera/agregar', { representanteIds: [ids.v1, ids.v2, ids.ven], medicos }, tok.ger)).body.resultados;
+    const de = (id) => r.find((x) => x.representanteId === id);
+    assert.equal(de(ids.v1).agregados.length, 2);
+    assert.deepEqual([de(ids.v2).agregados.length, de(ids.v2).fueraDeRuta], [0, 2], 'el PVC de Santiago no los recibe: fuera de su ruta');
+    assert.match(de(ids.ven).error, /Vendedor/);
+    const otra = (await call('POST', '/api/territorio/cartera/agregar', { representanteIds: [ids.v1], medicos }, tok.ger)).body.resultados[0];
+    assert.deepEqual([otra.agregados.length, otra.yaTenia], [0, 2], 'no se duplican');
+    const z = (await call('GET', '/api/territorio/zonas', null, tok.ger)).body.items.find((x) => x.representanteId === ids.v1);
+    assert.equal(z.cartera.length, 2);
+    const q = (await call('POST', '/api/territorio/cartera/quitar', { representanteIds: [ids.v1], medicos: [medicos[0]] }, tok.ger)).body.resultados[0];
+    assert.equal(q.quitados.length, 1);
+    assert.equal((await call('GET', `/api/territorio/zonas/${ids.v1}/cartera`, null, tok.ger)).body.item.medicos.length, 1);
+  } finally { server.close(); }
+});
