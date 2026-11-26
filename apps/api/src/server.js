@@ -17,6 +17,7 @@ import { actualizarDesdeMicm } from './combustible-micm.js';
 import { SinLugares, crearLugares } from './lugares.js';
 import { createBarrido } from './barrido-google.js';
 import { createHoteles, REQUISITOS } from './hoteles.js';
+import { createFotosLugares } from './fotos-lugares.js';
 import { createInicio } from './inicio.js';
 import { createVehiculos, createVehiculosAgregados } from './vehiculos.js';
 import { createVentas } from './ventas.js';
@@ -73,6 +74,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     registroMedico: { validar: (i) => medicos.validarRegistro(i), crear: (u, d) => medicos.crearDesdeRegistro(u, d), alDecidir: (u, ok) => medicos.alDecidirCuenta(u, ok) } });
   const c = createComercial({ data, users: store, files, audit: (e) => store.addAudit(e), now });
   const hoteles = createHoteles({ data, audit: (e) => store.addAudit(e), now: now ?? (() => new Date()) });
+  const fotosL = createFotosLugares({ data, lugares, audit: (e) => store.addAudit(e), now: now ?? (() => new Date()) });
   const v = createViaticos({ data, users: store, files, mapas, hoteles, notificar: n.notificar, notificarRoles: n.notificarRoles, audit: (e) => store.addAudit(e), now });
 
   const GESTION_LUGARES = ['administrador', 'gerencia', 'supervisor'];
@@ -161,12 +163,13 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     const zg = zonaGoogle(d);
     if (zg) body = { ...body, provincia: zg.provincia, municipio: zg.municipio };
     const base = { nombre: d.nombre, provincia: body.provincia, municipio: body.municipio, direccion: d.direccion, telefono: d.telefono, lat: d.lat, lng: d.lng, placeId: d.placeId };
-    if (body.tipo === 'farmacia') {
-      const item = await c.catalogo.crearFarmacia(me, { nombre: d.nombre, provincia: body.provincia, municipio: body.municipio }, d);
-      return { item };
-    }
-    if (body.tipo === 'hotel') return { item: await hoteles.crear(me, { ...base, calificacion: d.calificacion }, { fuente: 'google' }) };
-    return { item: await t.crearEstablecimiento(me, { ...base, tipo: body.tipo }, { fuente: 'google', verificado: true }) };
+    const tipoF = body.tipo === 'farmacia' ? 'farmacia' : body.tipo === 'hotel' ? 'hotel' : 'establecimiento';
+    const item = body.tipo === 'farmacia' ? await c.catalogo.crearFarmacia(me, { nombre: d.nombre, provincia: body.provincia, municipio: body.municipio }, d)
+      : body.tipo === 'hotel' ? await hoteles.crear(me, { ...base, calificacion: d.calificacion }, { fuente: 'google' })
+      : await t.crearEstablecimiento(me, { ...base, tipo: body.tipo }, { fuente: 'google', verificado: true });
+    // Las fotos que trae Google se guardan de una vez.
+    if (item?.id) await fotosL.guardar(tipoF, item.id, d.fotos ?? []).catch(() => {});
+    return { item };
   }
 
   const vehiculos = createVehiculos({ fetchImpl: vehiculosFetch });
@@ -184,12 +187,20 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   // Registro automático desde Google Maps (recorre municipios y guarda lo que falte)
   const barrido = createBarrido({
     data, lugares, now: now ?? (() => new Date()), pausa: barridoPausa ?? 250, aceptar: (tipo, l) => tipo !== 'medico' || pareceMedico(l.nombre), notificar: n.notificar, audit: (e) => store.addAudit(e),
-    guardar: (actor, tipo, l0) => { const zg = zonaGoogle(l0); const l = zg ? { ...l0, ...zg } : l0; return tipo === 'farmacia'
+    guardar: (actor, tipo, l0) => { const zg = zonaGoogle(l0); const l = zg ? { ...l0, ...zg } : l0; return guardarConFotos(tipo, l, tipo === 'farmacia'
       ? c.catalogo.crearFarmacia(actor, { nombre: l.nombre, provincia: l.provincia, municipio: l.municipio }, l, { revisado: true })
       : tipo === 'hotel' ? hoteles.crear(actor, l, { fuente: 'google' })
       : tipo === 'medico' ? medicos.registrar(actor, { provincia: l.provincia, municipio: l.municipio }, { fuente: 'google', google: l })
-      : t.crearEstablecimiento(actor, { nombre: l.nombre, tipo, provincia: l.provincia, municipio: l.municipio, direccion: l.direccion, telefono: l.telefono, lat: l.lat, lng: l.lng, placeId: l.placeId }, { fuente: 'google', verificado: true }); },
+      : t.crearEstablecimiento(actor, { nombre: l.nombre, tipo, provincia: l.provincia, municipio: l.municipio, direccion: l.direccion, telefono: l.telefono, lat: l.lat, lng: l.lng, placeId: l.placeId }, { fuente: 'google', verificado: true })); },
   });
+  /** Guarda las fotos de Google del lugar recién creado por el registro automático (los médicos no llevan fotos). */
+  async function guardarConFotos(tipo, l, creado) {
+    const item = await creado;
+    const tf = tipo === 'farmacia' ? 'farmacia' : tipo === 'hotel' ? 'hotel' : tipo === 'medico' ? null : 'establecimiento';
+    const id = item?.id ?? item?.item?.id;
+    if (tf && id && l.fotos?.length) await fotosL.guardar(tf, id, l.fotos).catch(() => {});
+    return item;
+  }
   const puedeBarrido = (me) => {
     if (!me || me.status !== 'activo' || !['administrador', 'gerencia'].includes(me.role)) throw new AuthError(403, 'Solo la administración o la gerencia pueden usar el registro automático.');
   };
@@ -210,7 +221,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
         'access-control-allow-methods': 'GET, POST, OPTIONS', vary: 'Origin',
       });
     }
-    if (raw) { headers['content-type'] = raw.tipo; res.writeHead(status, headers); return res.end(raw.buf); }
+    if (raw) { headers['content-type'] = raw.tipo; if (raw.cache) headers['cache-control'] = raw.cache; res.writeHead(status, headers); return res.end(raw.buf); }
     headers['content-type'] = 'application/json; charset=utf-8';
     res.writeHead(status, headers);
     res.end(status === 204 ? undefined : JSON.stringify(body));
@@ -598,6 +609,9 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', /^\/api\/pedidos\/([\w-]+)\/estado$/, async ({ me, p, body }) => ({ item: await tienda.cambiarEstado(me, p[1], body ?? {}) }));
   ruta('POST', /^\/api\/pedidos\/([\w-]+)\/comprobante$/, async ({ me, p, body }) => ({ item: await tienda.subirComprobante(me, p[1], body?.comprobante) }), { limite: 8 * 1024 * 1024 });
 
+  // Fotos de Google Maps de los lugares registrados (públicas, como en Google; la clave queda en el servidor).
+  ruta('GET', '/api/lugares/foto', async ({ q }) => { const img = await fotosL.imagen(q.get('n'), q.get('w')); return { raw: { ...img, cache: 'public, max-age=86400' } }; }, { auth: false });
+  ruta('POST', '/api/lugares/fotos/traer', async ({ me, body }) => ({ item: await fotosL.traer(me, body ?? {}) }));
   ruta('GET', /^\/api\/adjuntos\/([\w.-]+)$/, async ({ me, p }) => {
     const f = await files.get(p[1]);
     const gestion = ['administrador', 'gerencia', 'supervisor', 'finanzas'].includes(me.role) && me.status === 'activo';

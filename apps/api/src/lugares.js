@@ -5,9 +5,16 @@ const CONSULTA = {
   farmacia: 'farmacias', clinica: 'clínicas', hospital: 'hospitales', unap: 'UNAP unidad de atención primaria',
   cpn: 'centro de primer nivel de atención', diagnostico: 'centro diagnóstico', consultorio: 'consultorio médico', hotel: 'hoteles', medico: 'médicos especialistas consultorio',
 };
-const CAMPOS = 'places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.businessStatus,places.rating,places.websiteUri,places.addressComponents';
+const CAMPOS = 'places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.businessStatus,places.rating,places.websiteUri,places.addressComponents,places.photos';
+const MAX_FOTOS = 6;
 
-export class SinLugares { activo = false; async buscar() { return []; } async pagina() { return { items: [], siguiente: null }; } async detalle() { return null; } async ubicacion() { return null; } async coordsDe() { return null; } }
+/** Fotos de Google de un lugar: nombre de la foto (para pedirla después) y a quién se le atribuye. */
+export function fotosDe(photos) {
+  return (Array.isArray(photos) ? photos : []).filter((f) => /^places\/[\w-]+\/photos\/[\w-]+$/.test(f?.name ?? '')).slice(0, MAX_FOTOS)
+    .map((f) => ({ nombre: f.name, ancho: f.widthPx ?? null, alto: f.heightPx ?? null, autores: (f.authorAttributions ?? []).map((a) => ({ nombre: a.displayName ?? '', url: a.uri ?? null })).slice(0, 3) }));
+}
+
+export class SinLugares { activo = false; async buscar() { return []; } async pagina() { return { items: [], siguiente: null }; } async detalle() { return null; } async ubicacion() { return null; } async coordsDe() { return null; } async fotos() { return []; } async imagen() { return null; } }
 
 export class GooglePlaces {
   activo = true;
@@ -31,7 +38,25 @@ export class GooglePlaces {
       cerrado: p.businessStatus === 'CLOSED_PERMANENTLY',
       // Provincia y municipio según Google (la búsqueda por texto a veces trae lugares de otro municipio).
       zona: p.addressComponents ? zonaDeComponentes(p.addressComponents) : null,
+      fotos: fotosDe(p.photos),
     };
+  }
+  /** Fotos de un lugar ya registrado (Place Details solo con el campo de fotos). */
+  async fotos(placeId) {
+    if (!/^[\w-]{10,200}$/.test(String(placeId))) return [];
+    const p = await this.#pedir(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, { headers: { 'X-Goog-Api-Key': this.apiKey, 'X-Goog-FieldMask': 'photos' } });
+    return fotosDe(p?.photos);
+  }
+  /** Bytes de una foto (la clave nunca llega al navegador: el servidor la pide y la entrega). */
+  async imagen(nombre, ancho = 800) {
+    if (!/^places\/[\w-]+\/photos\/[\w-]+$/.test(String(nombre))) return null;
+    const w = Math.min(Math.max(Number(ancho) || 800, 100), 1600);
+    let r;
+    try { r = await this.fetch(`https://places.googleapis.com/v1/${nombre}/media?maxWidthPx=${w}&key=${encodeURIComponent(this.apiKey)}`, { signal: AbortSignal.timeout(15000) }); } catch { return null; }
+    if (!r.ok) return null;
+    const tipo = r.headers.get('content-type') ?? 'image/jpeg';
+    if (!/^image\//.test(tipo)) return null;
+    return { tipo, buf: Buffer.from(await r.arrayBuffer()) };
   }
   /** Busca un tipo de establecimiento dentro de un municipio (primera página). */
   async buscar(criterio) { return (await this.pagina(criterio)).items; }
