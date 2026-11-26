@@ -301,7 +301,7 @@ export function createMedicos({ data, audit, lector, users }) {
     }
     if (!crudas.length) invalido({ archivo: 'No se encontraron médicos en el archivo.' });
     if (crudas.length > 1000) invalido({ archivo: 'Máximo 1,000 médicos por archivo; divídelo en partes.' });
-    const todos = await data.list('medicos');
+    const todos = await data.list('medicos'); const vistosArchivo = new Map();
     const filas = crudas.map((c, i) => {
       const { nombre, especialidad: espNombre } = limpiarNombre(c.nombre);
       const especialidad = especialidadDe(c.especialidad) ?? (normalizeName(c.especialidad) || espNombre || null);
@@ -316,25 +316,31 @@ export function createMedicos({ data, audit, lector, users }) {
       if (c.establecimiento && !est) avisos.push(`No encontramos "${c.establecimiento}" en Establecimientos: elígelo o regístralo.`);
       if (!provincia || !municipio) avisos.push('Falta la provincia o el municipio: elige el establecimiento.');
       if (c.telefono && !telefono) avisos.push(`Teléfono "${c.telefono}" no válido: se omite.`);
-      const ya = todos.find((x) => sinTilde(x.nombre) === sinTilde(nombre) && (!municipio || sinTilde(x.municipio) === sinTilde(municipio)));
+      const ya = todos.find((x) => sinTilde(x.nombre) === sinTilde(nombre) && (!municipio || sinTilde(x.municipio) === sinTilde(municipio)))
+        || (telefono && todos.find((x) => x.telefono === telefono && sinTilde(x.nombre) === sinTilde(nombre)));
+      // Repetido dentro del mismo archivo: solo se carga la primera vez.
+      const k = `${sinTilde(nombre)}|${sinTilde(municipio ?? '')}`;
+      const repetidoEn = vistosArchivo.get(k) ?? null; if (!repetidoEn) vistosArchivo.set(k, i + 1);
       return {
         fila: i + 1, nombre, especialidad, establecimientoId: est?.id ?? null, centroLeido: normalizeName(c.establecimiento) || null,
         opciones: m.opciones.map((x) => ({ id: x.id, nombre: x.nombre, municipio: x.municipio })), provincia, municipio, telefono,
-        redes: redesDe({ instagram: c.instagram, facebook: c.facebook, web: c.web }), existe: ya ? ya.id : null, avisos,
+        redes: redesDe({ instagram: c.instagram, facebook: c.facebook, web: c.web }), existe: ya ? ya.id : null, repetidoEn, avisos,
       };
     });
     return { fuente, notas, filas };
   }
   /** Guarda las filas revisadas en pantalla. */
-  async function confirmarDocumento(actor, { filas, fuente } = {}) {
+  async function confirmarDocumento(actor, { filas, fuente, soloNuevos = false } = {}) {
     permitir(puedeRegistrar(actor), 'No tienes permiso para registrar médicos.');
     if (!Array.isArray(filas) || !filas.length) invalido({ filas: 'No hay médicos para guardar.' });
     if (filas.length > 1000) invalido({ filas: 'Máximo 1,000 médicos por vez.' });
     const establecimientos = await data.list('establecimientos');
     const resumen = { creado: 0, completado: 0, existente: 0, error: 0 }; const errores = [];
     for (const [i, f] of filas.entries()) {
+      if (soloNuevos && f.existe) { resumen.existente++; continue; }
       try {
         const r = await registrar(actor, { nombre: f.nombre, especialidad: f.especialidad || POR_CONFIRMAR, establecimientoId: f.establecimientoId || undefined, provincia: f.provincia, municipio: f.municipio, telefono: f.telefono, ...(f.redes ?? {}) }, { fuente: fuente === 'ia' ? 'ia' : 'documento', establecimientos });
+        if (soloNuevos && r.accion !== 'creado') { resumen.existente++; continue; }
         resumen[r.accion]++;
       } catch (err) { resumen.error++; errores.push({ fila: f.fila ?? i + 1, nombre: f.nombre, error: err.fields ? Object.values(err.fields).join(' ') : err.message }); }
     }

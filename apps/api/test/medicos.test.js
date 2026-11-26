@@ -80,6 +80,13 @@ test('documento: plantilla de Excel con vista previa y guardado; PDF con IA', as
     // Otra vez: no duplica
     const otra = await call('POST', '/api/medicos/documento/confirmar', { filas: v.body.filas }, tok.ger);
     assert.equal(otra.body.resumen.creado, 0); assert.equal((await data.list('medicos')).length, 3);
+    // Volver a leer el mismo archivo: los tres salen como ya registrados y "solo nuevos" no carga ni cambia nada
+    const v2 = await call('POST', '/api/medicos/documento/leer', { archivo }, tok.ger);
+    assert.ok(v2.body.filas.every((f) => f.existe));
+    const antes = JSON.stringify(await data.list('medicos'));
+    const solo = await call('POST', '/api/medicos/documento/confirmar', { filas: v2.body.filas, soloNuevos: true }, tok.ger);
+    assert.deepEqual(solo.body.resumen, { creado: 0, completado: 0, existente: 3, error: 0 });
+    assert.equal(JSON.stringify(await data.list('medicos')), antes, 'no toca los que ya estaban');
     // PDF: lo lee la IA y se empareja con el hospital del catálogo
     const pdf = await call('POST', '/api/medicos/documento/leer', { archivo: { nombre: 'lista.pdf', tipo: 'application/pdf', base64: Buffer.from('%PDF-1.4 ejemplo').toString('base64') } }, tok.promo);
     assert.equal(pdf.status, 200, JSON.stringify(pdf.body)); assert.equal(pdf.body.fuente, 'ia');

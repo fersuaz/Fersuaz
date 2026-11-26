@@ -185,7 +185,7 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
   /** Todas las zonas de una vez (para listas: evita un pedido por representante). */
   async function listarZonas(actor) {
     permitir(rol(actor, [...GESTION, 'finanzas']));
-    return (await data.list('zonas')).map((z) => ({ representanteId: z.representanteId, provincias: z.provincias ?? [], municipios: z.municipios ?? {} }));
+    return (await data.list('zonas')).map((z) => ({ representanteId: z.representanteId, provincias: z.provincias ?? [], municipios: z.municipios ?? {}, cartera: (z.cartera?.medicos ?? []).map(clave) }));
   }
   async function verZona(actor, repId) {
     permitir(actor.id === repId || rol(actor, [...GESTION, 'finanzas']));
@@ -277,6 +277,45 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
     await data.update('zonas', z.id, { cartera, actualizadoPor: actor.id });
     await audit({ actorId: actor.id, action: 'cartera_medicos', entity: 'user', entityId: repId, before: antes ? { medicos: antes.medicos?.length ?? 0, centroInicioId: antes.centroInicioId ?? null, visitas: antes.visitas ?? null } : null, after: { medicos: medicos.length, centroInicioId: ini, visitas } });
     return verCartera(actor, repId);
+  }
+  /**
+   * Agregar (o quitar) los mismos médicos a varios visitadores/PVC a la vez. A cada uno solo se le agregan los
+   * que trabajan en un centro de su ruta; el resto se informa como "fuera de su ruta".
+   */
+  async function carteraLote(actor, input = {}, quitar = false) {
+    permitir(rol(actor, GESTION), 'Solo la administración, la gerencia o la supervisión arman la cartera de médicos.');
+    const reps = [...new Set((Array.isArray(input.representanteIds) ? input.representanteIds : []).map(String))];
+    const pares = (Array.isArray(input.medicos) ? input.medicos : []).map((x) => ({ medicoId: String(x?.medicoId ?? ''), establecimientoId: String(x?.establecimientoId ?? '') })).filter((x) => x.medicoId && x.establecimientoId);
+    const e = {};
+    if (!reps.length) e.representanteIds = 'Elige al menos un visitador o PVC.';
+    if (reps.length > 100) e.representanteIds = 'Máximo 100 representantes por vez.';
+    if (!pares.length) e.medicos = 'Elige al menos un médico.';
+    if (pares.length > 2000) e.medicos = 'Máximo 2,000 médicos por vez.';
+    if (Object.keys(e).length) invalido(e);
+    const resultados = [];
+    for (const id of reps) {
+      const rep = await users.findUserById(id);
+      if (!rep || rep.role !== 'representante') { resultados.push({ representanteId: id, error: 'No existe.' }); continue; }
+      if (!CON_MEDICOS.includes(rep.position)) { resultados.push({ representanteId: id, nombre: rep.fullName, error: `${rep.position}: no tiene cartera de médicos.` }); continue; }
+      const z = await zonaDe(id);
+      if (!z?.provincias?.length) { resultados.push({ representanteId: id, nombre: rep.fullName, error: 'No tiene zona de trabajo.' }); continue; }
+      const actual = z.cartera?.medicos ?? []; const tiene = new Set(actual.map(clave));
+      let medicos; let cambiados = [];
+      if (quitar) { const q = new Set(pares.map(clave)); cambiados = actual.filter((x) => q.has(clave(x))); medicos = actual.filter((x) => !q.has(clave(x))); }
+      else {
+        const validos = new Set((await medicosDeRuta(z)).map(clave));
+        cambiados = pares.filter((x) => validos.has(clave(x)) && !tiene.has(clave(x)));
+        cambiados = [...new Map(cambiados.map((x) => [clave(x), x])).values()];
+        medicos = [...actual, ...cambiados];
+        resultados.push({ representanteId: id, nombre: rep.fullName, agregados: cambiados, yaTenia: pares.filter((x) => tiene.has(clave(x))).length, fueraDeRuta: pares.filter((x) => !validos.has(clave(x))).length });
+      }
+      if (quitar) resultados.push({ representanteId: id, nombre: rep.fullName, quitados: cambiados });
+      if (cambiados.length) {
+        await data.update('zonas', z.id, { cartera: { medicos, centroInicioId: medicos.some((m) => m.establecimientoId === z.cartera?.centroInicioId) ? z.cartera.centroInicioId : null, visitas: z.cartera?.visitas ?? { medicos: null, farmacias: null } }, actualizadoPor: actor.id });
+        await audit({ actorId: actor.id, action: quitar ? 'cartera_medicos_quitados' : 'cartera_medicos_agregados', entity: 'user', entityId: id, after: { medicos: cambiados.length, total: medicos.length } });
+      }
+    }
+    return { resultados };
   }
   /**
    * Quita lugares de la ruta de un representante (o los vuelve a poner). No toca el catálogo ni a otros
@@ -610,7 +649,7 @@ export function createTerritorio({ data, users, audit, now = () => new Date() })
 
   return {
     division: () => ({ provincias: PROVINCIAS, municipios: DIVISION, tipos: TIPOS_ESTABLECIMIENTO }),
-    provinciasDe, zonaActor, asignarZona, verZona, listarZonas, conflictosZona, mensajeConflicto, zonasOcupadas, lugaresDeZona, excluirLugares, verCartera, guardarCartera, descartarEstablecimientos, restaurarEstablecimiento,
+    provinciasDe, zonaActor, asignarZona, verZona, listarZonas, conflictosZona, mensajeConflicto, zonasOcupadas, lugaresDeZona, excluirLugares, verCartera, guardarCartera, carteraAgregar: (a, i) => carteraLote(a, i, false), carteraQuitar: (a, i) => carteraLote(a, i, true), descartarEstablecimientos, restaurarEstablecimiento,
     crearEstablecimiento, listarEstablecimientos, validarEstablecimiento,
     buscarPreregistro, confirmarPreregistro, listarPreregistros, anularPreregistro,
     importar, historialPrecio, cambiarPrecio,

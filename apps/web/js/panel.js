@@ -2795,29 +2795,30 @@ function formDocumentoMedicos(ests, mds) {
       return api('POST', '/api/medicos/documento/leer', { archivo: { nombre: file.name, tipo: file.type, base64: await archivoB64(file) } });
     });
     if (!r) return;
-    const filas = r.filas.map((x) => ({ ...x, incluir: true }));
+    const filas = r.filas.map((x) => ({ ...x, incluir: !x.existe && !x.repetidoEn }));
+    const nYa = filas.filter((x) => x.existe).length; const nRep = filas.filter((x) => !x.existe && x.repetidoEn).length;
     const opcionesEst = (x) => [...x.opciones, ...ests.filter((y) => !x.opciones.some((o) => o.id === y.id))];
     const guardar = h('button', { class: 'btn', type: 'button' });
     const contar = () => { const n = filas.filter((x) => x.incluir).length; guardar.textContent = `Guardar ${fmtN.format(n)} médico(s)`; guardar.disabled = !n; };
     const cuerpo = tabla([
-      { t: '', v: (x) => h('input', { type: 'checkbox', checked: true, 'aria-label': `Incluir ${x.nombre}`, onchange: (ev) => { x.incluir = ev.target.checked; contar(); } }) },
-      { t: 'Médico', v: (x) => [x.nombre, x.telefono ? h('small', { style: 'display:block;color:var(--texto-2)' }, telMed(x.telefono)) : null, x.existe ? h('small', { style: 'display:block;color:var(--celeste-texto)' }, 'Ya registrado: se completan datos') : null, ...x.avisos.map((t) => h('small', { style: 'display:block;color:var(--texto-2)' }, t))] },
+      { t: '', v: (x) => h('input', { type: 'checkbox', checked: x.incluir, disabled: !!(x.existe || x.repetidoEn), 'aria-label': `Incluir ${x.nombre}`, onchange: (ev) => { x.incluir = ev.target.checked; contar(); } }) },
+      { t: 'Médico', v: (x) => [x.nombre, x.telefono ? h('small', { style: 'display:block;color:var(--texto-2)' }, telMed(x.telefono)) : null, x.existe ? h('span', { class: 'chip pendiente', style: 'margin-top:.25rem' }, 'Ya registrado: no se carga') : x.repetidoEn ? h('span', { class: 'chip pendiente', style: 'margin-top:.25rem' }, `Repetido de la fila ${x.repetidoEn}`) : h('span', { class: 'chip ok', style: 'margin-top:.25rem' }, 'Nuevo'), ...x.avisos.map((t) => h('small', { style: 'display:block;color:var(--texto-2)' }, t))] },
       { t: 'Especialidad', v: (x) => { const s = h('select', { 'aria-label': `Especialidad de ${x.nombre}`, onchange: (ev) => { x.especialidad = ev.target.value; } }, h('option', { value: '' }, 'Por confirmar'), ...[...new Set([...(x.especialidad ? [x.especialidad] : []), ...mds.especialidades])].map((y) => h('option', { value: y, selected: y === x.especialidad }, y))); return s; } },
       { t: 'Establecimiento', v: (x) => h('select', { 'aria-label': `Establecimiento de ${x.nombre}`, onchange: (ev) => { const est = ests.find((y) => y.id === ev.target.value); x.establecimientoId = est?.id ?? null; if (est) { x.provincia = est.provincia; x.municipio = est.municipio; } } },
         h('option', { value: '' }, x.municipio ? `Sin establecimiento (${x.municipio})` : 'Sin establecimiento'), ...opcionesEst(x).slice(0, 400).map((y) => h('option', { value: y.id, selected: y.id === x.establecimientoId }, `${y.nombre} (${y.municipio})`))) },
       { t: 'Redes', v: (x) => redesCelda(x.redes) }], filas, ['', ''], { porPagina: 50 });
     guardar.addEventListener('click', async () => {
       const sel = filas.filter((x) => x.incluir);
-      if (!(await confirmar('Guardar médicos', `Se guardarán ${sel.length} médico(s). Los que ya existen solo se completan, no se duplican.`, { okTexto: 'Guardar' }))) return;
+      if (!(await confirmar('Guardar médicos', `Se cargarán ${sel.length} médico(s) nuevo(s). Los que ya están registrados no se cargan ni se cambian.`, { okTexto: 'Guardar' }))) return;
       guardar.disabled = true; guardar.textContent = 'Guardando…';
       try {
-        const ok = await api('POST', '/api/medicos/documento/confirmar', { filas: sel, fuente: r.fuente });
+        const ok = await api('POST', '/api/medicos/documento/confirmar', { filas: sel, fuente: r.fuente, soloNuevos: true });
         salida.replaceChildren(...[h('div', { class: 'aviso ok' }, `Listo: ${fmtN.format(ok.resumen.creado)} nuevo(s), ${fmtN.format(ok.resumen.completado)} completado(s), ${fmtN.format(ok.resumen.existente)} sin cambios${ok.resumen.error ? `, ${fmtN.format(ok.resumen.error)} con error` : ''}.`),
-          ok.errores.length ? h('ul', { class: 'hint' }, ok.errores.map((x) => h('li', {}, `${x.nombre}: ${x.error}`))) : null, h('a', { class: 'btn-sec', href: '#catalogo?ver=medicos' }, 'Ver la lista')].filter(Boolean));
+          ok.errores.length ? h('ul', { class: 'hint' }, ok.errores.map((x) => h('li', {}, `${x.nombre}: ${x.error}`))) : null, h('div', { class: 'acciones' }, h('a', { class: 'btn', href: '#representantes?ver=cartera' }, 'Asignar médicos a visitadores'), h('a', { class: 'btn-sec', href: '#catalogo?ver=medicos' }, 'Ver la lista'))].filter(Boolean));
       } catch (err) { guardar.disabled = false; contar(); salida.prepend(h('div', { class: 'aviso error' }, err.message)); }
     });
     contar();
-    salida.replaceChildren(...[h('p', { class: 'hint' }, `${fmtN.format(filas.length)} médico(s) leídos${r.fuente === 'ia' ? ' con inteligencia artificial: revisa bien cada fila' : ' de la plantilla'}.`), r.notas ? h('div', { class: 'aviso' }, `Nota de la lectura: ${r.notas}`) : null, cuerpo, h('div', { class: 'acciones' }, guardar)].filter(Boolean));
+    salida.replaceChildren(...[h('p', { class: 'hint' }, `${fmtN.format(filas.length)} médico(s) leídos${r.fuente === 'ia' ? ' con inteligencia artificial: revisa bien cada fila' : ' de la plantilla'}: ${fmtN.format(filas.length - nYa - nRep)} nuevo(s), ${fmtN.format(nYa)} ya registrado(s)${nRep ? `, ${fmtN.format(nRep)} repetido(s) en el archivo` : ''}. Solo se cargan los nuevos.`), r.notas ? h('div', { class: 'aviso' }, `Nota de la lectura: ${r.notas}`) : null, cuerpo, h('div', { class: 'acciones' }, guardar)].filter(Boolean));
   });
   return f;
 }
@@ -3307,10 +3308,11 @@ async function formClaveInicial() {
 }
 V.representantes = async () => {
   const ver = param('ver') || 'zonas';
-  const seg = segmentos('Representantes', [...(ES_GER() ? [['nuevo', 'Nuevo representante'], ['paquete', 'Importar desde Excel']] : []), ['zonas', 'Zonas por representante'], ['preregistro', 'Pre-registro por Excel'], ...(yo.role === 'administrador' ? [['clave', 'Contraseña inicial']] : [])], ver, (id) => irA('representantes', { ver: id }));
+  const seg = segmentos('Representantes', [...(ES_GER() ? [['nuevo', 'Nuevo representante'], ['paquete', 'Importar desde Excel']] : []), ['zonas', 'Zonas por representante'], ...(GESTION_T() ? [['cartera', 'Cartera de médicos']] : []), ['preregistro', 'Pre-registro por Excel'], ...(yo.role === 'administrador' ? [['clave', 'Contraseña inicial']] : [])], ver, (id) => irA('representantes', { ver: id }));
   if (ver === 'clave' && yo.role === 'administrador') return vista('Representantes', 'La contraseña con la que entra por primera vez cada representante nuevo o cuyo nombre cambió.', seg, await formClaveInicial());
   if (ver === 'nuevo' && ES_GER()) { borradorRep = {}; delete SESION_REP.nuevo; location.replace('#configurar?paso=datos'); return []; }
   if (ver === 'paquete' && ES_GER()) return vista('Representantes', 'Crea de una vez las cuentas de tu equipo desde el Excel del paquete de viáticos. Solo se toman nombre, posición y días en la zona y fuera de ella; el salario y los montos no se leen.', seg, importarPaquete());
+  if (ver === 'cartera' && GESTION_T()) return vista('Representantes', 'Elige médicos por establecimiento y especialidad y agrégalos de una vez a uno o varios visitadores o PVC. A cada uno solo se le agregan los médicos de centros de su ruta.', seg, ...(await carteraLote()));
   if (ver === 'preregistro') {
     const { items } = await api('GET', '/api/territorio/preregistros');
     const anular = async (p) => { if (await confirmar('Anular pre-registro', `${p.nombre} ya no quedará aprobado automáticamente al registrarse.`, { okTexto: 'Anular' })) { try { await api('POST', `/api/territorio/preregistros/${p.id}/anular`); } catch (e) { alert(e.message); } router(); } };
@@ -3988,6 +3990,70 @@ async function pasoMedicosRep({ rep, r, ir, ses }) {
   }
   pintar();
   return [cont, nav.nodo];
+}
+let ultimoLoteCartera = null; let repsCartera = []; // se conservan al volver a pintar
+/** Asignar médicos (de los cargados) a varios visitadores/PVC a la vez, con filtros y deshacer. */
+async function carteraLote() {
+  const [mds, ests, reps, zonas] = await Promise.all([api('GET', '/api/catalogo/medicos').then((x) => x.items), api('GET', '/api/territorio/establecimientos').then((x) => x.items).catch(() => []),
+    api('GET', '/api/viaticos/representantes').then((x) => x.items), api('GET', '/api/territorio/zonas').then((x) => x.items).catch(() => [])]);
+  const repsM = reps.filter((r) => ['Visitador', 'PVC'].includes(r.position)).sort((a, b) => a.fullName.localeCompare(b.fullName, 'es'));
+  const nombreRep = new Map(reps.map((r) => [r.id, r.fullName]));
+  const asignados = new Map(); for (const z of zonas) for (const k of z.cartera ?? []) asignados.set(k, [...(asignados.get(k) ?? []), z.representanteId]);
+  const porEst = new Map(ests.map((x) => [x.id, x]));
+  const filas = []; let sinCentro = 0;
+  for (const m of mds) {
+    if (m.estado === 'inactivo') continue;
+    const cs = [...new Set([m.establecimientoId, ...(m.lugares ?? []).map((l) => l.establecimientoId)].filter((id) => id && porEst.has(id)))];
+    if (!cs.length) { sinCentro++; continue; }
+    for (const cid of cs) { const c = porEst.get(cid); const id = `${m.id}|${cid}`; filas.push({ id, medicoId: m.id, establecimientoId: cid, nombre: m.nombre, especialidad: m.especialidad ?? 'Por confirmar', centro: c.nombre, municipio: c.municipio, provincia: c.provincia, reps: asignados.get(id) ?? [] }); }
+  }
+  filas.sort((a, b) => a.centro.localeCompare(b.centro, 'es') || a.nombre.localeCompare(b.nombre, 'es'));
+  const msReps = multiSel({ id: 'cart-reps', etiqueta: 'Agregar a', opciones: repsM.map((r) => ({ value: r.id, label: `${r.fullName} (${r.position})` })), valores: repsCartera, todas: 'Elige visitadores o PVC', plural: 'representantes', conAplicar: false, alCambiar: (v) => { repsCartera = v; } });
+  let elegidos = repsCartera;
+  const salida = h('div', { 'aria-live': 'polite' });
+  const uni = (xs) => [...new Set(xs)].sort((a, b) => a.localeCompare(b, 'es'));
+  const pintarResultado = (r, deshacer) => salida.replaceChildren(h('div', { class: 'tarjeta' }, h('h2', {}, deshacer ? 'Médicos agregados' : 'Se deshizo'),
+    tabla([{ t: 'Representante', v: (x) => x.nombre ?? nombreRep.get(x.representanteId) ?? '' },
+      { t: 'Resultado', v: (x) => x.error ?? (x.agregados ? `${fmtN.format(x.agregados.length)} agregado(s)${x.yaTenia ? `, ${fmtN.format(x.yaTenia)} ya los tenía` : ''}${x.fueraDeRuta ? `, ${fmtN.format(x.fueraDeRuta)} fuera de su ruta (no se agregan)` : ''}` : `${fmtN.format(x.quitados?.length ?? 0)} quitado(s)`) },
+      { t: '', v: (x) => (x.representanteId && !x.error ? h('a', { class: 'btn-sec btn-peq', href: `#configurar?rep=${x.representanteId}&paso=medicos` }, 'Ver su cartera') : '') }], r.resultados, ['', '']),
+    deshacer ? h('div', { class: 'acciones' }, h('button', { class: 'btn-sec', type: 'button', onclick: deshacer }, 'Deshacer')) : null));
+  const agregar = async (ids) => {
+    elegidos = repsCartera;
+    if (!elegidos.length) { alert('Elige primero a qué visitadores o PVC se los agregas (arriba, en "Agregar a").'); return; }
+    const medicos = filas.filter((x) => ids.includes(x.id)).map(({ medicoId, establecimientoId }) => ({ medicoId, establecimientoId }));
+    try {
+      const r = await api('POST', '/api/territorio/cartera/agregar', { representanteIds: elegidos, medicos });
+      const n = r.resultados.reduce((t, x) => t + (x.agregados?.length ?? 0), 0);
+      aviso(`${fmtN.format(n)} asignación(es) nueva(s).`, 'ok');
+      // Se vuelve a pintar la sección (para ver "En la cartera de" al día) conservando el resultado y su Deshacer.
+      ultimoLoteCartera = { r, deshacer: async () => {
+        const res = [];
+        for (const x of r.resultados.filter((y) => y.agregados?.length)) res.push(...(await api('POST', '/api/territorio/cartera/quitar', { representanteIds: [x.representanteId], medicos: x.agregados })).resultados);
+        ultimoLoteCartera = { r: { resultados: res }, deshacer: null }; aviso('Se deshizo la asignación.', 'ok'); router();
+      } };
+      router();
+    } catch (e) { alert(e.fields ? Object.values(e.fields).join(' ') : e.message); }
+  };
+  if (ultimoLoteCartera) { const u = ultimoLoteCartera; ultimoLoteCartera = null; pintarResultado(u.r, u.deshacer); setTimeout(() => salida.scrollIntoView({ block: 'start' }), 0); }
+  const lista = filas.length ? listaMarcable({ clave: 'cartera-lote', filas, verbo: 'Agregar', accion: agregar, porPagina: 25,
+    campos: [{ id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Nombre del médico', valor: (x) => x.nombre },
+      { id: 'prov', etiqueta: 'Provincias', tipo: 'opciones', plural: 'provincias', opciones: uni(filas.map((x) => x.provincia)), valor: (x) => x.provincia },
+      { id: 'mun', etiqueta: 'Municipios', tipo: 'opciones', plural: 'municipios', opciones: uni(filas.map((x) => x.municipio)), valor: (x) => x.municipio },
+      { id: 'centro', etiqueta: 'Establecimientos', tipo: 'opciones', plural: 'establecimientos', opciones: uni(filas.map((x) => x.centro)), valor: (x) => x.centro },
+      { id: 'esp', etiqueta: 'Especialidades', tipo: 'opciones', plural: 'especialidades', opciones: uni(filas.map((x) => x.especialidad)), valor: (x) => x.especialidad },
+      { id: 'asig', etiqueta: 'Asignación', tipo: 'opciones', opciones: [{ value: 'no', label: 'Sin visitador' }, { value: 'si', label: 'Con visitador' }], valor: (x) => (x.reps.length ? 'si' : 'no') }],
+    cols: [{ t: 'Médico', v: (x) => x.nombre }, { t: 'Especialidad', v: (x) => x.especialidad }, { t: 'Establecimiento', v: (x) => [x.centro, h('small', { style: 'display:block;color:var(--texto-2)' }, `${x.municipio}, ${x.provincia}`)] },
+      { t: 'En la cartera de', v: (x) => (x.reps.length ? x.reps.map((id) => nombreRep.get(id) ?? '').filter(Boolean).join(', ') : h('span', { class: 'chip pendiente' }, 'Nadie')) }] })
+    : h('div', { class: 'tarjeta vacio' }, h('strong', {}, 'Aún no hay médicos con establecimiento'), 'Cárgalos en Catálogo → Médicos → Cargar documento.');
+  return [
+    h('div', { class: 'tarjeta' }, h('h2', {}, '1. Carga médicos y farmacias'),
+      h('p', { class: 'hint' }, 'Sube la plantilla de médicos (Nombre, Especialidad, Establecimiento, Provincia, Municipio) o la de farmacias. Solo se cargan los que no están registrados; los repetidos se descartan.'),
+      h('div', { class: 'acciones', style: 'margin-top:.25rem' }, h('a', { class: 'btn-sec', href: '#catalogo?ver=medicos&sec=documento' }, 'Cargar médicos'), h('a', { class: 'btn-sec', href: '#catalogo?ver=farmacias&sec=importar' }, 'Cargar farmacias'))),
+    h('div', { class: 'tarjeta' }, h('h2', {}, '2. Elige a quién se los agregas'), h('div', { class: 'form-fila' }, msReps),
+      h('p', { class: 'hint' }, `${fmtN.format(repsM.length)} visitador(es) y PVC. Los vendedores visitan farmacias: sus farmacias salen solas de su zona.`)),
+    h('div', { class: 'tarjeta' }, h('h2', {}, `3. Busca y marca los médicos (${fmtN.format(filas.length)})`),
+      sinCentro ? h('p', { class: 'hint' }, `${fmtN.format(sinCentro)} médico(s) sin establecimiento no aparecen: ponles su centro en Catálogo → Médicos.`) : null, lista),
+    salida];
 }
 /** Visitas por día de cada posición: el número con que la propuesta automática reparte los lugares. */
 async function formVisitasPorDia() {
