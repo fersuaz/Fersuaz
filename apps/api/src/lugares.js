@@ -5,7 +5,7 @@ const CONSULTA = {
   farmacia: 'farmacias', clinica: 'clínicas', hospital: 'hospitales', unap: 'UNAP unidad de atención primaria',
   cpn: 'centro de primer nivel de atención', diagnostico: 'centro diagnóstico', consultorio: 'consultorio médico', hotel: 'hoteles', medico: 'médicos especialistas consultorio',
 };
-const CAMPOS = 'places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.businessStatus,places.rating,places.websiteUri';
+const CAMPOS = 'places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.businessStatus,places.rating,places.websiteUri,places.addressComponents';
 
 export class SinLugares { activo = false; async buscar() { return []; } async pagina() { return { items: [], siguiente: null }; } async detalle() { return null; } async ubicacion() { return null; } async coordsDe() { return null; } }
 
@@ -29,6 +29,8 @@ export class GooglePlaces {
       placeId: p.id, nombre: p.displayName?.text ?? '', direccion: p.formattedAddress ?? '',
       lat: p.location?.latitude ?? null, lng: p.location?.longitude ?? null, telefono: p.nationalPhoneNumber ?? null, calificacion: p.rating ?? null, web: p.websiteUri ?? null,
       cerrado: p.businessStatus === 'CLOSED_PERMANENTLY',
+      // Provincia y municipio según Google (la búsqueda por texto a veces trae lugares de otro municipio).
+      zona: p.addressComponents ? zonaDeComponentes(p.addressComponents) : null,
     };
   }
   /** Busca un tipo de establecimiento dentro de un municipio (primera página). */

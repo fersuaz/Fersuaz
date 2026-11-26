@@ -108,7 +108,8 @@ test('Google: un hotel ya registrado en otro municipio sale como registrado y no
   const store = new MemoryStore(); const data = new MemoryData();
   const lugares = { activo: true,
     buscar: async () => [{ placeId: 'g-marien', nombre: 'Hotel Marien (Ejemplo)', direccion: 'Sabaneta', telefono: '809-555-0100' }],
-    detalle: async () => ({ placeId: 'g-marien', nombre: 'Hotel Marien (Ejemplo)', direccion: 'Sabaneta', telefono: '809-555-0100', lat: 19.47, lng: -71.34 }) };
+    detalle: async (id) => (id === 'g-nuevo' ? { placeId: 'g-nuevo', nombre: 'Hotel Nuevo (Ejemplo)', direccion: 'Sabaneta', lat: 19.47, lng: -71.34, zona: { provincia: 'Provincia de Santiago Rodríguez', municipio: 'Sabaneta' } }
+      : { placeId: 'g-marien', nombre: 'Hotel Marien (Ejemplo)', direccion: 'Sabaneta', telefono: '809-555-0100', lat: 19.47, lng: -71.34 }) };
   const server = createServer(createApp({ store, data, files: new MemoryFiles(), sessionSecret: SECRET, lugares })).listen(0);
   const url = `http://127.0.0.1:${server.address().port}`;
   const call = async (m, p, b, tk) => { const r = await fetch(url + p, { method: m, headers: { 'content-type': 'application/json', ...(tk && { authorization: `Bearer ${tk}` }) }, body: b && JSON.stringify(b) }); return { status: r.status, body: await r.json() }; };
@@ -120,9 +121,16 @@ test('Google: un hotel ya registrado en otro municipio sale como registrado y no
     assert.equal(b.status, 200); assert.equal(b.body.items[0].registrado, true); assert.equal(b.body.items[0].registradoEn, 'Villa Los Almácigos, Santiago Rodríguez');
     const a = await call('POST', '/api/territorio/google/agregar', { tipo: 'hotel', provincia: 'Santiago Rodríguez', municipio: 'San Ignacio de Sabaneta', placeId: 'g-marien' }, tk);
     assert.equal(a.status, 409); assert.match(a.body.error, /ya está registrado en Villa Los Almácigos/);
+    // Google dice el municipio real: se registra ahí aunque se haya buscado en otro
+    const nu = await call('POST', '/api/territorio/google/agregar', { tipo: 'hotel', provincia: 'Dajabón', municipio: 'Restauración', placeId: 'g-nuevo' }, tk);
+    assert.equal(nu.status, 201, JSON.stringify(nu.body)); assert.deepEqual([nu.body.item.provincia, nu.body.item.municipio], ['Santiago Rodríguez', 'San Ignacio de Sabaneta']);
     // Todos los municipios de la provincia: una búsqueda por municipio, sin repetir el mismo lugar
     const t = await call('GET', `/api/territorio/google/buscar?${new URLSearchParams({ tipo: 'hotel', provincia: 'Santiago Rodríguez', municipio: 'todos' })}`, null, tk);
     assert.equal(t.status, 200); assert.equal(t.body.items.length, 1); assert.equal(t.body.items[0].municipio, 'Monción', 'queda con el primer municipio donde salió');
-    assert.equal(t.body.items[0].registrado, true);
+    assert.equal(t.body.items[0].registrado, true); assert.ok(t.body.items[0].registradoId);
+    // Corregir el municipio del hotel registrado en el lugar equivocado
+    const mv = await call('POST', `/api/hoteles/${t.body.items[0].registradoId}`, { provincia: 'Santiago Rodríguez', municipio: 'San Ignacio de Sabaneta' }, tk);
+    assert.equal(mv.status, 200); assert.equal(mv.body.item.municipio, 'San Ignacio de Sabaneta');
+    assert.equal((await call('POST', `/api/hoteles/${t.body.items[0].registradoId}`, { provincia: 'Santiago Rodríguez', municipio: 'Tamboril' }, tk)).status, 422);
   } finally { server.close(); }
 });

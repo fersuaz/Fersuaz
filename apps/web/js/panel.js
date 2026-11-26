@@ -2545,7 +2545,12 @@ async function buscadorGoogle(tipos, alAgregar, { provincias = null, municipios 
       { t: 'Nombre', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, x.direccion)] },
       ...(q.municipio === 'todos' ? [{ t: 'Municipio', v: (x) => x.municipio }] : []),
       { t: 'Teléfono', v: (x) => x.telefono ?? '' },
-      { t: '', v: (x) => x.registrado ? h('span', { class: 'chip validado', title: x.registradoEn ? `Registrado en ${x.registradoEn}` : null }, x.registradoEn ? `Ya registrado en ${x.registradoEn.split(',')[0]}` : 'Ya registrado') : h('button', { class: 'btn btn-peq', type: 'button', onclick: async (ev) => {
+      { t: '', v: (x) => x.registrado ? h('div', { class: 'acciones-fila' }, h('span', { class: 'chip validado', title: x.registradoEn ? `Registrado en ${x.registradoEn}` : null }, x.registradoEn ? `Ya registrado en ${x.registradoEn.split(',')[0]}` : 'Ya registrado'),
+        x.registradoEn && x.registradoId && q.tipo === 'hotel' ? h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: async (ev) => {
+          ev.target.disabled = true;
+          try { await api('POST', `/api/hoteles/${x.registradoId}`, { provincia: x.provincia ?? q.provincia, municipio: x.municipio ?? q.municipio }); ev.target.closest('.acciones-fila').replaceChildren(h('span', { class: 'chip validado' }, `Pasado a ${x.municipio ?? q.municipio}`)); alAgregar?.(); }
+          catch (err) { ev.target.disabled = false; alert(err.fields ? Object.values(err.fields).join(' ') : err.message); }
+        } }, `Pasar a ${x.municipio ?? q.municipio}`) : null) : h('button', { class: 'btn btn-peq', type: 'button', onclick: async (ev) => {
         ev.target.disabled = true;
         try { await api('POST', '/api/territorio/google/agregar', { ...q, municipio: x.municipio ?? q.municipio, placeId: x.placeId }); ev.target.replaceWith(h('span', { class: 'chip validado' }, 'Agregado')); alAgregar?.(); }
         catch (err) { if (err.status === 409) ev.target.replaceWith(h('span', { class: 'chip validado', title: err.message }, 'Ya registrado')); else { ev.target.disabled = false; alert(err.message); } }
@@ -2924,13 +2929,14 @@ V.hoteles = async () => {
     const notas = h('textarea', { id: 'h-notas', rows: 2 }, x.notas ?? '');
     const inactivo = h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'h-inactivo', checked: x.estado === 'inactivo' }), h('span', {}, 'No usar este hotel'));
     const des = camposDesayuno(x); const fis = camposFiscal(x, precio);
-    $('#dialogo-cuerpo').replaceChildren(h('p', { class: 'hint' }, `${x.municipio}, ${x.provincia}${x.telefono ? `. Teléfono ${x.telefono}` : ''}. Confirma el precio y marca solo lo que hayas verificado por llamada o visita.`),
+    const zh = selectorZona(div.provincias, div.municipios, { provincia: x.provincia, municipio: x.municipio, prefijo: 'hz' });
+    $('#dialogo-cuerpo').replaceChildren(h('div', { class: 'form-fila' }, zh.fp, zh.fm),h('p', { class: 'hint' }, `${x.municipio}, ${x.provincia}${x.telefono ? `. Teléfono ${x.telefono}` : ''}. Confirma el precio y marca solo lo que hayas verificado por llamada o visita.`),
       h('label', { for: 'h-precio', class: 'hint' }, 'Precio por noche RD$'), precio, fis.nodo, des.nodo, h('div', { class: 'dialogo-checks' }, cajas), h('label', { for: 'h-notas', class: 'hint' }, 'Notas'), notas, inactivo);
     $('#dialogo-ok').textContent = 'Guardar'; d.showModal();
     const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
     if (!ok) return;
     const requisitos = Object.fromEntries(reqs.map((r) => [r.value, d.querySelector(`input[name="req-${r.value}"]`).checked]));
-    try { await api('POST', `/api/hoteles/${x.id}`, { precioNoche: precio.value || null, requisitos, notas: notas.value, ...des.leer(), ...fis.leer(), estado: d.querySelector('input[name=h-inactivo]').checked ? 'inactivo' : 'activo' }); } catch (e) { alert(e.message); }
+    try { await api('POST', `/api/hoteles/${x.id}`, { precioNoche: precio.value || null, requisitos, notas: notas.value, ...des.leer(), ...fis.leer(), ...(zh.sm.value && (zh.sp.value !== x.provincia || zh.sm.value !== x.municipio) ? { provincia: zh.sp.value, municipio: zh.sm.value } : {}), estado: d.querySelector('input[name=h-inactivo]').checked ? 'inactivo' : 'activo' }); } catch (e) { alert(e.message); }
     router();
   };
   const bloques = [];
