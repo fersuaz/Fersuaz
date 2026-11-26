@@ -23,6 +23,17 @@ const r2 = (n) => Math.round(n * 100) / 100;
 export function requisitosFaltantes(h) { return CLAVES.filter((k) => h?.requisitos?.[k] !== true); }
 export const cumpleTodo = (h) => requisitosFaltantes(h).length === 0;
 
+/** ITBIS de la DGII. */
+export const ITBIS = 0.18;
+/**
+ * Precio por noche que se usa en los viáticos: si el hotel emite comprobante fiscal y su precio NO incluye el
+ * ITBIS, se le suma el 18%. Si no emite comprobante, o el precio ya lo incluye, es el precio tal cual. null sin precio.
+ */
+export function precioFinal(h) {
+  const p = Number(h?.precioNoche);
+  if (!(p > 0)) return null;
+  return h.comprobanteFiscal === true && h.precioIncluyeItbis === false ? Math.round(p * (1 + ITBIS) * 100) / 100 : Math.round(p * 100) / 100;
+}
 /**
  * Elige el hotel recomendado: activo, con precio confirmado y que cumple todos los requisitos.
  * Prefiere el mismo municipio; si no hay, la misma provincia. Entre esos, el más económico;
@@ -30,7 +41,7 @@ export const cumpleTodo = (h) => requisitosFaltantes(h).length === 0;
  */
 export function elegirHotel(hoteles, provincia, municipio) {
   const aptos = hoteles.filter((h) => h.estado !== 'inactivo' && h.provincia === provincia && Number(h.precioNoche) > 0 && cumpleTodo(h));
-  const orden = (a, b) => Number(a.precioNoche) - Number(b.precioNoche) || (Number(b.calificacion) || 0) - (Number(a.calificacion) || 0) || a.nombre.localeCompare(b.nombre, 'es');
+  const orden = (a, b) => precioFinal(a) - precioFinal(b) || (Number(b.calificacion) || 0) - (Number(a.calificacion) || 0) || a.nombre.localeCompare(b.nombre, 'es');
   const mismo = aptos.filter((h) => h.municipio === municipio).sort(orden);
   if (municipio && mismo.length) return { hotel: mismo[0], alcance: 'municipio' };
   const prov = aptos.sort(orden);
@@ -42,7 +53,7 @@ export function createHoteles({ data, audit, now = () => new Date() }) {
   const gestion = (a) => activo(a) && ['administrador', 'gerencia'].includes(a.role);
   const permitir = (ok, msg = 'No tienes permiso para esta acción.') => { if (!ok) throw new HttpError(403, msg); };
   const invalido = (fields) => { throw new HttpError(422, 'Revisa los campos marcados.', fields); };
-  const vista = (h) => ({ ...h, faltan: requisitosFaltantes(h), cumple: cumpleTodo(h) });
+  const vista = (h) => { const pf = precioFinal(h); return { ...h, faltan: requisitosFaltantes(h), cumple: cumpleTodo(h), precioFinal: pf, itbis: pf != null && h.precioNoche ? Math.round((pf - Number(h.precioNoche)) * 100) / 100 : 0 }; };
 
   async function crear(actor, input, { fuente = 'manual' } = {}) {
     permitir(gestion(actor), 'Solo la administración o la gerencia registran hoteles.');
@@ -100,6 +111,13 @@ export function createHoteles({ data, audit, now = () => new Date() }) {
       const t = normalizeName(input.telefono);
       if (t && !/^[\d\s()+-]{7,20}$/.test(t)) e.telefono = 'Escribe un teléfono válido o déjalo vacío.'; else cambios.telefono = t || null;
     }
+    if (input.comprobanteFiscal !== undefined) {
+      const si = input.comprobanteFiscal === true || input.comprobanteFiscal === 'true';
+      cambios.comprobanteFiscal = si;
+      if (!si) cambios.precioIncluyeItbis = null;
+      else if (input.precioIncluyeItbis === undefined || input.precioIncluyeItbis === null || input.precioIncluyeItbis === '') e.precioIncluyeItbis = 'Indica si el precio ya incluye el ITBIS.';
+      else cambios.precioIncluyeItbis = input.precioIncluyeItbis === true || input.precioIncluyeItbis === 'true';
+    }
     if (input.desayunoIncluido !== undefined) {
       const si = input.desayunoIncluido === true || input.desayunoIncluido === 'true';
       cambios.desayunoIncluido = si;
@@ -117,7 +135,7 @@ export function createHoteles({ data, audit, now = () => new Date() }) {
     if (!Object.keys(cambios).length) return vista(h);
     const out = await data.update('hoteles', id, { ...cambios, verificadoPor: actor.id, verificadoEn: now().toISOString() });
     await audit({ actorId: actor.id, action: 'hotel_verificado', entity: 'hotel', entityId: id,
-      before: { precioNoche: h.precioNoche ?? null, requisitos: h.requisitos ?? {}, estado: h.estado, ...('desayunoIncluido' in cambios ? { desayunoIncluido: h.desayunoIncluido ?? false, valorDesayuno: h.valorDesayuno ?? null } : {}), ...(cambios.nombre ? { nombre: h.nombre } : {}), ...('telefono' in cambios ? { telefono: h.telefono ?? null } : {}) }, after: cambios });
+      before: { precioNoche: h.precioNoche ?? null, requisitos: h.requisitos ?? {}, estado: h.estado, ...('desayunoIncluido' in cambios ? { desayunoIncluido: h.desayunoIncluido ?? false, valorDesayuno: h.valorDesayuno ?? null } : {}), ...('comprobanteFiscal' in cambios ? { comprobanteFiscal: h.comprobanteFiscal ?? false, precioIncluyeItbis: h.precioIncluyeItbis ?? null } : {}), ...(cambios.nombre ? { nombre: h.nombre } : {}), ...('telefono' in cambios ? { telefono: h.telefono ?? null } : {}) }, after: cambios });
     return vista(out);
   }
 

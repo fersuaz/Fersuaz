@@ -25,7 +25,7 @@ export const COLECCIONES = {
   zonas: { tabla: 'zonas_representante', campos: ['representanteId', 'provincias', 'municipios', 'excluidos', 'cartera', 'actualizadoPor'], json: ['provincias', 'municipios', 'excluidos', 'cartera'] },
   vehiculosAgregados: { tabla: 'vehiculos_agregados', campos: ['anio', 'marca', 'modelo', 'version', 'kmPorGalon', 'combustible', 'creadoPor'], json: [] },
   cuentasBanco: { tabla: 'cuentas_banco', campos: ['usuarioId', 'banco', 'tipo', 'numero', 'titular', 'correo', 'actualizadoPor'], json: [] },
-  hoteles: { tabla: 'hoteles', campos: ['nombre', 'provincia', 'municipio', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'calificacion', 'fuente', 'precioNoche', 'requisitos', 'notas', 'verificadoPor', 'verificadoEn', 'estado', 'creadoPor', 'desayunoIncluido', 'valorDesayuno'], json: ['requisitos'] },
+  hoteles: { tabla: 'hoteles', campos: ['nombre', 'provincia', 'municipio', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'calificacion', 'fuente', 'precioNoche', 'requisitos', 'notas', 'verificadoPor', 'verificadoEn', 'estado', 'creadoPor', 'desayunoIncluido', 'valorDesayuno', 'comprobanteFiscal', 'precioIncluyeItbis'], json: ['requisitos'] },
   preregistros: { tabla: 'preregistros', campos: ['email', 'nombre', 'telefono', 'posicion', 'provincias', 'estado', 'usuarioId', 'creadoPor'], json: ['provincias'] },
   preciosMedicamento: { tabla: 'precios_medicamento', campos: ['medicamentoId', 'precio', 'vigenteDesde', 'fuente', 'registradoPor'], json: [] },
   cronogramas: { tabla: 'cronogramas', campos: ['representanteId', 'fecha', 'lugares', 'nota', 'estado', 'motivo', 'creadoPor', 'kmEstimado', 'minutosEstimados', 'kmOrigen', 'duermeFuera', 'hotelId'], json: ['lugares'] },

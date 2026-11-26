@@ -2923,14 +2923,14 @@ V.hoteles = async () => {
     const cajas = reqs.map((r) => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: `req-${r.value}`, checked: x.requisitos?.[r.value] === true }), h('span', {}, r.label)));
     const notas = h('textarea', { id: 'h-notas', rows: 2 }, x.notas ?? '');
     const inactivo = h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'h-inactivo', checked: x.estado === 'inactivo' }), h('span', {}, 'No usar este hotel'));
-    const des = camposDesayuno(x);
+    const des = camposDesayuno(x); const fis = camposFiscal(x, precio);
     $('#dialogo-cuerpo').replaceChildren(h('p', { class: 'hint' }, `${x.municipio}, ${x.provincia}${x.telefono ? `. Teléfono ${x.telefono}` : ''}. Confirma el precio y marca solo lo que hayas verificado por llamada o visita.`),
-      h('label', { for: 'h-precio', class: 'hint' }, 'Precio por noche RD$'), precio, des.nodo, h('div', { class: 'dialogo-checks' }, cajas), h('label', { for: 'h-notas', class: 'hint' }, 'Notas'), notas, inactivo);
+      h('label', { for: 'h-precio', class: 'hint' }, 'Precio por noche RD$'), precio, fis.nodo, des.nodo, h('div', { class: 'dialogo-checks' }, cajas), h('label', { for: 'h-notas', class: 'hint' }, 'Notas'), notas, inactivo);
     $('#dialogo-ok').textContent = 'Guardar'; d.showModal();
     const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
     if (!ok) return;
     const requisitos = Object.fromEntries(reqs.map((r) => [r.value, d.querySelector(`input[name="req-${r.value}"]`).checked]));
-    try { await api('POST', `/api/hoteles/${x.id}`, { precioNoche: precio.value || null, requisitos, notas: notas.value, ...des.leer(), estado: d.querySelector('input[name=h-inactivo]').checked ? 'inactivo' : 'activo' }); } catch (e) { alert(e.message); }
+    try { await api('POST', `/api/hoteles/${x.id}`, { precioNoche: precio.value || null, requisitos, notas: notas.value, ...des.leer(), ...fis.leer(), estado: d.querySelector('input[name=h-inactivo]').checked ? 'inactivo' : 'activo' }); } catch (e) { alert(e.message); }
     router();
   };
   const bloques = [];
@@ -2941,7 +2941,7 @@ V.hoteles = async () => {
       { t: 'Hotel', v: (x) => [x.nombre, h('small', { style: 'display:block;color:var(--texto-2)' }, [x.direccion, x.telefono].filter(Boolean).join('. '))] },
       { t: 'Zona', v: (x) => `${x.municipio}, ${x.provincia}` },
       { t: 'Calificación', num: true, v: (x) => x.calificacion != null ? `${fmtN.format(x.calificacion)} de 5` : '' },
-      { t: 'Por noche', num: true, v: (x) => [x.precioNoche ? RD(x.precioNoche) : 'Sin confirmar', x.desayunoIncluido ? h('small', { style: 'display:block;color:var(--celeste-texto)' }, x.valorDesayuno ? `Con desayuno (${RD(x.valorDesayuno)})` : 'Con desayuno') : null] },
+      { t: 'Por noche', num: true, v: (x) => [x.precioNoche ? RD(x.precioFinal ?? x.precioNoche) : 'Sin confirmar', x.itbis ? h('small', { style: 'display:block;color:var(--texto-2)' }, `${RD(x.precioNoche)} + ITBIS`) : x.comprobanteFiscal ? h('small', { style: 'display:block;color:var(--texto-2)' }, 'Con comprobante, ITBIS incluido') : null, x.desayunoIncluido ? h('small', { style: 'display:block;color:var(--celeste-texto)' }, x.valorDesayuno ? `Con desayuno (${RD(x.valorDesayuno)})` : 'Con desayuno') : null] },
       { t: 'Requisitos', v: (x) => x.estado === 'inactivo' ? h('span', { class: 'chip anulado' }, 'No usar') : x.cumple ? h('span', { class: 'chip validado' }, 'Cumple todo') : h('span', { class: 'chip pendiente', title: x.faltan.map((k) => reqs.find((r) => r.value === k)?.label).join(', ') }, `Faltan ${x.faltan.length}`) },
       { t: '', v: (x) => ES_GER() ? h('button', { class: 'btn-sec btn-peq', onclick: () => editar(x) }, x.precioNoche ? 'Editar' : 'Confirmar') : '' },
     ], items, ['No hay hoteles con estos filtros', ES_GER() ? 'Tráelos de Google Maps en "Registro automático".' : 'La administración los registra y verifica.'], { exportar: { nombre: 'hoteles-fersuaz', titulo: 'Hoteles' } })));
@@ -3742,7 +3742,7 @@ async function pasoRep(paso, ctx) {
           try { await api('POST', `/api/hoteles/${x.id}`, { precioNoche: i.value || null }); x.precioNoche = i.value ? Number(i.value) : null; ok.textContent = 'Guardado'; setTimeout(() => { ok.textContent = ''; }, 2500); }
           catch (e) { ok.textContent = ''; alert(e.message); i.value = x.precioNoche ?? ''; }
         });
-        return h('div', { class: 'precio-caja' }, h('span', { 'aria-hidden': 'true' }, 'RD$'), i, ok, x.desayunoIncluido ? h('small', { class: 'precio-desayuno' }, x.valorDesayuno ? `Con desayuno (${RD(x.valorDesayuno)})` : 'Con desayuno') : null);
+        return h('div', { class: 'precio-caja' }, h('span', { 'aria-hidden': 'true' }, 'RD$'), i, ok, x.itbis ? h('small', { class: 'precio-desayuno' }, `+ ITBIS: ${RD(x.precioFinal)} por noche`) : null, x.desayunoIncluido ? h('small', { class: 'precio-desayuno' }, x.valorDesayuno ? `Con desayuno (${RD(x.valorDesayuno)})` : 'Con desayuno') : null);
       };
       const estadoReq = (x) => x.cumple ? h('span', { class: 'chip validado' }, 'Cumple todo') : h('span', { class: 'chip pendiente', title: (x.faltan ?? []).map((k) => reqs.find((q) => q.value === k)?.label ?? k).join(', ') }, `Faltan ${fmtN.format(x.faltan?.length ?? reqs.length)} requisito(s)`);
       const cols = [
@@ -3773,7 +3773,7 @@ async function pasoRep(paso, ctx) {
         deshacer ? h('div', { class: 'asis-deshacer', role: 'status' }, h('span', {}, deshacer.texto), h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => lote(deshacer.ids, deshacer.estado, null) }, 'Deshacer')) : null,
         h('div', { class: 'tarjeta' }, h('h2', {}, `Hoteles de su zona (${fmtN.format(hs.length)})`),
           h('p', { class: 'hint' }, 'Cuando un día del cronograma está marcado "duerme fuera", la noche entra al presupuesto con el hotel recomendado de esa provincia: el más económico con precio confirmado que cumple todos los requisitos. Si ninguno cumple, se usa el precio de referencia.'),
-          h('dl', { class: 'rejilla' }, provs.map((p, i) => h('div', { class: 'cifra' }, h('dt', {}, `Recomendado en ${p}`), h('dd', {}, recs[i]?.hotel ? `${recs[i].hotel.nombre}, ${RD(recs[i].hotel.precioNoche)}` : 'Sin hotel confirmado')))),
+          h('dl', { class: 'rejilla' }, provs.map((p, i) => h('div', { class: 'cifra' }, h('dt', {}, `Recomendado en ${p}`), h('dd', {}, recs[i]?.hotel ? `${recs[i].hotel.nombre}, ${RD(recs[i].hotel.precioFinal ?? recs[i].hotel.precioNoche)}` : 'Sin hotel confirmado')))),
           recs.some((x) => !x) && puedeEditar ? h('p', { class: 'hint' }, 'Para tener recomendado, escribe el precio y marca los requisitos con "Editar".') : null, lista),
         quitados].filter(Boolean));
     }
@@ -4100,7 +4100,7 @@ async function nochesFuera(dias, recargar) {
     const prov = c.lugares.at(-1)?.provincia; const mun = c.lugares.at(-1)?.municipio;
     const xs = hoteles.filter((x) => x.provincia === prov).sort((a, b) => (a.municipio === mun ? 0 : 1) - (b.municipio === mun ? 0 : 1) || Number(a.precioNoche) - Number(b.precioNoche));
     const s0 = h('select', { 'aria-label': `Hotel de la noche del ${fecha(c.fecha)}`, 'data-sin-buscador': '1', class: 'noche-hotel' }, h('option', { value: '' }, 'Recomendado (automático)'),
-      ...xs.map((x) => h('option', { value: x.id, selected: c.hotelId === x.id }, `${x.nombre}, ${x.municipio}: ${RD(x.precioNoche)}${x.desayunoIncluido ? ', con desayuno' : ''}`)));
+      ...xs.map((x) => h('option', { value: x.id, selected: c.hotelId === x.id }, `${x.nombre}, ${x.municipio}: ${RD(x.precioFinal ?? x.precioNoche)}${x.itbis ? ' con ITBIS' : ''}${x.desayunoIncluido ? ', con desayuno' : ''}`)));
     s0.addEventListener('change', () => poner([c.id], true, s0.value || null));
     return s0;
   };
@@ -4140,6 +4140,25 @@ function camposComida(base) {
     return des ? { comidaDesglose: Object.fromEntries(k3.map(([k]) => [k, v(k)])), tarifaAlimentacion: '' } : { comidaDesglose: null, tarifaAlimentacion: caja.querySelector('[name=tarifaAlimentacion]').value };
   } };
 }
+/**
+ * Comprobante fiscal del hotel y si el precio incluye el ITBIS (18%, DGII). Si emite comprobante y el precio no
+ * lo incluye, el precio que se usa en los viáticos es precio + 18%. `precio` es el campo de precio por noche.
+ */
+function camposFiscal(x, precio) {
+  const cf = h('input', { type: 'checkbox', id: 'h-comprobante', checked: x.comprobanteFiscal === true });
+  const op = (v, t) => h('label', { class: 'check' }, h('input', { type: 'radio', name: 'h-itbis', value: v, checked: x.comprobanteFiscal === true && String(x.precioIncluyeItbis) === v }), h('span', {}, t));
+  const opciones = h('div', { class: 'desayuno-opciones', role: 'radiogroup', 'aria-label': '¿El precio incluye ITBIS?' }, op('true', 'El precio ya incluye el ITBIS'), op('false', 'El precio no incluye el ITBIS (se suma 18%)'));
+  const final = h('p', { class: 'fiscal-final', 'aria-live': 'polite' });
+  const caja = h('div', { class: 'desayuno-caja' }, h('label', { class: 'check desayuno-si' }, cf, h('span', {}, h('strong', {}, 'Emite comprobante fiscal'), h('small', {}, 'Factura con NCF de la DGII.'))), opciones, final);
+  const pintar = () => {
+    opciones.hidden = !cf.checked;
+    const p = Number(precio.value.replace(/,/g, '')); const sin = cf.checked && opciones.querySelector('input:checked')?.value === 'false';
+    final.textContent = p > 0 ? (sin ? `Precio final por noche: ${RD(p * 1.18)} (${RD(p)} + ITBIS ${RD(p * 0.18)})` : `Precio final por noche: ${RD(p)}`) : '';
+    final.hidden = !cf.checked || !(p > 0);
+  };
+  caja.addEventListener('change', pintar); precio.addEventListener('input', pintar); pintar();
+  return { nodo: caja, leer: () => (cf.checked ? { comprobanteFiscal: true, precioIncluyeItbis: opciones.querySelector('input:checked') ? opciones.querySelector('input:checked').value === 'true' : '' } : { comprobanteFiscal: false }) };
+}
 /** Desayuno incluido en el hotel y su valor (se rebaja de la comida del día de esa noche). */
 function camposDesayuno(x) {
   const valor0 = Number(x.valorDesayuno) || null;
@@ -4164,17 +4183,19 @@ async function editarHotel(x, reqs) {
   const notas = h('textarea', { id: 'eh-notas', rows: 2 }, x.notas ?? '');
   const des = camposDesayuno(x);
   const err = h('p', { class: 'error', role: 'alert' });
+  const precioI = h('input', { id: 'eh-precio', type: 'number', min: 1, step: 0.01, inputmode: 'decimal', value: x.precioNoche ?? '' });
+  const fis = camposFiscal(x, precioI);
   $('#dialogo-cuerpo').replaceChildren(h('p', { class: 'hint' }, `${x.municipio}, ${x.provincia}. Marca solo lo que hayas verificado por llamada o visita.`),
     ...inp('eh-nombre', 'Nombre', { value: x.nombre, maxlength: 160 }), ...inp('eh-tel', 'Teléfono', { value: x.telefono ?? '', inputmode: 'tel' }),
-    ...inp('eh-dir', 'Dirección', { value: x.direccion ?? '', maxlength: 200 }), ...inp('eh-precio', 'Precio por noche RD$', { type: 'number', min: 1, step: 0.01, inputmode: 'decimal', value: x.precioNoche ?? '' }),
-    des.nodo, h('div', { class: 'dialogo-checks' }, cajas), h('label', { for: 'eh-notas', class: 'hint' }, 'Notas'), notas, err);
+    ...inp('eh-dir', 'Dirección', { value: x.direccion ?? '', maxlength: 200 }), h('label', { for: 'eh-precio', class: 'hint' }, 'Precio por noche RD$'), precioI,
+    fis.nodo, des.nodo, h('div', { class: 'dialogo-checks' }, cajas), h('label', { for: 'eh-notas', class: 'hint' }, 'Notas'), notas, err);
   $('#dialogo-ok').textContent = 'Guardar'; d.showModal();
   for (;;) {
     const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
     if (!ok) return false;
     const v = (id) => d.querySelector(`#${id}`).value;
     try {
-      await api('POST', `/api/hoteles/${x.id}`, { nombre: v('eh-nombre'), telefono: v('eh-tel'), direccion: v('eh-dir'), precioNoche: v('eh-precio') || null, notas: notas.value, ...des.leer(),
+      await api('POST', `/api/hoteles/${x.id}`, { nombre: v('eh-nombre'), telefono: v('eh-tel'), direccion: v('eh-dir'), precioNoche: v('eh-precio') || null, notas: notas.value, ...des.leer(), ...fis.leer(),
         requisitos: Object.fromEntries(reqs.map((q) => [q.value, d.querySelector(`input[name="req-${q.value}"]`).checked])) });
       aviso('Hotel actualizado.', 'ok'); return true;
     } catch (e) { err.textContent = e.fields ? Object.values(e.fields).join(' ') : e.message; d.showModal(); }
