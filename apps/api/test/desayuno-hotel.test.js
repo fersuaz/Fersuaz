@@ -59,6 +59,15 @@ test('hotel con desayuno: la gerencia lo marca y la comida del presupuesto baja 
 
     await call('POST', `/api/hoteles/${hotel.id}`, { desayunoIncluido: false }, tok.ger);
     assert.equal((await comida()).detalle.alimentacion, 1000, 'sin desayuno vuelve a la comida completa');
+    // Comprobante fiscal sin ITBIS en el precio: la noche de RD$2,300 entra como RD$2,714 (2,300 + 18%)
+    assert.equal((await comida()).detalle.hospedaje, 2300);
+    assert.equal((await call('POST', `/api/hoteles/${hotel.id}`, { comprobanteFiscal: true }, tok.ger)).status, 422, 'pide si incluye el ITBIS');
+    const it = await call('POST', `/api/hoteles/${hotel.id}`, { comprobanteFiscal: true, precioIncluyeItbis: false }, tok.ger);
+    assert.deepEqual([it.body.item.precioFinal, it.body.item.itbis], [2714, 414]);
+    assert.equal((await comida()).detalle.hospedaje, 2714);
+    await call('POST', `/api/hoteles/${hotel.id}`, { comprobanteFiscal: true, precioIncluyeItbis: true }, tok.ger);
+    assert.equal((await comida()).detalle.hospedaje, 2300);
+    await call('POST', `/api/hoteles/${hotel.id}`, { comprobanteFiscal: false }, tok.ger);
 
     // Comida desglosada del representante: la comida del día es la suma y se rebaja SU desayuno (no el del hotel)
     const perfil = { residencia: { provincia: 'La Vega', municipio: 'Concepción de La Vega' }, vehiculo: { propiedad: 'asignado', combustible: 'gasolina_regular', rendimiento: 30 } };
@@ -71,4 +80,19 @@ test('hotel con desayuno: la gerencia lo marca y la comida del presupuesto baja 
     assert.equal(c.detalle.alimentacion, 1750, '2 días × RD$1,000 − desayuno propio RD$250');
     assert.deepEqual(c.supuestos.comidaDesglose, { desayuno: 250, almuerzo: 400, cena: 350 });
   } finally { server.close(); }
+});
+
+import { precioFinal, elegirHotel } from '../src/hoteles.js';
+
+test('ITBIS: con comprobante fiscal y precio sin ITBIS se suma el 18%; en los demás casos el precio queda igual', () => {
+  assert.equal(precioFinal({ precioNoche: 2000, comprobanteFiscal: true, precioIncluyeItbis: false }), 2360);
+  assert.equal(precioFinal({ precioNoche: 2000, comprobanteFiscal: true, precioIncluyeItbis: true }), 2000);
+  assert.equal(precioFinal({ precioNoche: 2000, comprobanteFiscal: false }), 2000);
+  assert.equal(precioFinal({ precioNoche: 1500.5, comprobanteFiscal: true, precioIncluyeItbis: false }), 1770.59);
+  assert.equal(precioFinal({ precioNoche: null }), null);
+  // El recomendado compara el precio final: 2,100 con ITBIS incluido gana a 2,000 + 18%
+  const req = { basicos: true, aire: true, agua: true, cama: true, higiene: true, parqueo: true, seguridad: true };
+  const r = elegirHotel([{ id: 'a', nombre: 'A', provincia: 'P', municipio: 'M', precioNoche: 2000, comprobanteFiscal: true, precioIncluyeItbis: false, requisitos: req },
+    { id: 'b', nombre: 'B', provincia: 'P', municipio: 'M', precioNoche: 2100, comprobanteFiscal: true, precioIncluyeItbis: true, requisitos: req }], 'P', 'M');
+  assert.equal(r.hotel.id, 'b');
 });

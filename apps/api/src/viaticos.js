@@ -9,7 +9,7 @@ import { normalizeName, leerCoordenadas } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
 import { dentroDeZona, excluidoDeRuta } from './territorio.js';
 import { proponer, proponerConMedicos, centrosDeMedico, diasLaborables, copiarFechas } from './propuesta-cronograma.js';
-import { elegirHotel } from './hoteles.js';
+import { elegirHotel, precioFinal } from './hoteles.js';
 
 const COMBUSTIBLES = ['gasolina_premium', 'gasolina_regular', 'gasoil_optimo', 'gasoil_regular', 'glp', 'hibrido', 'electrico'];
 export const COMBUSTIBLE_LABEL = {
@@ -35,9 +35,9 @@ const num = (v) => (v === '' || v == null ? null : Number(v));
  */
 export function precioHotelPlan({ hoteles = [], referencia = {}, provincia, municipio, hotelId }) {
   const h = hotelId ? hoteles.find((x) => x.id === hotelId && x.estado !== 'inactivo' && Number(x.precioNoche) > 0) : null;
-  if (h) return { precio: r2(Number(h.precioNoche)), hotel: h.nombre, hotelId: h.id, fuente: 'hotel' };
+  if (h) return { precio: precioFinal(h), hotel: h.nombre, hotelId: h.id, fuente: 'hotel' };
   const r = provincia ? elegirHotel(hoteles, provincia, municipio) : null;
-  if (r) return { precio: r2(Number(r.hotel.precioNoche)), hotel: r.hotel.nombre, hotelId: r.hotel.id, fuente: 'verificado' };
+  if (r) return { precio: precioFinal(r.hotel), hotel: r.hotel.nombre, hotelId: r.hotel.id, fuente: 'verificado' };
   const p = Number(referencia?.porProvincia?.[provincia]);
   if (p > 0) return { precio: r2(p), hotel: null, hotelId: null, fuente: 'referencia-provincia' };
   const g = Number(referencia?.global);
@@ -496,15 +496,15 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       if (hs.hotelId && hoteles) hotel = await hoteles.paraHospedaje(hs.hotelId);
       const cobrada = hs.tarifaCobrada == null || hs.tarifaCobrada === '' ? null : num(hs.tarifaCobrada);
       const cambioHotel = !!rec && (!hotel || hotel.id !== rec.hotel.id); // sin hotel aprobado en la zona no hay "cambio"
-      const cambioPrecio = !!hotel && cobrada != null && r2(cobrada) !== r2(Number(hotel.precioNoche));
+      const cambioPrecio = !!hotel && cobrada != null && r2(cobrada) !== precioFinal(hotel);
       const motivoCambio = normalizeName(hs.motivoCambio);
       if (cobrada != null && (!Number.isFinite(cobrada) || cobrada <= 0)) e['hospedaje.tarifaCobrada'] = 'Escribe lo que cobró el hotel por noche.';
       if ((cambioHotel || cambioPrecio) && motivoCambio.length < 5) e['hospedaje.motivoCambio'] = cambioPrecio ? 'Explica por qué el precio es distinto.' : 'Explica por qué cambias el hotel aprobado.';
       if (cambioPrecio && !hs.comprobante) e['hospedaje.comprobante'] = 'Sube el comprobante (voucher) con el precio cobrado.';
       cambio = { cambioHotel, cambioPrecio, motivoCambio: motivoCambio || null, recomendadoId: rec?.hotel?.id ?? null, recomendado: rec?.hotel?.nombre ?? null,
-        tarifaAprobada: hotel ? r2(Number(hotel.precioNoche)) : null, telefonoHotel: hotel?.telefono ?? null, comprobanteEntrada: hs.comprobante ?? null };
+        tarifaAprobada: hotel ? precioFinal(hotel) : null, telefonoHotel: hotel?.telefono ?? null, comprobanteEntrada: hs.comprobante ?? null };
       const motivo = normalizeName(hs.motivo) || (hotel && rec && !cambioHotel && !cambioPrecio ? 'Hotel programado por la gerencia' : motivoCambio);
-      input = { ...input, hospedaje: { ...hs, motivo, ...(hotel ? { tarifaNoche: cambioPrecio ? cobrada : hotel.precioNoche, hotel: hotel.nombre, municipio: hotel.municipio } : {}) } };
+      input = { ...input, hospedaje: { ...hs, motivo, ...(hotel ? { tarifaNoche: cambioPrecio ? cobrada : precioFinal(hotel), hotel: hotel.nombre, municipio: hotel.municipio } : {}) } };
     }
     const entrada = ruta.km != null ? { ...input, kmEstimados: ruta.km, kmFuente: 'google' } : { ...input, kmFuente: 'manual' };
     const d = validarJornada(entrada, e);
@@ -592,7 +592,9 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       await audit({ actorId: actor.id, action: `hospedaje_${estado}`, entity: 'jornada', entityId: id, before: { estado: j.hospedaje.estado }, after: { estado, nota } });
       // Precio nuevo confirmado con el hotel: se puede actualizar en el catálogo para los próximos.
       if (input.aprobar && input.actualizarPrecio && j.hospedaje.cambioPrecio && j.hospedaje.hotelId && hoteles) {
-        await hoteles.actualizar(actor, j.hospedaje.hotelId, { precioNoche: j.hospedaje.tarifaNoche });
+        // El precio cobrado ya trae el ITBIS (si lo hubo): queda como precio con ITBIS incluido.
+        const hotelPorId = await data.get('hoteles', j.hospedaje.hotelId);
+        await hoteles.actualizar(actor, j.hospedaje.hotelId, { precioNoche: j.hospedaje.tarifaNoche, ...(hotelPorId?.comprobanteFiscal ? { comprobanteFiscal: true, precioIncluyeItbis: true } : {}) });
       }
       if (input.aprobar) await ajustarPorHospedaje(out, actor.id);
       await notificar?.(j.representanteId, { tipo: 'viaticos', titulo: input.aprobar ? 'Hotel autorizado' : 'Hotel no autorizado', texto: input.aprobar ? `Tu hotel del ${j.fecha} fue autorizado.` : `Tu hotel del ${j.fecha} no fue autorizado: ${nota}`, enlace: `#jornadas?mes=${j.fecha.slice(0, 7)}` });

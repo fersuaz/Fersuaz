@@ -1104,3 +1104,5 @@ body.vista-cargando::before { content: ""; position: fixed; top: 0; left: 0; rig
 .noche-celda { display: grid; gap: .4rem; justify-items: start; }
 .noche-hotel { max-width: 22rem; min-height: 38px; border: 1.5px solid var(--linea); border-radius: 10px; padding: 0 .6rem; font: inherit; font-size: .9rem; background: #fff; }
 .propuesta-medicos { display: block; color: var(--celeste-texto); margin-top: .15rem; }
+.fiscal-final { margin: 0; font-weight: 600; color: var(--marino); padding-left: 1.9rem; }
+.desayuno-caja input[type="checkbox"], .desayuno-caja input[type="radio"] { width: 18px; height: 18px; accent-color: var(--marino); flex: none; }
