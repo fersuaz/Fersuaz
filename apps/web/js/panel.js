@@ -3585,7 +3585,7 @@ V.representantes = async () => {
 
 
 // ---------------------------------------------------------------- configurar representante: todo en un solo lugar, paso a paso
-const PASOS_REP = [['datos', 'Datos'], ['zona', 'Zona de trabajo'], ['vehiculo', 'Vehículo y comida'], ['lugares', 'Establecimientos'], ['medicos', 'Médicos'], ['hoteles', 'Hoteles'], ['cronograma', 'Cronograma'], ['resumen', 'Resumen']];
+const PASOS_REP = [['datos', 'Datos'], ['zona', 'Zona de trabajo'], ['vehiculo', 'Vehículo y comida'], ['lugares', 'Establecimientos'], ['medicos', 'Médicos'], ['hoteles', 'Hoteles y noches'], ['cronograma', 'Cronograma'], ['resumen', 'Resumen']];
 /** Barra de progreso + control segmentado de pasos. Un paso bloqueado no se puede abrir hasta completar el anterior. */
 function barraPasosRep(actual, hechos, maxAbierto, ir) {
   const i0 = PASOS_REP.findIndex(([id]) => id === actual);
@@ -3915,7 +3915,8 @@ async function pasoRep(paso, ctx) {
     await pintar();
     const zm = Object.fromEntries(provs.map((p) => [p, zona.municipios?.[p]?.length ? zona.municipios[p] : div.municipios[p]]));
     const buscador = puedeEditar ? await buscadorGoogle([['hotel', 'Hoteles']], () => pintar(), { provincias: provs, municipios: zm, titulo: 'Buscar y agregar hoteles', nota: 'Busca en Google Maps dentro de su zona y agrega con un clic. Después escribe su precio y marca los requisitos.' }) : null;
-    return [cont, buscador, nav.nodo];
+    const noches = await nochesFueraRep({ rep, zona, div, mes, alCambiarMes: (m) => history.replaceState(null, '', `#configurar?${new URLSearchParams({ ...Object.fromEntries(new URLSearchParams(location.hash.split('?')[1])), mes: m })}`) });
+    return [noches, cont, buscador, nav.nodo];
   }
   if (paso === 'cronograma') {
     const esAdmin = yo.role === 'administrador';
@@ -3929,6 +3930,7 @@ async function pasoRep(paso, ctx) {
     const partes = [h('div', { class: 'asis-mes' }, h('span', { class: 'asis-mes-etq' }, 'Mes'), segMes),
       h('div', { class: 'tarjeta' }, h('h2', {}, `Días aprobados en ${nombreMesLargo(mes)} (${fmtN.format(diasAprob.length)})`),
         diasAprob.length ? [h('p', { class: 'hint' }, `${fmtN.format(nLug)} visitas programadas${nNoche ? ` y ${fmtN.format(nNoche)} noche(s) fuera` : ''}. Marca las noches que duerme fuera: entran al presupuesto con el hotel elegido o el recomendado de esa provincia.`),
+          h('p', { class: 'hint' }, 'También puedes poner noches fuera en días sin cronograma en el paso ', h('a', { href: `#configurar?rep=${rep}&paso=hoteles&mes=${mes}` }, 'Hoteles y noches'), '.'),
           await nochesFuera(diasAprob, recargar)]
           : h('p', { class: 'hint' }, esAdmin ? 'Aún no tiene días este mes. Copia la ruta del mes anterior o deja que el sistema la proponga; revisas y apruebas.' : 'Aún no tiene días este mes. El administrador programa y aprueba el cronograma.'))];
     if (esAdmin) partes.push(h('div', { class: 'asis-dos' }, await propuestaMes(rep, mes, div, recargar, r?.position), copiarMes(rep, mes, div, recargar)));
@@ -4208,6 +4210,119 @@ async function formVisitasPorDia() {
     if (await enviar(f, b, () => api('POST', '/api/cronogramas/visitas-por-dia', { porPosicion: Object.fromEntries(POSICIONES.map((p) => [p, f.elements[`porPosicion.${p}`].value])) }))) aviso('Visitas por día guardadas.', 'ok');
   });
   return f;
+}
+/**
+ * Noches fuera de la zona con hotel pagado: se eligen los días en el calendario del mes, dónde duerme y el hotel
+ * (vacío = el recomendado). Si ese día ya tiene cronograma en la misma provincia, se marca allí. Todas se suman
+ * al presupuesto del mes. Quitar se puede deshacer.
+ */
+async function nochesFueraRep({ rep, zona, div, mes, alCambiarMes }) {
+  const puede = ['administrador', 'gerencia'].includes(yo.role);
+  const caja = h('div', { class: 'tarjeta noches-caja', id: 'noches-fuera' });
+  const provs = zona?.provincias ?? [];
+  const muns = Object.fromEntries(provs.map((p) => [p, zona?.municipios?.[p]?.length ? zona.municipios[p] : div.municipios[p] ?? []]));
+  const sel = new Set(); let deshacer = null;
+  const hotelesPorProv = {};
+  const hotelesDe = (p) => (hotelesPorProv[p] ??= api('GET', `/api/hoteles?provincia=${encodeURIComponent(p)}`).then((x) => x.items.filter((y) => y.estado !== 'inactivo' && Number(y.precioNoche) > 0)).catch(() => []));
+  const sig = (() => { const [y, m] = mesActual().split('-').map(Number); const d = new Date(Date.UTC(y, m, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; })();
+  const meses = [[mesActual(), `Este mes (${nombreMesLargo(mesActual())})`], [sig, `Próximo mes (${nombreMesLargo(sig)})`]];
+  if (!meses.some(([m]) => m === mes)) meses.push([mes, nombreMesLargo(mes)]);
+  const fuente = (x) => ({ hotel: 'Hotel elegido', verificado: 'Recomendado', 'referencia-provincia': 'Precio de referencia de la provincia', 'referencia-global': 'Precio de referencia general' }[x.fuente] ?? 'Sin precio');
+  async function pintar() {
+    let datos;
+    try { datos = await api('GET', `/api/noches-fuera?representanteId=${rep}&mes=${mes}`); }
+    catch (e) { caja.replaceChildren(h('h2', {}, 'Noches fuera de la zona'), h('div', { class: 'aviso error' }, e.message), h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: pintar }, 'Reintentar')); return; }
+    const porFecha = new Map(datos.items.map((x) => [x.fecha, x]));
+    const bAgregar = h('button', { class: 'btn btn-peq', type: 'button' });
+    const bQuitar = h('button', { class: 'btn-sec btn-peq btn-peligro', type: 'button', hidden: true });
+    const estadoSel = h('span', { class: 'hint noches-estado', 'aria-live': 'polite' });
+    const msg = h('div', { role: 'status' });
+    const contar = () => {
+      const ya = [...sel].filter((f) => porFecha.has(f)).length;
+      bAgregar.textContent = sel.size ? `Poner noche fuera (${fmtN.format(sel.size)})` : 'Poner noche fuera';
+      bAgregar.disabled = !sel.size; bQuitar.hidden = !ya; bQuitar.textContent = `Quitar noche (${fmtN.format(ya)})`;
+      estadoSel.textContent = sel.size ? `${fmtN.format(sel.size)} día(s) elegido(s)${ya ? `; ${fmtN.format(ya)} ya tiene(n) noche: se cambia el lugar o el hotel` : ''}.` : 'Toca en el calendario los días que duerme fuera.';
+    };
+    // Calendario del mes, de lunes a domingo
+    const [y, m] = mes.split('-').map(Number); const fin = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const blanco = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7;
+    const inicio = `${mesActual()}-01`;
+    const dias = [];
+    for (let i = 0; i < blanco; i++) dias.push(h('span', { class: 'cal-vacio', 'aria-hidden': 'true' }));
+    for (let d = 1; d <= fin; d++) {
+      const f = `${mes}-${String(d).padStart(2, '0')}`; const n = porFecha.get(f);
+      const bloqueado = !puede || f < inicio || n?.conJornada;
+      const b = h('button', { type: 'button', class: `cal-dia${n ? ' con-noche' : ''}${sel.has(f) ? ' elegido' : ''}`, disabled: bloqueado, 'aria-pressed': String(sel.has(f)),
+        'aria-label': `${fecha(f)}${n ? `, noche fuera${n.precio != null ? ` ${RD(n.precio)}` : ''}` : ''}`, title: n?.conJornada ? 'Ya tiene jornada: el hotel lo reporta el representante.' : null },
+        h('span', { class: 'cal-num' }, String(d)), n ? h('span', { class: 'cal-marca', 'aria-hidden': 'true' }, 'Hotel') : null);
+      b.addEventListener('click', () => { sel.has(f) ? sel.delete(f) : sel.add(f); b.classList.toggle('elegido', sel.has(f)); b.setAttribute('aria-pressed', String(sel.has(f))); contar(); });
+      dias.push(b);
+    }
+    const cal = h('div', { class: 'cal', role: 'group', 'aria-label': `Días de ${nombreMesLargo(mes)}` }, ...['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map((x) => h('span', { class: 'cal-cab', 'aria-hidden': 'true' }, x)), ...dias);
+    // Dónde duerme y en qué hotel
+    const ultimo = datos.items.at(-1);
+    const z = selectorZona(provs, muns, { provincia: ultimo?.provincia ?? provs[0] ?? '', municipio: ultimo?.municipio ?? '', prefijo: 'nf' });
+    const selH = h('select', { 'aria-label': 'Hotel', class: 'noche-hotel', 'data-sin-buscador': '1' });
+    const llenarH = async () => {
+      const xs = z.sp.value ? [...(await hotelesDe(z.sp.value))] : [];
+      const mun = z.sm.value;
+      xs.sort((a, b) => (a.municipio === mun ? 0 : 1) - (b.municipio === mun ? 0 : 1) || Number(a.precioFinal ?? a.precioNoche) - Number(b.precioFinal ?? b.precioNoche));
+      selH.replaceChildren(h('option', { value: '' }, 'Recomendado (el mejor verificado de la zona)'), ...xs.map((x) => h('option', { value: x.id }, `${x.nombre}, ${x.municipio}: ${RD(x.precioFinal ?? x.precioNoche)}${x.desayunoIncluido ? ', con desayuno' : ''}`)));
+    };
+    z.sp.addEventListener('change', llenarH); z.sm.addEventListener('change', llenarH);
+    if (provs.length) await llenarH();
+    bAgregar.addEventListener('click', async () => {
+      if (!z.sp.value) { msg.replaceChildren(h('div', { class: 'aviso error' }, 'Elige la provincia donde duerme.')); return; }
+      bAgregar.disabled = true; msg.replaceChildren();
+      try {
+        avisosEnPausa = true;
+        const r = (await api('POST', '/api/noches-fuera', { representanteId: rep, fechas: [...sel], provincia: z.sp.value, municipio: z.sm.value || null, hotelId: selH.value || null })).item;
+        avisosEnPausa = false;
+        aviso(`${fmtN.format(r.hechos.length)} noche(s) fuera guardada(s). Se suman al presupuesto del mes.`, 'ok');
+        if (r.omitidos.length) aviso(`${fmtN.format(r.omitidos.length)} día(s) sin cambiar: ${r.omitidos[0].motivo}`, 'info');
+        sel.clear(); deshacer = null; await pintar();
+      } catch (e) { avisosEnPausa = false; msg.replaceChildren(h('div', { class: 'aviso error' }, e.fields ? Object.values(e.fields).join(' ') : e.message)); bAgregar.disabled = false; }
+    });
+    const quitar = async (fechas) => {
+      try {
+        avisosEnPausa = true;
+        const r = (await api('POST', '/api/noches-fuera/quitar', { representanteId: rep, fechas })).item;
+        avisosEnPausa = false; deshacer = r.quitadas; sel.clear(); await pintar();
+      } catch (e) { avisosEnPausa = false; alert(e.message); }
+    };
+    bQuitar.addEventListener('click', () => quitar([...sel].filter((f) => porFecha.has(f))));
+    const volver = async () => {
+      const grupos = new Map();
+      for (const x of deshacer) { if (!x.provincia) continue; const k = `${x.provincia}|${x.municipio ?? ''}|${x.hotelId ?? ''}`; grupos.set(k, [...(grupos.get(k) ?? []), x]); }
+      try { avisosEnPausa = true; for (const xs of grupos.values()) await api('POST', '/api/noches-fuera', { representanteId: rep, fechas: [...new Set(xs.map((x) => x.fecha))], provincia: xs[0].provincia, municipio: xs[0].municipio, hotelId: xs[0].hotelId }); aviso('Listo: noches fuera devueltas.', 'ok'); }
+      catch (e) { alert(e.message); } finally { avisosEnPausa = false; }
+      deshacer = null; await pintar();
+    };
+    const cols = [
+      { t: 'Noche del', v: (x) => [fecha(x.fecha), x.origen === 'cronograma' ? h('small', { class: 'hint', style: 'display:block' }, 'Marcada en el cronograma') : null] },
+      { t: 'Duerme en', v: (x) => (x.municipio ? [x.municipio, h('small', { class: 'hint', style: 'display:block' }, x.provincia)] : x.provincia ?? '') },
+      { t: 'Hotel', v: (x) => [x.hotel ?? (x.precio != null ? 'Sin hotel verificado' : 'Falta el precio'), h('small', { class: 'hint', style: 'display:block' }, fuente(x))] },
+      { t: 'Precio', num: true, v: (x) => (x.precio != null ? RD(x.precio) : h('span', { class: 'chip pendiente' }, 'Sin precio')) },
+      ...(puede ? [{ t: '', v: (x) => (x.conJornada ? h('small', { class: 'hint' }, 'Con jornada') : h('button', { class: 'btn-enlace', type: 'button', onclick: () => quitar([x.fecha]) }, 'Quitar')) }] : []),
+    ];
+    const r0 = datos.resumen;
+    caja.replaceChildren(...[
+      h('h2', {}, 'Noches fuera de la zona (hotel pagado)'),
+      h('p', { class: 'hint' }, 'Marca los días que duerme fuera y dónde. Cada noche se suma al presupuesto del mes con el hotel elegido o el recomendado de esa zona, aunque ese día todavía no tenga cronograma.'),
+      h('div', { class: 'asis-mes' }, h('span', { class: 'asis-mes-etq' }, 'Mes'), segmentos('Mes de las noches', meses, mes, (x) => { mes = x; sel.clear(); deshacer = null; alCambiarMes?.(x); pintar(); })),
+      h('p', { class: 'noches-total', 'aria-live': 'polite' }, r0.noches
+        ? [h('strong', {}, `${fmtN.format(r0.noches)} noche(s) fuera`), ` en ${nombreMesLargo(mes)}: `, h('strong', {}, RD(r0.total)), ' se suman al presupuesto.', r0.sinPrecio ? h('span', { class: 'chip pendiente', style: 'margin-left:.5rem' }, `${fmtN.format(r0.sinPrecio)} sin precio`) : null]
+        : `Ninguna noche fuera en ${nombreMesLargo(mes)}.`),
+      deshacer?.length ? h('div', { class: 'aviso noches-deshacer' }, h('span', {}, `${fmtN.format(new Set(deshacer.map((x) => x.fecha)).size)} noche(s) quitada(s).`), h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: volver }, 'Deshacer')) : null,
+      puede ? h('div', { class: 'noches-grid' },
+        h('div', { class: 'noches-cal' }, cal, h('p', { class: 'hint cal-leyenda' }, h('span', { class: 'cal-muestra con-noche', 'aria-hidden': 'true' }), 'Con noche fuera', h('span', { class: 'cal-muestra elegido', 'aria-hidden': 'true' }), 'Elegido')),
+        h('div', { class: 'noches-form' }, h('h3', {}, 'Dónde duerme'), provs.length ? [z.fp, z.fm, h('div', { class: 'field' }, h('label', {}, 'Hotel'), selH)] : h('div', { class: 'aviso' }, 'Primero asígnale su zona de trabajo.'),
+          estadoSel, h('div', { class: 'acciones' }, bAgregar, bQuitar), msg)) : null,
+      datos.items.length ? tabla(cols, datos.items, ['', ''], { porPagina: 31 }) : null].filter(Boolean));
+    contar();
+  }
+  await pintar();
+  return caja;
 }
 /**
  * Noches fuera de los días aprobados: marcar o quitar una o varias, y elegir el hotel de cada noche

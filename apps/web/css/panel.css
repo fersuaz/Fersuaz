@@ -1145,3 +1145,28 @@ span.lugar-mini.vacia { display: inline-block; }
 .precio-unidad small { font-size: .78rem; color: #52677A; white-space: nowrap; }
 .cv-linea:has(> .forma-med:not([hidden])), .cm-linea:has(> .forma-med:not([hidden])), .linea:has(> .forma-med:not([hidden])) { align-items: start; }
 .cv-linea:has(> .forma-med:not([hidden])) .btn-enlace { margin-top: 1.9rem; margin-bottom: 0; }
+
+/* Noches fuera de la zona: calendario del mes + dónde duerme */
+.noches-caja h2 { margin-bottom: .35rem; }
+.noches-total { margin: .75rem 0 1rem; font-size: 1rem; color: #0F2A44; }
+.noches-deshacer { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.noches-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 1.5rem 2rem; align-items: start; margin: .5rem 0 1.5rem; }
+.noches-form h3 { font-family: Poppins, sans-serif; font-weight: 600; font-size: 1rem; color: #003463; margin: 0 0 .5rem; }
+.noches-form .acciones { margin-top: .75rem; }
+.noches-estado { display: block; margin-top: .5rem; }
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .35rem; }
+.cal-cab { font-size: .75rem; font-weight: 600; color: #52677A; text-align: center; padding-bottom: .15rem; }
+.cal-dia { position: relative; display: grid; place-items: center; gap: 0; min-height: 48px; padding: .3rem 0; border: 1px solid #C7D6E3; border-radius: 10px; background: #fff; color: #0F2A44; font: inherit; cursor: pointer; }
+.cal-dia:hover:not(:disabled) { border-color: #3085AC; }
+.cal-dia:focus-visible { outline: 3px solid rgba(36, 108, 142, .45); outline-offset: 2px; }
+.cal-dia:disabled { background: #F5F8FB; color: #52677A; cursor: not-allowed; opacity: .7; }
+.cal-num { font-weight: 600; font-size: .95rem; line-height: 1.1; }
+.cal-marca { font-size: .65rem; font-weight: 600; line-height: 1; margin-top: .1rem; }
+.cal-dia.con-noche { background: #E9F0F6; border-color: #246C8E; color: #003463; }
+.cal-dia.elegido { background: #003463; border-color: #003463; color: #fff; }
+.cal-leyenda { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin-top: .6rem; }
+.cal-muestra { display: inline-block; width: 14px; height: 14px; border-radius: 4px; border: 1px solid #246C8E; background: #E9F0F6; margin-left: .6rem; }
+.cal-muestra:first-child { margin-left: 0; }
+.cal-muestra.elegido { background: #003463; border-color: #003463; }
+@media (max-width: 900px) { .noches-grid { grid-template-columns: 1fr; } }
+@media (max-width: 420px) { .cal { gap: .25rem; } .cal-dia { min-height: 42px; } .cal-marca { font-size: .6rem; } }

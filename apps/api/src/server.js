@@ -480,6 +480,9 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
   ruta('POST', '/api/cronogramas/visitas-por-dia', async ({ me, body }) => ({ item: await v.guardarVisitasPorDia(me, body ?? {}) }));
   ruta('POST', '/api/cronogramas/propuesta', async ({ me, body }) => ({ item: await v.proponerCronograma(me, body ?? {}) }));
   ruta('POST', '/api/cronogramas/copiar-mes-anterior', async ({ me, body }) => ({ item: await v.copiarMesAnterior(me, body ?? {}) }));
+  ruta('GET', '/api/noches-fuera', async ({ me, q }) => v.verNochesFuera(me, q.get('representanteId') || me.id, q.get('mes')));
+  ruta('POST', '/api/noches-fuera', async ({ me, body }) => ({ item: await v.planificarNoches(me, body ?? {}) }));
+  ruta('POST', '/api/noches-fuera/quitar', async ({ me, body }) => ({ item: await v.quitarNoches(me, body ?? {}) }));
   ruta('POST', /^\/api\/cronogramas\/([\w-]+)\/hotel$/, async ({ me, p, body }) => ({ item: await v.hotelDeCronograma(me, p[1], body ?? {}) }));
   ruta('GET', '/api/viaticos/hotel-referencia', async ({ me }) => ({ item: await v.verReferenciaHotel(me) }));
   ruta('POST', '/api/viaticos/hotel-referencia', async ({ me, body }) => ({ item: await v.guardarReferenciaHotel(me, body ?? {}) }));

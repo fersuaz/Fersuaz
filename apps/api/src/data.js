@@ -28,6 +28,7 @@ export const COLECCIONES = {
   hoteles: { tabla: 'hoteles', campos: ['nombre', 'provincia', 'municipio', 'direccion', 'telefono', 'lat', 'lng', 'placeId', 'calificacion', 'fuente', 'precioNoche', 'requisitos', 'notas', 'verificadoPor', 'verificadoEn', 'estado', 'creadoPor', 'desayunoIncluido', 'valorDesayuno', 'comprobanteFiscal', 'precioIncluyeItbis', 'fotos'], json: ['requisitos', 'fotos'] },
   preregistros: { tabla: 'preregistros', campos: ['email', 'nombre', 'telefono', 'posicion', 'provincias', 'estado', 'usuarioId', 'creadoPor'], json: ['provincias'] },
   preciosMedicamento: { tabla: 'precios_medicamento', campos: ['medicamentoId', 'precio', 'vigenteDesde', 'fuente', 'registradoPor'], json: [] },
+  nochesFuera: { tabla: 'noches_fuera', campos: ['representanteId', 'fecha', 'provincia', 'municipio', 'hotelId', 'nota', 'creadoPor'], json: [] },
   cronogramas: { tabla: 'cronogramas', campos: ['representanteId', 'fecha', 'lugares', 'nota', 'estado', 'motivo', 'creadoPor', 'kmEstimado', 'minutosEstimados', 'kmOrigen', 'duermeFuera', 'hotelId'], json: ['lugares'] },
   notificaciones: { tabla: 'notificaciones', campos: ['usuarioId', 'tipo', 'titulo', 'texto', 'enlace', 'leida', 'correo'], json: [] },
   presupuestos: { tabla: 'presupuestos_viatico', campos: ['representanteId', 'mes', 'detalle', 'supuestos', 'total', 'estado', 'montoAprobado', 'aprobadoPor', 'motivo', 'desembolsos', 'gastos', 'liquidacion', 'ajustes', 'origen'], json: ['detalle', 'supuestos', 'desembolsos', 'gastos', 'liquidacion', 'ajustes'] },
