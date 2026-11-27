@@ -182,3 +182,26 @@ export function descontarDesayunos(comidaPorDia, desayunos = {}) {
   }
   return { descuento: round2(porDia.reduce((s, d) => s + d.descuento, 0)), noches: porDia.length, porDia };
 }
+
+/**
+ * Venta por unidad suelta de una caja (tabletas, cápsulas, sobres). El precio por unidad es el costo a farmacia:
+ * precio de la caja ÷ unidades por caja. La farmacia suma su margen encima (referencia, no se impone).
+ */
+export function precioPorUnidad(precioCaja, unidadesPorCaja) {
+  const p = Number(precioCaja); const u = Number(unidadesPorCaja);
+  if (!(p > 0) || !Number.isInteger(u) || u < 1) return null;
+  return Math.round((p / u) * 100) / 100;
+}
+/** Equivalente en cajas de una cantidad: por caja es la misma; por unidad, unidades ÷ unidades por caja (3 decimales). */
+export function cajasEquivalentes(cantidad, forma, unidadesPorCaja) {
+  const c = Number(cantidad) || 0;
+  if (forma !== 'unidad') return c;
+  const u = Number(unidadesPorCaja);
+  return u > 0 ? Math.round((c / u) * 1000) / 1000 : c;
+}
+/** Precio de venta de referencia con el margen de la farmacia: costo × (1 + margen). Márgenes en porcentaje. */
+export function conMargen(costo, margenPct) {
+  const c = Number(costo); const m = Number(margenPct);
+  if (!(c > 0) || !(m >= 0)) return null;
+  return Math.round(c * (1 + m / 100) * 100) / 100;
+}

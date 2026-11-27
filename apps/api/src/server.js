@@ -412,6 +412,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     return [201, { item }];
   }, { limite: 7 * 1024 * 1024 });
   ruta('POST', '/api/fotos/verificar', async ({ me, body }) => c.verificarFotos(me, body ?? {}), { limite: 512 * 1024 });
+  ruta('POST', /^\/api\/vouchers\/([\w-]+)\/completar$/, async ({ me, p, body }) => ({ item: await c.vouchers.completar(me, p[1], body ?? {}) }));
   ruta('POST', /^\/api\/vouchers\/([\w-]+)\/corregir$/, async ({ me, p, body }) => ({ item: await c.vouchers.corregir(me, p[1], body ?? {}) }));
   ruta('POST', '/api/vouchers/decidir', async ({ me, body }) => {
     const r = await c.vouchers.decidirLote(me, body ?? {});
@@ -448,6 +449,7 @@ export function createApp({ store, data = new MemoryData(), files = new MemoryFi
     const est = r.estado === 'aprobada' ? 'aprobada' : 'rechazada';
     await n.notificar(r.cargadoPor ?? r.promotoraId, { tipo: 'receta', titulo: `Receta ${est}`, texto: `Tu receta del ${r.fecha} fue ${est}${r.motivo ? `: ${r.motivo}` : '.'}`, enlace: '#misRecetas' });
   });
+  ruta('POST', /^\/api\/recetas\/([\w-]+)\/completar$/, async ({ me, p, body }) => ({ item: await c.promotoras.completarReceta(me, p[1], body ?? {}) }));
   ruta('POST', /^\/api\/recetas\/([\w-]+)\/(aprobar|rechazar)$/, async ({ me, p, body }) => {
     const item = await c.promotoras.decidirReceta(me, p[1], p[2] === 'aprobar', body?.motivo, { corregible: body?.corregible });
     avisoReceta(item.id); return { item };

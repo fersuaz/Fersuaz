@@ -53,5 +53,14 @@ test('médico: se registra con varios lugares, la gerencia lo aprueba y sus rece
     const rech = await call('POST', `/api/recetas/${r2.body.receta.id}/rechazar`, { motivo: 'El medicamento no coincide con la prescripción.' }, tg);
     assert.equal(rech.body.item.estado, 'rechazada');
     assert.equal((await call('GET', '/api/recetas?estado=pendiente', null, tg)).body.items.length, 1);
+    // El médico puede enviarla solo con la foto; la revisión agrega los medicamentos antes de aprobar
+    const sola = await call('POST', '/api/recetas', { establecimientoId: hosp.id, adjunto: jpg(3) }, tm);
+    assert.equal(sola.status, 201, JSON.stringify(sola.body)); assert.deepEqual(sola.body.receta.items, []);
+    assert.equal((await call('POST', `/api/recetas/${sola.body.receta.id}/aprobar`, {}, tg)).status, 409, 'sin medicamentos no se aprueba');
+    assert.equal((await call('POST', `/api/recetas/${sola.body.receta.id}/completar`, { items: [{ medicamentoId: med.id, unidades: 1 }] }, tm)).status, 403);
+    assert.equal((await call('POST', `/api/recetas/${sola.body.receta.id}/completar`, { items: [] }, tg)).status, 422);
+    const comp = await call('POST', `/api/recetas/${sola.body.receta.id}/completar`, { items: [{ medicamentoId: med.id, unidades: 2 }] }, tg);
+    assert.equal(comp.status, 200, JSON.stringify(comp.body)); assert.equal(comp.body.item.items[0].cajas, 2);
+    assert.equal((await call('POST', `/api/recetas/${sola.body.receta.id}/aprobar`, {}, tg)).status, 200);
   } finally { server.close(); }
 });
