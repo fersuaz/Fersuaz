@@ -69,6 +69,29 @@ test('noche fuera en el cronograma entra al presupuesto; copiar el mes anterior'
     p = (await call('GET', `/api/viaticos/presupuesto?representanteId=${ids.rep}&mes=2026-11`, null, tok.ger)).body;
     assert.ok(JSON.stringify(p).includes('"hospedaje":2300'), total(p));
 
+    // Noches planificadas por fecha: un día con cronograma que termina en otra provincia y un día sin cronograma
+    const plan = { representanteId: ids.rep, fechas: ['2026-11-05'], provincia: 'La Vega', municipio: 'Jarabacoa', hotelId: hotel.id };
+    assert.equal((await call('POST', '/api/noches-fuera', plan, tok.rep)).status, 403);
+    assert.equal((await call('POST', '/api/noches-fuera', { ...plan, provincia: 'Santiago', hotelId: null }, tok.ger)).status, 422, 'fuera de su zona');
+    assert.equal((await call('POST', '/api/noches-fuera', { ...plan, provincia: 'Espaillat' }, tok.ger)).status, 422, 'hotel de otra provincia');
+    assert.equal((await call('POST', '/api/noches-fuera', plan, tok.ger)).status, 200);
+    const n2 = await call('POST', '/api/noches-fuera', { representanteId: ids.rep, fechas: ['2026-11-10', '2026-11-04'], provincia: 'Espaillat', municipio: 'Moca' }, tok.adm);
+    assert.deepEqual(n2.body.item.hechos.map((x) => [x.fecha, x.origen]), [['2026-11-04', 'plan'], ['2026-11-10', 'plan']]);
+    let nf = (await call('GET', `/api/noches-fuera?representanteId=${ids.rep}&mes=2026-11`, null, tok.ger)).body;
+    // 11-04 ya era noche del cronograma (Jarabacoa): esa manda; el plan del mismo día no se cuenta dos veces
+    assert.deepEqual(nf.items.map((x) => [x.fecha, x.origen, x.precio]), [['2026-11-04', 'cronograma', 2300], ['2026-11-05', 'plan', 2300], ['2026-11-10', 'plan', 2000]]);
+    assert.deepEqual(nf.resumen, { noches: 3, sinPrecio: 0, total: 6600 });
+    p = (await call('GET', `/api/viaticos/presupuesto?representanteId=${ids.rep}&mes=2026-11`, null, tok.ger)).body;
+    assert.ok(JSON.stringify(p.calculo.detalle).includes('"hospedaje":6600') || p.calculo.detalle.hospedaje === 6600, JSON.stringify(p.calculo.detalle));
+    assert.equal(p.calculo.supuestos.semanas.reduce((t, w) => t + w.hospedaje, 0), 6600);
+    // Quitar una noche planificada y una del cronograma; deshacer vuelve a ponerlas
+    const q = await call('POST', '/api/noches-fuera/quitar', { representanteId: ids.rep, fechas: ['2026-11-10', '2026-11-04'] }, tok.ger);
+    assert.equal(q.body.item.quitadas.length, 3, 'el plan del 10, el plan del 4 y la noche del cronograma del 4');
+    nf = (await call('GET', `/api/noches-fuera?representanteId=${ids.rep}&mes=2026-11`, null, tok.ger)).body;
+    assert.deepEqual(nf.resumen.total, 2300);
+    await call('POST', '/api/cronogramas/' + c1.body.items.find((c) => c.fecha === '2026-11-04').id + '/hotel', { duermeFuera: true }, tok.ger);
+    await call('POST', '/api/noches-fuera/quitar', { representanteId: ids.rep, fechas: ['2026-11-05'] }, tok.ger);
+
     // Copiar a diciembre: mismo día de la semana, mismas noches fuera, nada guardado aún
     const cp = await call('POST', '/api/cronogramas/copiar-mes-anterior', { representanteId: ids.rep, mes: '2026-12' }, tok.adm);
     assert.equal(cp.status, 200, JSON.stringify(cp.body));

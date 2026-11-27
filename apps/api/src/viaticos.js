@@ -419,6 +419,107 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     await audit({ actorId: actor.id, action: 'cronograma_noche_fuera', entity: 'cronograma', entityId: id, before: { duermeFuera: c.duermeFuera ?? false, hotelId: c.hotelId ?? null }, after: { duermeFuera: fuera, hotelId: hid } });
     return out;
   }
+  // ---------------------------------------------------------------- noches fuera (hotel pagado)
+  /**
+   * Noches del mes que duerme fuera de su zona con hotel pagado. Dos fuentes: los días aprobados del cronograma
+   * marcados "duerme fuera" y las noches planificadas por fecha (aunque ese día aún no tenga cronograma).
+   * Cada una lleva el precio con el que entra al presupuesto: el hotel elegido o el recomendado de la provincia.
+   */
+  async function nochesDelMes(repId, mes) {
+    const [plan, crons, js, hotelesTodos, referencia] = await Promise.all([
+      data.list('nochesFuera', { representanteId: repId }), data.list('cronogramas', { representanteId: repId }),
+      data.list('jornadas', { representanteId: repId }), data.list('hoteles'), referenciaHotel()]);
+    const conJornada = new Set(js.filter((j) => j.fecha.startsWith(mes)).map((j) => j.cronogramaId).filter(Boolean));
+    const fechasJ = new Set(js.filter((j) => j.fecha.startsWith(mes) && j.estado !== 'cancelada').map((j) => j.fecha));
+    const precio = (provincia, municipio, hotelId) => precioHotelPlan({ hoteles: hotelesTodos, referencia, provincia, municipio, hotelId });
+    const out = [];
+    for (const c of crons.filter((c) => c.estado === 'aprobado' && c.fecha.startsWith(mes) && c.duermeFuera === true)) {
+      const fin = c.lugares?.at(-1) ?? {};
+      out.push({ fecha: c.fecha, origen: 'cronograma', cronogramaId: c.id, provincia: fin.provincia ?? null, municipio: fin.municipio ?? null, hotelId: c.hotelId ?? null,
+        conJornada: conJornada.has(c.id) || fechasJ.has(c.fecha), ...precio(fin.provincia, fin.municipio, c.hotelId) });
+    }
+    const ya = new Set(out.map((x) => x.fecha));
+    for (const n of plan.filter((n) => n.fecha.startsWith(mes) && !ya.has(n.fecha))) {
+      out.push({ id: n.id, fecha: n.fecha, origen: 'plan', provincia: n.provincia, municipio: n.municipio ?? null, hotelId: n.hotelId ?? null, nota: n.nota ?? null, conJornada: fechasJ.has(n.fecha), ...precio(n.provincia, n.municipio, n.hotelId) });
+    }
+    return out.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }
+  async function verNochesFuera(actor, repId, mes) {
+    permitir(actor.id === repId || rol(actor, VEN_PERFIL));
+    if (!MES.test(String(mes))) throw new HttpError(422, 'Elige el mes.');
+    await rep(String(repId));
+    const items = await nochesDelMes(String(repId), mes);
+    const conPrecio = items.filter((x) => x.precio != null);
+    return { items, resumen: { noches: items.length, sinPrecio: items.length - conPrecio.length, total: r2(conPrecio.reduce((t, x) => t + x.precio, 0)) } };
+  }
+  /**
+   * Planifica noches fuera por fecha. Si ese día ya tiene cronograma aprobado (sin jornada), se marca en el
+   * cronograma; si no, queda como noche planificada. Una fecha que ya tiene noche se actualiza (hotel o lugar).
+   */
+  async function planificarNoches(actor, input = {}) {
+    permitir(rol(actor, ['administrador', 'gerencia']), 'Solo la administración o la gerencia programan las noches fuera.');
+    const r = await rep(String(input.representanteId ?? ''));
+    const e = {};
+    const fechas = [...new Set((Array.isArray(input.fechas) ? input.fechas : []).map(String))].sort();
+    const inicioMes = `${hoy().slice(0, 7)}-01`;
+    if (!fechas.length || fechas.some((f) => !esFechaISO(f))) e.fechas = 'Elige al menos una fecha.';
+    else if (fechas.length > 31) e.fechas = 'Máximo 31 noches por vez.';
+    else if (fechas[0] < inicioMes) e.fechas = 'Solo se programan noches desde el inicio del mes en curso.';
+    const provincia = normalizeName(input.provincia);
+    const municipio = normalizeName(input.municipio) || null;
+    if (!provincia) e.provincia = 'Elige la provincia donde duerme.';
+    let hotelId = null;
+    if (input.hotelId) {
+      const h = await data.get('hoteles', String(input.hotelId));
+      if (!h || h.estado === 'inactivo' || !(Number(h.precioNoche) > 0)) e.hotelId = 'Ese hotel no está disponible o no tiene precio.';
+      else if (provincia && h.provincia !== provincia) e.hotelId = `Ese hotel está en ${h.provincia}, no en ${provincia}.`;
+      else hotelId = h.id;
+    }
+    if (Object.keys(e).length) invalido(e);
+    const zona = (await data.list('zonas', { representanteId: r.id }))[0] ?? null;
+    if (zona?.provincias?.length && !zona.provincias.includes(provincia)) invalido({ provincia: `${provincia} no está en la zona de ${r.fullName}. Agrégala en Zona de trabajo.` });
+    const crons = (await data.list('cronogramas', { representanteId: r.id })).filter((c) => c.estado === 'aprobado' && fechas.includes(c.fecha));
+    const js = (await data.list('jornadas', { representanteId: r.id })).filter((j) => fechas.includes(j.fecha) && j.estado !== 'cancelada');
+    const conJ = new Set(js.map((j) => j.fecha));
+    const plan = (await data.list('nochesFuera', { representanteId: r.id })).filter((n) => fechas.includes(n.fecha));
+    const hechos = []; const omitidos = [];
+    for (const fecha of fechas) {
+      if (conJ.has(fecha)) { omitidos.push({ fecha, motivo: 'Ya tiene jornada: el hotel lo reporta el representante.' }); continue; }
+      const c = crons.find((x) => x.fecha === fecha);
+      // Si ese día ya tiene cronograma y termina en la misma provincia, la noche se marca en el cronograma.
+      // Si duerme en otra provincia, queda como noche planificada con el lugar elegido.
+      if (c && (c.lugares?.at(-1)?.provincia ?? null) === provincia) {
+        await data.update('cronogramas', c.id, { duermeFuera: true, hotelId });
+        const viejo = plan.find((n) => n.fecha === fecha); if (viejo) await data.remove('nochesFuera', viejo.id);
+        hechos.push({ fecha, origen: 'cronograma' }); continue;
+      }
+      const viejo = plan.find((n) => n.fecha === fecha);
+      if (viejo) await data.update('nochesFuera', viejo.id, { provincia, municipio, hotelId, nota: normalizeName(input.nota) || viejo.nota || null });
+      else await data.insert('nochesFuera', { representanteId: r.id, fecha, provincia, municipio, hotelId, nota: normalizeName(input.nota) || null, creadoPor: actor.id });
+      hechos.push({ fecha, origen: 'plan' });
+    }
+    await audit({ actorId: actor.id, action: 'noches_fuera_planificadas', entity: 'representante', entityId: r.id, after: { fechas: hechos.map((x) => x.fecha), provincia, municipio, hotelId } });
+    return { hechos, omitidos };
+  }
+  /** Quita noches fuera por fecha (planificadas o marcadas en el cronograma). Devuelve lo quitado para poder deshacer. */
+  async function quitarNoches(actor, input = {}) {
+    permitir(rol(actor, ['administrador', 'gerencia']), 'Solo la administración o la gerencia programan las noches fuera.');
+    const r = await rep(String(input.representanteId ?? ''));
+    const fechas = new Set((Array.isArray(input.fechas) ? input.fechas : []).map(String));
+    if (!fechas.size) invalido({ fechas: 'Elige al menos una noche.' });
+    const js = new Set((await data.list('jornadas', { representanteId: r.id })).filter((j) => fechas.has(j.fecha) && j.estado !== 'cancelada').map((j) => j.fecha));
+    const quitadas = [];
+    for (const n of (await data.list('nochesFuera', { representanteId: r.id })).filter((n) => fechas.has(n.fecha))) {
+      await data.remove('nochesFuera', n.id); quitadas.push({ fecha: n.fecha, provincia: n.provincia, municipio: n.municipio ?? null, hotelId: n.hotelId ?? null });
+    }
+    for (const c of (await data.list('cronogramas', { representanteId: r.id })).filter((c) => c.estado === 'aprobado' && fechas.has(c.fecha) && c.duermeFuera === true && !js.has(c.fecha))) {
+      await data.update('cronogramas', c.id, { duermeFuera: false, hotelId: null });
+      const fin = c.lugares?.at(-1) ?? {};
+      quitadas.push({ fecha: c.fecha, provincia: fin.provincia ?? null, municipio: fin.municipio ?? null, hotelId: c.hotelId ?? null });
+    }
+    await audit({ actorId: actor.id, action: 'noches_fuera_quitadas', entity: 'representante', entityId: r.id, before: { fechas: quitadas.map((x) => x.fecha) } });
+    return { quitadas };
+  }
   async function referenciaHotel() { return (await data.list('configuracion', { clave: 'hotel_referencia' }))[0]?.valor ?? { global: null, porProvincia: {} }; }
   async function verReferenciaHotel(actor) { permitir(rol(actor, ['administrador', 'gerencia', 'finanzas'])); return referenciaHotel(); }
   async function guardarReferenciaHotel(actor, input = {}) {
@@ -740,20 +841,38 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       if (valor) d.desayuno = { valor, hotel: h.nombre, fuente: propio ? 'representante' : 'hotel' };
       else sinValorDesayuno.add(h.nombre);
     }
+    // Noches planificadas por fecha (sin "duerme fuera" en el cronograma de ese día): solo suman el hotel.
+    const conHotel = new Set(dias.filter((d) => d.hospedaje).map((d) => d.fecha));
+    const hotelesN = hotelesTodos.length ? hotelesTodos : await data.list('hoteles');
+    const refN = referencia ?? await referenciaHotel();
+    const extras = [];
+    for (const n of (await data.list('nochesFuera', { representanteId: repId })).filter((n) => n.fecha.startsWith(mes) && !conHotel.has(n.fecha))) {
+      const p = precioHotelPlan({ hoteles: hotelesN, referencia: refN, provincia: n.provincia, municipio: n.municipio, hotelId: n.hotelId });
+      if (p.precio == null) { sinHotel.add(`Noche fuera del ${n.fecha} en ${n.municipio ?? n.provincia}: no hay hotel verificado ni precio de referencia. Ponlo en Hoteles → Precio de referencia.`); continue; }
+      extras.push({ fecha: n.fecha, precio: p.precio, hotel: p.hotel, hotelId: p.hotelId, fuente: p.fuente, municipio: n.municipio ?? null, provincia: n.provincia });
+      const hh = p.hotelId ? hotelesN.find((x) => x.id === p.hotelId) : null;
+      const dia = dias.find((d) => d.fecha === n.fecha && d.conAlimentacion !== false);
+      if (hh?.desayunoIncluido && dia && !dia.desayuno) {
+        const propio = Number(perfil.comidaDesglose?.desayuno) > 0 ? Number(perfil.comidaDesglose.desayuno) : null;
+        const valor = propio ?? (Number(hh.valorDesayuno) > 0 ? Number(hh.valorDesayuno) : null);
+        if (valor) dia.desayuno = { valor, hotel: hh.nombre, fuente: propio ? 'representante' : 'hotel' }; else sinValorDesayuno.add(hh.nombre);
+      }
+    }
     const avisosDia = [...sinValorDesayuno].map((n) => `${n} incluye desayuno, pero no se sabe cuánto rebajar: pon el desayuno en la comida del representante (desayuno, almuerzo y cena) o el valor en el hotel.`);
-    return { dias: dias.sort((a, b) => a.fecha.localeCompare(b.fecha)), errores: [...errores], sinHotel: [...sinHotel], avisosDia };
+    return { dias: dias.sort((a, b) => a.fecha.localeCompare(b.fecha)), errores: [...errores], sinHotel: [...sinHotel], avisosDia, extras };
   }
   /** Valor del desayuno incluido por fecha (de los hoteles de las noches fuera). */
   const resumenDesayunos = (des, dias) => (des.noches ? { noches: des.noches, descuento: des.descuento, porDia: des.porDia.map((x) => ({ ...x, hotel: dias.find((d) => d.fecha === x.fecha)?.desayuno?.hotel ?? null })) } : null);
   const desayunosDe = (ds) => Object.fromEntries(ds.filter((d) => d.desayuno && d.conAlimentacion !== false).map((d) => [d.fecha, d.desayuno.valor]));
   /** Agrupa los días por semana y suma cada partida (el combustible, por precio vigente dentro de la semana). */
-  async function porSemana(mes, dias, { costoCombustible, comidaDia }) {
-    const semanas = semanasDelMes(mes, dias.map((d) => d.fecha));
+  async function porSemana(mes, dias, { costoCombustible, comidaDia, extras = [] }) {
+    const semanas = semanasDelMes(mes, [...dias.map((d) => d.fecha), ...extras.map((x) => x.fecha)]);
     const out = [];
     for (const s of semanas) {
       const ds = dias.filter((d) => s.fechas.includes(d.fecha));
       const c = await costoCombustible(ds);
-      const hosp = ds.filter((d) => d.hospedaje?.estado === 'aprobado').reduce((x, d) => x + calcularHospedaje({ noches: d.hospedaje.noches, tarifaNoche: d.hospedaje.tarifaNoche, cargos: d.hospedaje.cargos }), 0);
+      const hosp = ds.filter((d) => d.hospedaje?.estado === 'aprobado').reduce((x, d) => x + calcularHospedaje({ noches: d.hospedaje.noches, tarifaNoche: d.hospedaje.tarifaNoche, cargos: d.hospedaje.cargos }), 0)
+        + extras.filter((x) => s.fechas.includes(x.fecha)).reduce((t, x) => t + calcularHospedaje({ noches: 1, tarifaNoche: x.precio, cargos: 0 }), 0);
       out.push({
         n: s.n, desde: s.desde, hasta: s.hasta, dias: new Set(ds.map((d) => d.fecha)).size, lugares: ds.reduce((x, d) => x + d.lugares, 0),
         km: r2(ds.reduce((x, d) => x + (d.km || 0), 0)), galones: c.galones, combustible: c.costo, transporte: c.transporte ?? 0,
@@ -767,11 +886,11 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     const faltan = [];
     const perfil = await perfilDe(repId);
     if (!perfil) return { faltan: ['El perfil de viático (vehículo, residencia y tarifa de comida) no está configurado.'] };
-    const { dias, errores, sinHotel, avisosDia } = await diasDelMes(repId, mes, perfil);
+    const { dias, errores, sinHotel, avisosDia, extras } = await diasDelMes(repId, mes, perfil);
     faltan.push(...sinHotel);
-    if (!dias.length) return { faltan: ['No hay días aprobados en el cronograma ni jornadas en ese mes.'] };
+    if (!dias.length) return { faltan: ['No hay días aprobados en el cronograma ni jornadas en ese mes.', ...(extras.length ? [`Hay ${extras.length} noche(s) fuera planificada(s): se suman cuando el mes tenga cronograma.`] : [])] };
     const v = perfil.vehiculo;
-    if (v.propiedad === 'ninguno') { const x = await calcularPublico(repId, perfil, mes, dias, faltan); return x.avisos ? { ...x, avisos: [...x.avisos, ...avisosDia] } : x; }
+    if (v.propiedad === 'ninguno') { const x = await calcularPublico(repId, perfil, mes, dias, faltan, extras); return x.avisos ? { ...x, avisos: [...x.avisos, ...avisosDia] } : x; }
     const sinKm = dias.filter((d) => d.km == null);
     if (sinKm.length) faltan.push(`${sinKm.length} día(s) del cronograma no tienen km por carretera (${errores.join('; ') || 'sin datos del mapa'}). Se calculan cuando el representante crea la jornada de ese día.`);
     const km = r2(dias.reduce((s, d) => s + (d.km || 0), 0));
@@ -814,7 +933,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
       const des = descontarDesayunos([...porFecha].map(([fecha, x]) => ({ fecha, monto: (x ? comidaFuera : comidaDentro) ?? 0 })), desayunosDe(ds));
       return { dentro, fuera, bruto, desayunos: des, monto: r2(bruto - des.descuento) };
     };
-    const semanas = await porSemana(mes, dias, { costoCombustible, comidaDia: (ds) => comidaDe(ds).monto });
+    const semanas = await porSemana(mes, dias, { extras, costoCombustible, comidaDia: (ds) => comidaDe(ds).monto });
     if (sinPrecio.size) faltan.push(`No hay precio de ${COMBUSTIBLE_LABEL[tipo]?.toLowerCase() ?? 'combustible'} vigente para ${sinPrecio.size} día(s). Regístralo en Precios de combustible.`);
     // Tope mensual: el del representante si lo tiene; si no, el global. Lo calculado por km se paga hasta el tope.
     const topeRep = perfil.topeCombustible ?? null;
@@ -838,7 +957,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
         jornadas: nJ, diasCronograma: dias.length - nJ, dias: new Set(dias.map((d) => d.fecha)).size, lugares: dias.reduce((s, d) => s + d.lugares, 0),
         km, kmTipo: dias.every((d) => d.kmFuente === 'google') ? 'por carretera (Google)' : dias.some((d) => d.kmFuente === 'google') ? 'mixto: mapa y manual' : 'estimado manual',
         galones, rendimiento: v.rendimiento ?? null, combustible: v.combustible, preciosUsados, diasAlimentacion: diasComida, tarifaAlimentacion: comidaDentro, comidaDentro, comidaFuera, diasComidaDentro: cm.dentro, diasComidaFuera: cm.fuera, comidaFuente: fuentesComida, posicion: rep?.position ?? null,
-        reembolsoPorKm: usaReembolso ? perfil.reembolsoPorKm : null, hospedajes: hoteles.length, desayunos: resumenDesayunos(cm.desayunos, dias), comidaBruta: cm.bruto, comidaDesglose: perfil.comidaDesglose ?? null,
+        reembolsoPorKm: usaReembolso ? perfil.reembolsoPorKm : null, hospedajes: hoteles.length + extras.length, nochesPlan: extras, desayunos: resumenDesayunos(cm.desayunos, dias), comidaBruta: cm.bruto, comidaDesglose: perfil.comidaDesglose ?? null,
         combustibleCalculado, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
         semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares, ...(d.hospedaje?.plan ? { noche: { precio: d.hospedaje.tarifaNoche, hotel: d.hospedaje.hotel, fuente: d.hospedaje.fuente, municipio: d.hospedaje.municipio, desayuno: d.desayuno?.valor ?? null } } : {}) })),
       },
@@ -846,7 +965,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     };
   }
   /** Sin vehículo: transporte y comida por día, dentro o fuera de su zona de trabajo, según el cronograma. */
-  async function calcularPublico(repId, perfil, mes, dias, faltan) {
+  async function calcularPublico(repId, perfil, mes, dias, faltan, extras = []) {
     const rep = await users.findUserById(repId);
     const base = await tarifasDePosicion(rep?.position);
     const tarifas = {}; const fuente = {};
@@ -867,7 +986,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     const topeRep = perfil.topeCombustible ?? null;
     const tope = topeRep ?? (await verTopeGlobal());
     const topado = aplicarTope({ calculado: r.transporte, tope });
-    const semanas = await porSemana(mes, dias, {
+    const semanas = await porSemana(mes, dias, { extras,
       costoCombustible: async (ds) => ({ galones: 0, costo: 0, transporte: calcularTransportePublico({ jornadas: ds, esDentro, residencia: perfil.residencia, tarifas }).transporte }),
       comidaDia: (ds) => netoPublico(calcularTransportePublico({ jornadas: ds, esDentro, residencia: perfil.residencia, tarifas }), ds).alimentacion,
     });
@@ -885,7 +1004,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
         km: r2(dias.reduce((s, d) => s + (d.km || 0), 0)), kmTipo: 'transporte público', galones: null, rendimiento: null, combustible: null, preciosUsados: {},
         transportePublico: true, diasDentro: r.diasDentro, diasFuera: r.diasFuera, tarifas, tarifasFuente: fuente, diasDetalle: r.dias,
         posicion: rep?.position ?? null, dentroSegun: conZona ? 'zona' : 'residencia',
-        diasAlimentacion: r.diasDentro + r.diasFuera, tarifaAlimentacion: null, reembolsoPorKm: null, hospedajes: hoteles.length, desayunos: resumenDesayunos(r.desayunos, dias), comidaBruta: r.alimentacionBruta, comidaDesglose: perfil.comidaDesglose ?? null,
+        diasAlimentacion: r.diasDentro + r.diasFuera, tarifaAlimentacion: null, reembolsoPorKm: null, hospedajes: hoteles.length + extras.length, nochesPlan: extras, desayunos: resumenDesayunos(r.desayunos, dias), comidaBruta: r.alimentacionBruta, comidaDesglose: perfil.comidaDesglose ?? null,
         combustibleCalculado: r.transporte, tope, topeFuente: tope == null ? null : topeRep != null ? 'representante' : 'global', excedenteTope: topado.excedente,
         semanas, porDia: dias.map((d) => ({ fecha: d.fecha, origen: d.origen, km: d.km, lugares: d.lugares, ...(d.hospedaje?.plan ? { noche: { precio: d.hospedaje.tarifaNoche, hotel: d.hospedaje.hotel, fuente: d.hospedaje.fuente, municipio: d.hospedaje.municipio, desayuno: d.desayuno?.valor ?? null } } : {}) })),
       },
@@ -1065,7 +1184,7 @@ export function createViaticos({ data, users, files, audit, mapas, notificar, no
     crearJornada, actualizarJornada, listarJornadas, calcularKm,
     crearCronograma, listarCronogramas, anularCronograma,
     vistaPreviaRuta: async (actor, id) => { permitir(esRep(actor)); const r = await rutaDeCronograma(actor, id); return { fecha: r.cronograma.fecha, paradas: r.paradas, km: r.km, minutos: r.minutos ?? null, kmFuente: r.kmFuente, optimizado: r.optimizado }; }, mapasActivo: () => Boolean(mapas?.activo),
-    crearCronogramaLote, proponerCronograma, copiarMesAnterior, hotelDeCronograma, verReferenciaHotel, guardarReferenciaHotel, verTopeGlobal, guardarTopeGlobal, prepararPerfil, verTarifasPublico, guardarTarifasPublico,
+    crearCronogramaLote, proponerCronograma, copiarMesAnterior, hotelDeCronograma, verNochesFuera, planificarNoches, quitarNoches, verReferenciaHotel, guardarReferenciaHotel, verTopeGlobal, guardarTopeGlobal, prepararPerfil, verTarifasPublico, guardarTarifasPublico,
     verPresupuesto, solicitar, asignarPresupuesto, decidirPresupuesto, desembolsar, reportarGasto, revisarGasto, liquidar, consolidado, presupuestoPorId,
   };
 }
