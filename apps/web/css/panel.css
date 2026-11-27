@@ -1117,3 +1117,31 @@ span.lugar-mini.vacia { display: inline-block; }
 .lugar-mini-n { position: absolute; right: 3px; bottom: 3px; background: rgba(0,52,99,.85); color: #fff; font-size: .72rem; font-weight: 600; border-radius: 999px; padding: 0 .4rem; line-height: 1.4; }
 .acciones-fotos { margin: 0 0 1rem; }
 @media (max-width: 600px) { .lugar-mini { width: 44px; height: 44px; } }
+
+/* Caja o unidades: solo aparece en medicamentos con unidades por caja (no jarabes). */
+.forma-med[hidden] { display: none !important; }
+.forma-med { display: grid; gap: .25rem; font-size: .85rem; color: #52677A; min-width: 0; }
+.forma-med select { font: inherit; font-size: .95rem; color: #0F2A44; background: #fff; border: 1px solid #C7D6E3; border-radius: 10px; padding: .55rem .6rem; min-height: 44px; width: 100%; }
+.forma-med select:focus-visible { border-color: #246C8E; outline: none; box-shadow: 0 0 0 3px rgba(36, 108, 142, .25); }
+.forma-nota { font-size: .75rem; color: #52677A; line-height: 1.3; }
+.cm-linea:has(> .forma-med:not([hidden])) { grid-template-columns: minmax(0, 2.2fr) 5.5rem 9rem minmax(0, 1fr) 7rem auto; align-items: start; }
+.cm-linea.sin-precio:has(> .forma-med:not([hidden])) { grid-template-columns: minmax(0, 2.4fr) 6rem 9rem auto; }
+.linea.sin-monto:has(> .forma-med:not([hidden])) { grid-template-columns: minmax(0, 2fr) minmax(6rem, .8fr) 9rem auto; }
+.cv-linea:has(> .forma-med:not([hidden])) { grid-template-columns: 9rem 6rem minmax(0, 1fr) auto; }
+.cv-linea.sin-precio { grid-template-columns: minmax(0, 1fr) auto; }
+.cv-linea.sin-precio:has(> .forma-med:not([hidden])) { grid-template-columns: 9rem minmax(0, 1fr) auto; }
+@media (max-width: 900px) {
+  .cm-linea:has(> .forma-med:not([hidden])), .cm-linea.sin-precio:has(> .forma-med:not([hidden])), .linea.sin-monto:has(> .forma-med:not([hidden])), .cv-linea:has(> .forma-med:not([hidden])), .cv-linea.sin-precio:has(> .forma-med:not([hidden])) { grid-template-columns: 1fr 1fr; }
+}
+/* Completar medicamentos en la revisión */
+#dialogo .cv-linea input, #dialogo .cv-linea select { font: inherit; font-size: .95rem; color: #0F2A44; background: #fff; border: 1px solid #C7D6E3; border-radius: 10px; padding: .55rem .7rem; width: 100%; min-height: 44px; min-width: 0; }
+#dialogo .cv-linea input:focus-visible, #dialogo .cv-linea select:focus-visible { border-color: #246C8E; outline: none; box-shadow: 0 0 0 3px rgba(36, 108, 142, .25); }
+.completar-foto { margin: .5rem 0 .75rem; }
+.completar-foto img { display: block; max-width: 100%; max-height: 32vh; object-fit: contain; border-radius: 10px; border: 1px solid #C7D6E3; background: #E9F0F6; }
+.btn-completar { display: block; margin-top: .3rem; font-size: .85rem; }
+.cm-opcional { margin: 0 0 .75rem; padding: .6rem .8rem; background: #E9F0F6; border-radius: 10px; color: #0F2A44; }
+
+.precio-unidad { display: grid; gap: .1rem; justify-items: end; }
+.precio-unidad small { font-size: .78rem; color: #52677A; white-space: nowrap; }
+.cv-linea:has(> .forma-med:not([hidden])), .cm-linea:has(> .forma-med:not([hidden])), .linea:has(> .forma-med:not([hidden])) { align-items: start; }
+.cv-linea:has(> .forma-med:not([hidden])) .btn-enlace { margin-top: 1.9rem; margin-bottom: 0; }

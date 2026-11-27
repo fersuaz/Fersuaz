@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 // Toda regla de permiso vive aquí, en el servidor.
 import { AuthError as HttpError } from './auth.js';
 import { STATUS } from './roles.js';
-import { calcularComisionVouchers, evaluarAlertaInventario } from './calculos.js';
+import { calcularComisionVouchers, evaluarAlertaInventario, precioPorUnidad, cajasEquivalentes } from './calculos.js';
 import { esFechaISO, hoyRD, periodoDe, rangoDe } from './periodos.js';
 import { normalizeName } from './validation.js';
 import { guardarAdjunto } from './adjuntos.js';
@@ -64,6 +64,37 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
     return out;
   }
 
+  /** Unidades por caja: entero de 2 a 1,000, o vacío (jarabes y productos que no se venden por unidad). */
+  function leerUnidadesCaja(e, v) {
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 2 || n > 1000) { e.unidadesPorCaja = 'Escribe cuántas unidades trae la caja (de 2 a 1,000) o déjalo vacío si es jarabe.'; return null; }
+    return n;
+  }
+  /**
+   * Líneas de una receta: medicamento y cuánto se indicó al paciente, en cajas o en unidades sueltas (tabletas,
+   * cápsulas…) si el medicamento tiene unidades por caja. `cajas` lleva el equivalente para inventario y reportes.
+   */
+  async function lineasReceta(items, e) {
+    const lineas = []; const vistos = new Set();
+    for (const [i, it] of items.entries()) {
+      const m = await medicamentoActivo(it.medicamentoId);
+      const unidades = Number(it.unidades ?? it.cantidad);
+      const forma = it.forma === 'unidad' ? 'unidad' : 'caja';
+      if (!m) e[`items.${i}.medicamentoId`] = 'Elige un medicamento del catálogo.';
+      else if (vistos.has(m.id)) e[`items.${i}.medicamentoId`] = 'Ese medicamento ya está en la receta.';
+      else if (forma === 'unidad' && !m.unidadesPorCaja) e[`items.${i}.forma`] = `${m.nombre} no tiene unidades por caja: indícalo en cajas.`;
+      if (!Number.isInteger(unidades) || unidades < 1 || unidades > 999) e[`items.${i}.unidades`] = 'Escribe la cantidad, entre 1 y 999.';
+      if (m) {
+        vistos.add(m.id);
+        const upc = forma === 'unidad' ? Number(m.unidadesPorCaja) || null : null;
+        lineas.push({ medicamentoId: m.id, medicamento: m.nombre, linea: m.linea ?? null, forma, unidades, ...(upc ? { unidadesPorCaja: upc } : {}), cajas: cajasEquivalentes(unidades, forma, upc) });
+      }
+    }
+    return lineas;
+  }
+  /** Costo a farmacia de una unidad: precio de la caja ÷ unidades por caja (null si no aplica). */
+  const precioUnidad = (m) => precioPorUnidad(m?.precio, m?.unidadesPorCaja);
   async function medicamentoActivo(id) {
     const m = id && (await data.get('medicamentos', id));
     return m && m.activo ? m : null;
@@ -79,6 +110,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const presentacion = texto(e, 'presentacion', input.presentacion, { etiqueta: 'La presentación', requerido: false });
       const precio = input.precio == null || input.precio === '' ? null : Number(input.precio);
       if (precio != null && !(precio > 0 && precio < 1e7)) e.precio = 'Escribe un precio mayor que cero o déjalo vacío.';
+      const unidadesPorCaja = leerUnidadesCaja(e, input.unidadesPorCaja);
       if (Object.keys(e).length) invalido(e);
       const codigo = codigoMed(input.codigo);
       if (codigo && !/^[A-Z0-9-]{2,30}$/.test(codigo)) e.codigo = 'El código solo lleva letras, números y guiones.';
@@ -87,7 +119,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const dup = todos.find((m) => m.activo !== false && claveMed(m.nombre, m.presentacion) === claveMed(nombre, presentacion));
       if (dup) throw new HttpError(409, `Ese medicamento ya está en el catálogo: ${dup.nombre}${dup.presentacion ? `, ${dup.presentacion}` : ''}.`, { nombre: 'Repetido: ya existe.' });
       if (codigo && todos.some((m) => m.activo !== false && codigoMed(m.codigo) === codigo)) throw new HttpError(409, 'Ese código ya lo usa otro medicamento.', { codigo: 'Código repetido.' });
-      const m = await data.insert('medicamentos', { codigo: codigo || null, nombre, linea, presentacion, precio: precio == null ? null : round2(precio), activo: true });
+      const m = await data.insert('medicamentos', { codigo: codigo || null, nombre, linea, presentacion, precio: precio == null ? null : round2(precio), activo: true, unidadesPorCaja });
       if (precio != null) await data.insert('preciosMedicamento', { medicamentoId: m.id, precio: round2(precio), vigenteDesde: hoy(), fuente: 'manual', registradoPor: actor.id });
       await audit({ actorId: actor.id, action: 'medicamento_creado', entity: 'medicamento', entityId: m.id, after: m });
       return m;
@@ -101,6 +133,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       if (input.nombre !== undefined) patch.nombre = texto(e, 'nombre', input.nombre, { etiqueta: 'El nombre' });
       if (input.presentacion !== undefined) patch.presentacion = texto(e, 'presentacion', input.presentacion, { etiqueta: 'La presentación', requerido: false }) || null;
       if (input.linea !== undefined) patch.linea = texto(e, 'linea', input.linea, { etiqueta: 'La línea', requerido: false }) || null;
+      if (input.unidadesPorCaja !== undefined) patch.unidadesPorCaja = leerUnidadesCaja(e, input.unidadesPorCaja);
       if (input.codigo !== undefined) {
         const c = codigoMed(input.codigo);
         if (c && !/^[A-Z0-9-]{2,30}$/.test(c)) e.codigo = 'El código solo lleva letras, números y guiones.';
@@ -337,22 +370,33 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
   }
 
   /** Medicamentos (cantidad × precio) y médico de un voucher: lo mismo al cargarlo y al corregirlo. */
-  async function contenidoVoucher(input, e) {
+  /**
+   * Líneas de un voucher. Cada una es por caja o por unidad (solo si el medicamento tiene unidades por caja):
+   * en unidades, el precio sugerido es el de la caja ÷ unidades y `cajas` lleva el equivalente en cajas.
+   * `opcional`: la dependiente puede enviar el voucher sin medicamentos; la revisión los completa antes de aprobar.
+   */
+  async function contenidoVoucher(input, e, { opcional = false } = {}) {
     const items = Array.isArray(input.items) ? input.items : [];
-    if (!items.length) e.items = 'Agrega al menos un medicamento.';
+    if (!items.length && !opcional) e.items = 'Agrega al menos un medicamento.';
     if (items.length > 50) e.items = 'Máximo 50 medicamentos por voucher.';
     const lineas = [];
     for (const [i, it] of items.entries()) {
       const med = await medicamentoActivo(it.medicamentoId);
       const cantidad = Number(it.cantidad);
-      // Precio por unidad: el subtotal es precio × cantidad. Se acepta también el monto de la línea (versión anterior).
-      const precio = it.precio != null && it.precio !== '' ? Number(it.precio) : null;
+      const forma = it.forma === 'unidad' ? 'unidad' : 'caja';
+      // Precio por unidad de lo vendido (caja o unidad suelta): el subtotal es precio × cantidad.
+      const precio = it.precio != null && it.precio !== '' ? Number(it.precio) : forma === 'unidad' && med ? precioUnidad(med) : null;
       const monto = precio != null ? precio * cantidad : Number(it.monto);
       if (!med) e[`items.${i}.medicamentoId`] = 'Elige un medicamento del catálogo.';
+      else if (forma === 'unidad' && !med.unidadesPorCaja) e[`items.${i}.forma`] = `${med.nombre} no tiene unidades por caja: véndelo por caja o pide a la administración que las configure.`;
       if (!Number.isInteger(cantidad) || cantidad < 1) e[`items.${i}.cantidad`] = 'La cantidad debe ser un número entero mayor que cero.';
       if (precio != null && (!Number.isFinite(precio) || precio <= 0)) e[`items.${i}.precio`] = 'Escribe el precio en RD$, mayor que cero.';
       else if (!Number.isFinite(monto) || monto <= 0) e[`items.${i}.${precio != null ? 'precio' : 'monto'}`] = 'Escribe el precio en RD$, mayor que cero.';
-      if (med) lineas.push({ medicamentoId: med.id, medicamento: med.nombre, presentacion: med.presentacion ?? null, cantidad, ...(precio != null ? { precio: round2(precio) } : {}), monto: round2(monto) });
+      if (med) {
+        const upc = forma === 'unidad' ? Number(med.unidadesPorCaja) || null : null;
+        lineas.push({ medicamentoId: med.id, medicamento: med.nombre, presentacion: med.presentacion ?? null, forma, cantidad, ...(upc ? { unidadesPorCaja: upc } : {}),
+          cajas: cajasEquivalentes(cantidad, forma, upc), ...(precio != null ? { precio: round2(precio) } : {}), monto: round2(monto) });
+      }
     }
     // Médico que prescribió (opcional): uno ya registrado.
     let medico = null;
@@ -390,7 +434,8 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       const dhash = input.foto && esDhash(input.fotoDhash) ? input.fotoDhash : null;
       if (!esFechaISO(input.fecha)) e.fecha = 'Elige la fecha del voucher.';
       else if (input.fecha > hoy()) e.fecha = 'La fecha no puede ser futura.';
-      const { lineas, medico } = await contenidoVoucher(input, e);
+      // La dependiente puede enviarlo solo con la foto; los representantes ponen todos los detalles.
+      const { lineas, medico } = await contenidoVoucher(input, e, { opcional: esDependiente(actor) });
       if (Object.keys(e).length) invalido(e);
       const previos = (await data.list('vouchers', { dependienteId: dep.id })).filter((v) => v.estado !== 'anulado');
       if (referencia && previos.some((v) => (v.referencia ?? '').toLowerCase() === referencia.toLowerCase())) {
@@ -432,11 +477,26 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       if (await periodoCerrado(v.dependienteId, v.fecha)) throw new HttpError(409, 'Ese período de comisión ya está cerrado.');
       const m = normalizeName(motivo);
       if (!aprobar && m.length < 3) throw new HttpError(422, 'Explica por qué se rechaza.', { motivo: 'Escribe el motivo del rechazo.' });
+      if (aprobar && !(v.items?.length)) throw new HttpError(409, 'Este voucher llegó sin medicamentos: agrégalos antes de aprobarlo.', { items: 'Agrega los medicamentos.' });
       const estado = aprobar ? 'aprobado' : 'rechazado';
       // Al aprobar, el motivo es una nota opcional. Al rechazar, `corregible` deja que el usuario lo corrija y lo reenvíe
       // dentro del mes; si no lo hace, se elimina al cerrar el mes (ver limpiarRechazados).
       const out = await data.update('vouchers', id, { estado, decididoPor: actor.id, decididoAt: now().toISOString(), motivo: aprobar ? null : m, nota: aprobar ? (m || null) : null, corregible: !aprobar && Boolean(corregible) });
       await audit({ actorId: actor.id, action: `voucher_${estado}`, entity: 'voucher', entityId: id, before: { estado: v.estado }, after: { estado, motivo: m || null, corregible: !aprobar && Boolean(corregible) } });
+      return out;
+    },
+    /** La revisión completa (o corrige) los medicamentos y el médico de un voucher pendiente antes de aprobarlo. */
+    async completar(actor, id, input = {}) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor', 'finanzas']), 'No tienes permiso para revisar vouchers.');
+      const v = await data.get('vouchers', String(id));
+      if (!v) throw new HttpError(404, 'El voucher no existe.');
+      if (v.estado !== 'pendiente') throw new HttpError(409, 'Solo se completan vouchers pendientes.');
+      const e = {};
+      const { lineas, medico } = await contenidoVoucher(input, e);
+      if (Object.keys(e).length) invalido(e);
+      const patch = { items: lineas, total: round2(lineas.reduce((s, l) => s + l.monto, 0)), ...(input.medicoId !== undefined ? { medicoId: medico?.id ?? null, medico: medico ? `${medico.nombre}${medico.especialidad ? `, ${medico.especialidad}` : ''}` : null } : {}) };
+      const out = await data.update('vouchers', v.id, patch);
+      await audit({ actorId: actor.id, action: 'voucher_completado', entity: 'voucher', entityId: v.id, before: { items: v.items?.length ?? 0, total: v.total }, after: { items: lineas.length, total: patch.total } });
       return out;
     },
     /** Aprobar o rechazar varios a la vez. Cada uno pasa por las mismas reglas que uno solo. */
@@ -552,7 +612,8 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
         else med = ficha;
       }
       const items = Array.isArray(input.items) ? input.items : [];
-      if (!items.length) e.items = 'Agrega al menos un medicamento.';
+      // El médico puede enviar la receta solo con la foto; la promotora pone todos los detalles.
+      if (!items.length && promotora) e.items = 'Agrega al menos un medicamento.';
       // Paciente: el teléfono lo identifica. Si ya existe, se usa el mismo (no se duplica su contacto).
       // También se puede elegir por nombre un paciente ya registrado (su teléfono queda guardado, no se reescribe).
       let paciente = null; let tel = null;
@@ -568,15 +629,7 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       }
       const nombrePaciente = normalizeName(input.paciente?.nombre);
       if (tel && !paciente && nombrePaciente.length < 3) e['paciente.nombre'] = 'Escribe el nombre del paciente.';
-      const lineas = []; const vistos = new Set();
-      for (const [i, it] of items.entries()) {
-        const m = await medicamentoActivo(it.medicamentoId);
-        const unidades = Number(it.unidades);
-        if (!m) e[`items.${i}.medicamentoId`] = 'Elige un medicamento del catálogo.';
-        else if (vistos.has(m.id)) e[`items.${i}.medicamentoId`] = 'Ese medicamento ya está en la receta.';
-        if (!Number.isInteger(unidades) || unidades < 1 || unidades > 999) e[`items.${i}.unidades`] = 'Escribe las unidades, entre 1 y 999.';
-        if (m) { vistos.add(m.id); lineas.push({ medicamentoId: m.id, medicamento: m.nombre, linea: m.linea ?? null, unidades }); }
-      }
+      const lineas = await lineasReceta(items, e);
       let huella = null;
       if (input.adjunto) huella = esHuella(input.fotoHuella) ? input.fotoHuella : createHash('sha256').update(Buffer.from(String(input.adjunto.base64 ?? ''), 'base64')).digest('hex');
       const dhash = input.adjunto && esDhash(input.fotoDhash) ? input.fotoDhash : null;
@@ -607,9 +660,24 @@ export function createComercial({ data, users, files, audit, now = () => new Dat
       if (r.estado && r.estado !== 'pendiente') throw new HttpError(409, 'Esta receta ya fue revisada.');
       const m = normalizeName(motivo);
       if (!aprobar && m.length < 3) throw new HttpError(422, 'Explica por qué se rechaza.', { motivo: 'Escribe el motivo del rechazo.' });
+      if (aprobar && !(r.items?.length)) throw new HttpError(409, 'Esta receta llegó sin medicamentos: agrégalos antes de aprobarla.', { items: 'Agrega los medicamentos.' });
       const estado = aprobar ? 'aprobada' : 'rechazada';
       const out = await data.update('recetas', r.id, { estado, decididoPor: actor.id, decididoAt: now().toISOString(), motivo: aprobar ? null : m, nota: aprobar ? (m || null) : null, corregible: !aprobar && Boolean(corregible) });
       await audit({ actorId: actor.id, action: `receta_${estado}`, entity: 'receta', entityId: r.id, before: { estado: r.estado ?? 'pendiente' }, after: { estado, motivo: m || null } });
+      return out;
+    },
+    /** La revisión completa (o corrige) los medicamentos de una receta pendiente antes de aprobarla. */
+    async completarReceta(actor, id, input = {}) {
+      permitir(tieneRol(actor, ['administrador', 'gerencia', 'supervisor']), 'No tienes permiso para revisar recetas.');
+      const r = await data.get('recetas', String(id));
+      if (!r) throw new HttpError(404, 'La receta no existe.');
+      if (r.estado && r.estado !== 'pendiente') throw new HttpError(409, 'Solo se completan recetas pendientes.');
+      const items = Array.isArray(input.items) ? input.items : [];
+      const e = {}; if (!items.length) e.items = 'Agrega al menos un medicamento.';
+      const lineas = await lineasReceta(items, e);
+      if (Object.keys(e).length) invalido(e);
+      const out = await data.update('recetas', r.id, { items: lineas });
+      await audit({ actorId: actor.id, action: 'receta_completada', entity: 'receta', entityId: r.id, before: { items: r.items?.length ?? 0 }, after: { items: lineas.length } });
       return out;
     },
     async decidirRecetasLote(actor, { ids, aprobar, motivo, corregible } = {}) {

@@ -20,8 +20,8 @@ export function agruparMovimiento({ recetas = [], vouchers = [], ventas = [], fa
   };
   for (const r of recetas) for (const l of r.items ?? []) {
     const f = fila(r.provincia, r.municipio, l.medicamentoId, l.medicamento);
-    f.recetadas += Number(l.unidades) || 0; f.recetas += 1;
-    f.volumenRecetado += (Number(l.unidades) || 0) * (precios.get(l.medicamentoId) ?? 0);
+    f.recetadas += Number(l.cajas ?? l.unidades) || 0; f.recetas += 1;
+    f.volumenRecetado += (Number(l.cajas ?? l.unidades) || 0) * (precios.get(l.medicamentoId) ?? 0);
   }
   let sinUbicacion = 0;
   for (const v of vouchers) {
@@ -30,7 +30,7 @@ export function agruparMovimiento({ recetas = [], vouchers = [], ventas = [], fa
     if (!far) { sinUbicacion++; continue; }
     for (const l of v.items ?? []) {
       const f = fila(far.provincia, far.municipio, l.medicamentoId, l.medicamento);
-      f.vendidasVoucher += Number(l.cantidad) || 0; f.montoVoucher += Number(l.monto) || 0;
+      f.vendidasVoucher += Number(l.cajas ?? l.cantidad) || 0; f.montoVoucher += Number(l.monto) || 0;
       if (v.estado === 'pendiente') f.vouchersPendientes += 1;
     }
   }
@@ -79,7 +79,7 @@ export function createMovimiento({ data, users }) {
     for (const r of recetas) {
       const x = rk.get(r.medicoId) ?? { medicoId: r.medicoId, recetas: 0, unidades: 0, volumen: 0, ultima: null, municipios: new Set() };
       x.recetas++; x.municipios.add(`${r.municipio}, ${r.provincia}`);
-      for (const l of r.items ?? []) { x.unidades += Number(l.unidades) || 0; x.volumen += (Number(l.unidades) || 0) * (precios.get(l.medicamentoId) ?? 0); }
+      for (const l of r.items ?? []) { x.unidades += Number(l.cajas ?? l.unidades) || 0; x.volumen += (Number(l.cajas ?? l.unidades) || 0) * (precios.get(l.medicamentoId) ?? 0); }
       if (!x.ultima || r.fecha > x.ultima) x.ultima = r.fecha;
       rk.set(r.medicoId, x);
     }
@@ -93,7 +93,7 @@ export function createMovimiento({ data, users }) {
       if (!f || !enProv(f)) continue;
       const x = fx.get(f.id) ?? { farmaciaId: f.id, farmacia: f.nombre, municipio: f.municipio, provincia: f.provincia, dependientes: new Set(), vouchers: 0, unidades: 0, monto: 0, meds: new Map() };
       x.dependientes.add(v.dependienteId); x.vouchers++;
-      for (const l of v.items ?? []) { x.unidades += Number(l.cantidad) || 0; x.monto += Number(l.monto) || 0; x.meds.set(l.medicamentoId, (x.meds.get(l.medicamentoId) ?? 0) + (Number(l.cantidad) || 0)); }
+      for (const l of v.items ?? []) { x.unidades += Number(l.cajas ?? l.cantidad) || 0; x.monto += Number(l.monto) || 0; x.meds.set(l.medicamentoId, (x.meds.get(l.medicamentoId) ?? 0) + (Number(l.cajas ?? l.cantidad) || 0)); }
       fx.set(f.id, x);
     }
     const farmaciasTop = [...fx.values()].map((x) => { const top = [...x.meds.entries()].sort((a, b) => b[1] - a[1])[0]; return { farmaciaId: x.farmaciaId, farmacia: x.farmacia, municipio: x.municipio, provincia: x.provincia, dependientes: x.dependientes.size, vouchers: x.vouchers, unidades: x.unidades, monto: r2(x.monto), masVendido: top ? nombres.get(top[0]) ?? null : null }; })

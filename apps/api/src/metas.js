@@ -49,7 +49,7 @@ export function valoresDelMes({ jornadas = [], recetas = [], precios = new Map()
     visitasMedicos: paradas.reduce((s, p) => s + (p.medicos?.length ?? 0), 0),
     recetas: recetas.length,
     medicamentosPorReceta: recetas.length ? r2(lineas.length / recetas.length) : 0,
-    volumen: r2(lineas.reduce((s, l) => s + (Number(l.unidades) || 0) * (precios.get(l.medicamentoId) ?? 0), 0)),
+    volumen: r2(lineas.reduce((s, l) => s + (Number(l.cajas ?? l.unidades) || 0) * (precios.get(l.medicamentoId) ?? 0), 0)),
     pacientes: new Set(recetas.map((r) => r.pacienteId).filter(Boolean)).size,
   };
 }
@@ -174,7 +174,7 @@ export function createMetas({ data, users, audit, hoy }) {
       [ven, ...miembros].forEach((u) => enEquipo.add(u.id));
       const vVouchers = r2(vouchers.reduce((s, v) => { const f = farmacias.get(usuariosPor.get(v.dependienteId)?.farmaciaId); return f && dentroDeZona(zv, f.provincia, f.municipio) ? s + Number(v.total || 0) : s; }, 0));
       const vLab = r2(ventas.filter((v) => dentroDeZona(zv, v.provincia, v.municipio)).reduce((s, v) => s + (Number(v.monto) || (Number(v.unidades) || 0) * (Number(v.precioUnitario) || 0)), 0));
-      const recetado = r2(recetas.filter((r) => dentroDeZona(zv, r.provincia, r.municipio)).reduce((s, r) => s + (r.items ?? []).reduce((t, l) => t + (Number(l.unidades) || 0) * (precios.get(l.medicamentoId) ?? 0), 0), 0));
+      const recetado = r2(recetas.filter((r) => dentroDeZona(zv, r.provincia, r.municipio)).reduce((s, r) => s + (r.items ?? []).reduce((t, l) => t + (Number(l.cajas ?? l.unidades) || 0) * (precios.get(l.medicamentoId) ?? 0), 0), 0));
       const meta = config.porEquipo?.[ven.id] ?? config.equipoGlobal ?? null;
       const total = r2(vVouchers + vLab);
       const integrantes = [ven, ...miembros].map((u) => ({ id: u.id, nombre: u.fullName, posicion: u.position, promedio: avancePor.get(u.id)?.promedio ?? null, metricas: avancePor.get(u.id)?.metricas ?? [] }));

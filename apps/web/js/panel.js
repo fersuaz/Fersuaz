@@ -300,6 +300,34 @@ function vistaS(ruta, orden, titulo, sub, ...contenido) {
 let cache = {};
 async function medicamentos() { return (cache.meds ??= (await api('GET', '/api/catalogo/medicamentos')).items); }
 
+/** Caja o unidades sueltas (tabletas, cápsulas…): solo para medicamentos con unidades por caja, no jarabes. */
+const precioUnidadMed = (m) => (Number(m?.precio) > 0 && Number(m?.unidadesPorCaja) > 0 ? Math.round((Number(m.precio) / Number(m.unidadesPorCaja)) * 100) / 100 : null);
+const precioSegunForma = (m, forma) => (forma === 'unidad' ? precioUnidadMed(m) : m?.precio ?? null);
+/**
+ * Selector "Caja / Unidades" de una línea. `ajustar(m)` lo muestra solo si el medicamento tiene unidades por caja.
+ * Con `prec` propone el precio según la forma, sin pisar un precio escrito a mano.
+ */
+function formaLinea({ prec = null, alCambiar = () => {}, valor = 'caja' } = {}) {
+  const sel = h('select', { 'aria-label': 'Por caja o por unidades', 'data-f': '1' }, h('option', { value: 'caja' }, 'Caja'), h('option', { value: 'unidad' }, 'Unidades'));
+  sel.value = valor === 'unidad' ? 'unidad' : 'caja';
+  const nota = h('small', { class: 'forma-nota' });
+  const el = h('label', { class: 'forma-med', hidden: true }, h('span', {}, 'Se indica por'), sel, nota);
+  let med = null;
+  const sugerir = () => {
+    if (!prec || !med) return;
+    const s = precioSegunForma(med, sel.value);
+    if (!prec.value || prec.dataset.sugerido === prec.value) { prec.value = s ?? ''; prec.dataset.sugerido = s ?? ''; }
+  };
+  const ajustar = (m, { proponer = true } = {}) => {
+    med = m ?? null; const ok = Number(m?.unidadesPorCaja) > 0;
+    el.hidden = !ok; if (!ok) sel.value = 'caja';
+    nota.textContent = ok ? `Caja de ${fmtN.format(m.unidadesPorCaja)}${precioUnidadMed(m) ? `, ${RD(precioUnidadMed(m))} c/u` : ''}` : '';
+    if (proponer) sugerir();
+  };
+  sel.addEventListener('change', () => { sugerir(); alCambiar(sel.value); });
+  return { el, sel, ajustar, valor: () => sel.value };
+}
+
 function lineasEditor({ conMonto }) {
   const cont = h('div', { class: 'lineas' });
   const total = h('span', { class: 'total', 'aria-live': 'polite' });
@@ -307,11 +335,14 @@ function lineasEditor({ conMonto }) {
   const recalcular = () => { if (conMonto) total.textContent = `Total ${RD([...cont.querySelectorAll('[name$=".monto"]')].reduce((s, i) => s + (Number(i.value) || 0), 0))}`; };
   function agregar() {
     const i = n++;
+    const forma = formaLinea();
     const fila = h('div', { class: `linea${conMonto ? '' : ' sin-monto'}` },
       campo(`items.${i}.medicamentoId`, 'Medicamento', { options: meds.map((m) => ({ value: m.id, label: m.presentacion ? `${m.nombre}, ${m.presentacion}` : m.nombre })), placeholder: 'Elige el medicamento' }),
-      conMonto ? campo(`items.${i}.cantidad`, 'Cantidad', { type: 'number', min: 1, step: 1, value: 1, inputmode: 'numeric' }) : campo(`items.${i}.unidades`, 'Unidades', { type: 'number', min: 1, step: 1, value: 1, inputmode: 'numeric' }),
+      conMonto ? campo(`items.${i}.cantidad`, 'Cantidad', { type: 'number', min: 1, step: 1, value: 1, inputmode: 'numeric' }) : campo(`items.${i}.unidades`, 'Cantidad indicada', { type: 'number', min: 1, step: 1, value: 1, inputmode: 'numeric' }),
+      forma.el,
       conMonto ? campo(`items.${i}.monto`, 'Monto RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal', oninput: recalcular }) : null,
       h('button', { type: 'button', class: 'quitar', 'aria-label': 'Quitar medicamento', onclick: () => { if (cont.children.length > 1) { fila.remove(); recalcular(); } } }, 'Quitar'));
+    fila.querySelector('select').addEventListener('change', (e) => forma.ajustar(meds.find((m) => m.id === e.target.value)));
     cont.append(fila); recalcular();
   }
   return {
@@ -320,7 +351,8 @@ function lineasEditor({ conMonto }) {
     boton: h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: agregar }, 'Agregar medicamento'),
     valores: () => [...cont.children].map((f) => {
       const g = (s) => f.querySelector(`[name$=".${s}"]`)?.value;
-      return conMonto ? { medicamentoId: g('medicamentoId'), cantidad: Number(g('cantidad')), monto: Number(g('monto')) } : { medicamentoId: g('medicamentoId'), unidades: Number(g('unidades')) };
+      const forma = f.querySelector('[data-f]')?.value ?? 'caja';
+      return conMonto ? { medicamentoId: g('medicamentoId'), forma, cantidad: Number(g('cantidad')), monto: Number(g('monto')) } : { medicamentoId: g('medicamentoId'), forma, unidades: Number(g('unidades')) };
     }),
     hayMeds: () => meds.length > 0,
   };
@@ -502,11 +534,12 @@ function cargaMasiva(cfg) {
     const cant = h('input', { type: 'number', min: 1, step: 1, value: 1, inputmode: 'numeric', 'aria-label': cfg.etiquetaCant });
     const prec = cfg.conPrecio ? h('input', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal', 'aria-label': 'Precio por unidad RD$', placeholder: '0.00' }) : null;
     const sub = cfg.conPrecio ? h('span', { class: 'cm-sub' }, RD(0)) : null;
-    const l = { sel, cant, prec, sub };
+    const forma = formaLinea({ prec, alCambiar: () => recalcular() });
+    const l = { sel, cant, prec, sub, forma };
     const quitar = h('button', { type: 'button', class: 'btn-enlace cm-quitar', 'aria-label': 'Quitar este medicamento', onclick: () => { if (f.lineas.length === 1) { sel.value = ''; cant.value = 1; if (prec) prec.value = ''; } else { f.lineas.splice(f.lineas.indexOf(l), 1); fila.remove(); } recalcular(); } }, 'Quitar');
     const fila = h('div', { class: `cm-linea${cfg.conPrecio ? '' : ' sin-precio'}` }, h('label', {}, h('span', {}, 'Medicamento'), sel), h('label', {}, h('span', {}, cfg.etiquetaCant), cant),
-      prec ? h('label', {}, h('span', {}, 'Precio por unidad RD$'), prec) : null, sub ? h('div', { class: 'cm-subcaja' }, h('span', {}, 'Subtotal'), sub) : null, quitar);
-    sel.addEventListener('change', () => { const m = cfg.meds.find((x) => x.id === sel.value); if (prec && m?.precio && !prec.value) prec.value = m.precio; recalcular(); });
+      forma.el, prec ? h('label', {}, h('span', {}, 'Precio RD$ c/u'), prec) : null, sub ? h('div', { class: 'cm-subcaja' }, h('span', {}, 'Subtotal'), sub) : null, quitar);
+    sel.addEventListener('change', () => { const m = cfg.meds.find((x) => x.id === sel.value); forma.ajustar(m); recalcular(); });
     fila.addEventListener('input', recalcular);
     f.lineas.push(l); f.cajaLineas.append(fila);
     if (foco) sel.focus();
@@ -571,7 +604,7 @@ function cargaMasiva(cfg) {
   function validar(f) {
     const errs = [];
     const lineas = f.lineas.filter((l) => l.sel.value);
-    if (!lineas.length) errs.push('Elige al menos un medicamento de FERSUAZ.');
+    if (!lineas.length && !cfg.medsOpcional) errs.push('Elige al menos un medicamento de FERSUAZ.');
     const ids = lineas.map((l) => l.sel.value);
     if (new Set(ids).size !== ids.length) errs.push('Un medicamento está repetido: sube su cantidad en vez de repetirlo.');
     for (const l of lineas) {
@@ -596,7 +629,7 @@ function cargaMasiva(cfg) {
         f.estado = 'enviando'; f.el.classList.add('enviando'); f.msg.textContent = 'Enviando…';
         enviarBtn.textContent = `Enviando ${ok + mal + 1} de ${pend.length}…`;
         try {
-          const items = f.lineas.filter((l) => l.sel.value).map((l) => ({ medicamentoId: l.sel.value, ...(cfg.conPrecio ? { cantidad: Number(l.cant.value), precio: l.prec.value } : { unidades: Number(l.cant.value) }) }));
+          const items = f.lineas.filter((l) => l.sel.value).map((l) => ({ medicamentoId: l.sel.value, forma: l.forma.valor(), ...(cfg.conPrecio ? { cantidad: Number(l.cant.value), precio: l.prec.value } : { unidades: Number(l.cant.value) }) }));
           const foto = await prepararFoto(f.file);
           await cfg.enviar({ items, foto, huella: f.huella, dhash: f.dhash, fecha: f.fecha?.value, extras: f.extras?.valores?.() ?? {} });
           f.estado = 'ok'; ok++;
@@ -616,7 +649,8 @@ function cargaMasiva(cfg) {
     // Las que entraron se quitan de la lista después de un momento; quedan solo las que hay que corregir.
     setTimeout(() => { for (const f of filas.filter((x) => x.estado === 'ok')) { URL.revokeObjectURL(f.url); f.el.remove(); } filas.splice(0, filas.length, ...filas.filter((x) => x.estado !== 'ok')); if (!filas.length) { avisoDup.textContent = ''; rechazos.replaceChildren(); } numerar(); recalcular(); }, 2500);
   });
-  return { el: h('div', { class: 'cm' }, cfg.arriba ?? null, zona, avisoDup, rechazos, lista, barra), recalcular };
+  const notaOpc = cfg.medsOpcional ? h('p', { class: 'hint cm-opcional' }, 'Los medicamentos son opcionales: puedes enviar solo la foto. La revisión los agrega antes de aprobar.') : null;
+  return { el: h('div', { class: 'cm' }, cfg.arriba ?? null, notaOpc, zona, avisoDup, rechazos, lista, barra), recalcular };
 }
 
 V.voucher = async () => {
@@ -630,7 +664,7 @@ V.voucher = async () => {
   let cm;
   selDep?.querySelector('select').addEventListener('change', async (e) => { pct = null; if (e.target.value) { try { pct = (await api('GET', `/api/vouchers/porcentaje?dependienteId=${e.target.value}`)).item.porcentaje; } catch { /* sin porcentaje */ } } cm.recalcular(); });
   cm = cargaMasiva({
-    nombre: 'voucher', meds, conPrecio: true, etiquetaCant: 'Cantidad', porcentaje: () => pct,
+    nombre: 'voucher', meds, conPrecio: true, etiquetaCant: 'Cantidad', porcentaje: () => pct, medsOpcional: !carga,
     extras: () => {
       const depElegida = () => deps?.find((d) => d.id === selDep?.querySelector('select').value) ?? (yo.farmacia ?? {});
       const med = selectorMedico(catMed, { ubicacion: () => (selDep ? { dependienteId: selDep.querySelector('select').value } : {}), preferir: depElegida });
@@ -702,34 +736,82 @@ function listaFiltrada(clave, filas, campos, pintarTabla, resumen) {
   return h('div', { class: 'lf' }, filas.length ? h('div', { class: 'lf-barra' }, ...principales.map((x) => x.nodo), extra.length ? mas : null, h('div', { class: 'lf-pie' }, cuenta, limpiar)) : null, caja);
 }
 
+/**
+ * Líneas de medicamentos editables (corregir un voucher, completar en la revisión): medicamento, caja o unidades,
+ * cantidad y, si `conPrecio`, precio c/u. `valores()` da las líneas listas para la API.
+ */
+function lineasMeds({ meds, conPrecio, items = [], alCambiar = () => {} }) {
+  const activos = meds.filter((m) => m.activo !== false);
+  const lineas = h('div', { class: 'cv-lineas' });
+  const totalEl = h('strong', {});
+  const num = (v) => Number(String(v).replace(/,/g, '')) || 0;
+  const recalc = () => { let t = 0; lineas.querySelectorAll('.cv-linea').forEach((l) => { t += num(l.querySelector('[data-c]').value) * num(l.querySelector('[data-p]')?.value); }); totalEl.textContent = RD(t); alCambiar(t); };
+  const linea = (it = {}) => {
+    const sel = h('select', { 'aria-label': 'Medicamento', 'data-m': '1' }, h('option', { value: '' }, 'Elige el medicamento'), ...activos.map((m) => h('option', { value: m.id }, `${m.nombre}${m.presentacion ? `, ${m.presentacion}` : ''}`)));
+    sel.value = it.medicamentoId ?? '';
+    const cant = h('input', { inputmode: 'numeric', value: (conPrecio ? it.cantidad : it.unidades) ?? 1, 'aria-label': conPrecio ? 'Cantidad' : 'Cantidad indicada', 'data-c': '1' });
+    const precio = conPrecio ? h('input', { inputmode: 'decimal', value: it.precio ?? (it.monto && it.cantidad ? (it.monto / it.cantidad).toFixed(2) : ''), 'aria-label': 'Precio RD$ c/u', 'data-p': '1' }) : null;
+    const forma = formaLinea({ prec: precio, valor: it.forma, alCambiar: recalc });
+    forma.ajustar(activos.find((x) => x.id === sel.value), { proponer: false });
+    sel.addEventListener('change', () => { forma.ajustar(activos.find((x) => x.id === sel.value)); recalc(); });
+    const el = h('div', { class: `cv-linea${conPrecio ? '' : ' sin-precio'}` },
+      h('label', {}, h('span', {}, 'Medicamento'), sel), forma.el, h('label', {}, h('span', {}, conPrecio ? 'Cantidad' : 'Cantidad indicada'), cant), precio ? h('label', {}, h('span', {}, 'Precio RD$ c/u'), precio) : null,
+      h('button', { type: 'button', class: 'btn-enlace', onclick: () => { if (lineas.children.length > 1) { el.remove(); recalc(); } } }, 'Quitar'));
+    el.addEventListener('input', recalc);
+    lineas.append(el);
+  };
+  (items.length ? items : [{}]).forEach(linea); recalc();
+  return {
+    el: lineas, totalEl, agregar: () => linea(),
+    valores: () => [...lineas.querySelectorAll('.cv-linea')].map((l) => ({ medicamentoId: l.querySelector('[data-m]').value, forma: l.querySelector('[data-f]').value,
+      ...(conPrecio ? { cantidad: Number(l.querySelector('[data-c]').value), precio: num(l.querySelector('[data-p]').value) } : { unidades: Number(l.querySelector('[data-c]').value) }) })),
+  };
+}
+/** Texto de una línea: "Tableta, 2 cajas" o "Tableta, 10 unidades". */
+const cantLinea = (i) => { const n = Number(i.unidades ?? i.cantidad) || 0; return i.forma === 'unidad' ? `${fmtN.format(n)} unidad${n === 1 ? '' : 'es'}` : `${fmtN.format(n)} caja${n === 1 ? '' : 's'}`; };
+const medsTexto = (items) => (items?.length ? items.map((i) => `${i.medicamento}: ${cantLinea(i)}`).join('; ') : 'Sin medicamentos');
+/**
+ * La revisión completa los medicamentos de un voucher o receta que llegó solo con la foto (o los corrige).
+ * Devuelve true si se guardó.
+ */
+async function completarMeds({ titulo, ruta, conPrecio, items = [], foto = null }) {
+  const meds = await medicamentos();
+  const ed = lineasMeds({ meds, conPrecio, items });
+  const err = h('div', { role: 'alert' });
+  // La foto se ve dentro del mismo cuadro para copiar lo que dice sin cerrarlo.
+  const fotoEl = foto ? h('div', { class: 'completar-foto' }, h('span', { class: 'hint' }, 'Cargando la foto…')) : null;
+  if (foto) cargarAdjunto(foto).then((x) => fotoEl.replaceChildren(h('a', { href: x.url, target: '_blank', rel: 'noopener' }, h('img', { src: x.url, alt: 'Foto cargada' })))).catch(() => fotoEl.replaceChildren(h('span', { class: 'hint' }, 'No se pudo cargar la foto.')));
+  const d = $('#dialogo'); $('#dialogo-titulo').textContent = titulo;
+  $('#dialogo-cuerpo').replaceChildren(
+    h('p', { class: 'hint' }, items.length ? 'Corrige los medicamentos según la foto.' : 'Llegó sin medicamentos. Agrégalos según la foto; después podrás aprobarlo.'),
+    fotoEl,
+    ed.el, h('div', { class: 'acciones', style: 'justify-content:space-between' }, h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: () => ed.agregar() }, 'Agregar medicamento'), conPrecio ? h('span', {}, 'Total ', ed.totalEl) : null), err);
+  $('#dialogo-ok').textContent = 'Guardar medicamentos';
+  for (;;) {
+    d.showModal();
+    const ok = await new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
+    if (!ok) return false;
+    const vals = ed.valores();
+    err.replaceChildren();
+    if (!vals.length || vals.some((x) => !x.medicamentoId)) { err.append(h('div', { class: 'aviso error' }, 'Elige el medicamento en cada fila.')); continue; }
+    try { accionPendiente = 'guardar medicamentos'; await api('POST', ruta, { items: vals }); return true; }
+    catch (e) { err.append(h('div', { class: 'aviso error' }, e.fields ? Object.values(e.fields).join(' ') : e.message)); }
+  }
+}
 /** Corregir un voucher rechazado: la foto a la izquierda y fecha, medicamentos y médico a la derecha. */
 async function corregirVoucher(v) {
   const [meds, cat] = await Promise.all([medicamentos(), api('GET', '/api/catalogo/medicos').catch(() => ({ items: [], especialidades: [] }))]);
   const catMed = { items: cat.items.filter((m) => m.estado !== 'inactivo' && m.estado !== 'rechazado'), especialidades: cat.especialidades ?? [] };
   const activos = meds.filter((m) => m.activo !== false);
   const fechaIn = h('input', { type: 'date', value: v.fecha, max: hoy(), id: 'cv-fecha' });
-  const lineas = h('div', { class: 'cv-lineas' });
-  const totalEl = h('strong', {});
-  const recalc = () => { let t = 0; lineas.querySelectorAll('.cv-linea').forEach((l) => { const c = Number(l.querySelector('[data-c]').value) || 0; const p = Number(String(l.querySelector('[data-p]').value).replace(/,/g, '')) || 0; t += c * p; }); totalEl.textContent = RD(t); };
-  const linea = (it = {}) => {
-    const sel = h('select', { 'aria-label': 'Medicamento', 'data-m': '1' }, h('option', { value: '' }, 'Elige el medicamento'), ...activos.map((m) => h('option', { value: m.id }, `${m.nombre}${m.presentacion ? `, ${m.presentacion}` : ''}`)));
-    sel.value = it.medicamentoId ?? '';
-    const cant = h('input', { inputmode: 'numeric', value: it.cantidad ?? 1, 'aria-label': 'Cantidad', 'data-c': '1' });
-    const precio = h('input', { inputmode: 'decimal', value: it.precio ?? (it.monto && it.cantidad ? (it.monto / it.cantidad).toFixed(2) : ''), 'aria-label': 'Precio por unidad RD$', 'data-p': '1' });
-    sel.addEventListener('change', () => { const m = activos.find((x) => x.id === sel.value); if (m?.precio != null && !precio.value) precio.value = m.precio; recalc(); });
-    const el = h('div', { class: 'cv-linea' },
-      h('label', {}, h('span', {}, 'Medicamento'), sel), h('label', {}, h('span', {}, 'Cantidad'), cant), h('label', {}, h('span', {}, 'Precio por unidad RD$'), precio),
-      h('button', { type: 'button', class: 'btn-enlace', onclick: () => { if (lineas.children.length > 1) { el.remove(); recalc(); } } }, 'Quitar'));
-    el.addEventListener('input', recalc);
-    lineas.append(el);
-  };
-  (v.items.length ? v.items : [{}]).forEach(linea); recalc();
+  const ed = lineasMeds({ meds: activos, conPrecio: true, items: v.items });
+  const lineas = ed.el; const totalEl = ed.totalEl;
   const med = selectorMedico(catMed, {});
   if (v.medicoId) { const s = med.nodos[0].querySelector('select'); s.value = v.medicoId; }
   const err = h('div', { role: 'alert' });
   const enviarC = h('button', { class: 'btn', type: 'button', onclick: async () => {
     err.replaceChildren();
-    const items = [...lineas.querySelectorAll('.cv-linea')].map((l) => ({ medicamentoId: l.querySelector('[data-m]').value, cantidad: Number(l.querySelector('[data-c]').value), precio: Number(String(l.querySelector('[data-p]').value).replace(/,/g, '')) }));
+    const items = ed.valores();
     if (items.some((i) => !i.medicamentoId)) { err.append(h('div', { class: 'aviso error' }, 'Elige el medicamento en cada fila.')); return; }
     const malMed = med.valido(); if (malMed) { err.append(h('div', { class: 'aviso error' }, malMed)); return; }
     enviarC.disabled = true;
@@ -745,7 +827,7 @@ async function corregirVoucher(v) {
       h('div', { class: 'tarjeta cv-form' },
         h('label', { for: 'cv-fecha' }, h('span', {}, 'Fecha del voucher')), fechaIn, ...med.nodos,
         h('h3', {}, 'Medicamentos'), lineas,
-        h('div', { class: 'acciones', style: 'justify-content:space-between' }, h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: () => linea() }, 'Agregar medicamento'), h('span', {}, 'Total ', totalEl)),
+        h('div', { class: 'acciones', style: 'justify-content:space-between' }, h('button', { type: 'button', class: 'btn-sec btn-peq', onclick: () => ed.agregar() }, 'Agregar medicamento'), h('span', {}, 'Total ', totalEl)),
         err, h('div', { class: 'acciones' }, enviarC, h('button', { type: 'button', class: 'btn-sec', onclick: () => irA('misVouchers') }, 'Cancelar')))));
 }
 const finDeMes = () => { const [y, m] = hoy().split('-').map(Number); return `${y}-${String(m).padStart(2, '0')}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`; };
@@ -772,12 +854,12 @@ V.misVouchers = async () => {
     { id: 'min', etiqueta: 'Total desde RD$', tipo: 'minimo', valor: (v) => v.total },
   ];
   let vistos = filas;
-  const detV = (v) => `${fecha(v.fecha)} · ${v.items.map((i) => `${i.medicamento}${i.cantidad ? ` ×${i.cantidad}` : ""}`).join(', ')} · ${RD(v.total)}${v.medico ? ` · ${v.medico}` : ''}`;
+  const detV = (v) => `${fecha(v.fecha)} · ${medsTexto(v.items)} · ${RD(v.total)}${v.medico ? ` · ${v.medico}` : ''}`;
   const galeriaV = (v) => verAdjunto(v.foto.clave, vistos.filter((x) => x.foto).map((x) => ({ clave: x.foto.clave, nombre: `Voucher del ${fecha(x.fecha)}`, detalle: `${detV(x)} · ${ESTADOS_V[x.estado] ?? x.estado}` })));
   const cols = [
     { t: 'Foto', v: (v) => (v.foto ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => galeriaV(v) }, 'Ver foto') : v.referencia ?? '') }, { t: 'Fecha', v: (v) => fecha(v.fecha) },
     ...(vendedor ? [{ t: 'Dependiente', v: (v) => [v.dependiente, v.farmacia ? h('small', { style: 'display:block;color:var(--texto-2)' }, v.farmacia) : null] }] : [{ t: 'Cargado por', v: (v) => v.cargadoPor ?? 'Tú' }]),
-    { t: 'Medicamentos', v: (v) => v.items.map((i) => `${i.medicamento}${i.cantidad ? ` ×${i.cantidad}` : ""}`).join(', ') },
+    { t: 'Medicamentos', v: (v) => (v.items.length ? medsTexto(v.items) : h('span', { class: 'hint' }, 'Sin medicamentos: la revisión los agrega')) },
     { t: 'Médico', v: (v) => v.medico ?? h('span', { style: 'color:var(--texto-2)' }, 'Sin médico') },
     { t: 'Total', num: true, v: (v) => RD(v.total) }, { t: 'Estado', v: (v) => [chip(v.estado), v.motivo ? h('small', { style: 'display:block;color:var(--texto-2)' }, v.motivo) : null, v.estado === 'rechazado' && v.corregible ? h('small', { style: 'display:block;color:#C0462C;font-weight:600' }, `Corrígelo antes del ${fecha(finDeMes())}`) : null, v.nota ? h('small', { style: 'display:block;color:var(--texto-2)' }, `Nota: ${v.nota}`) : null] },
     { t: '', v: (v) => v.estado === 'rechazado' && v.corregible ? h('button', { class: 'btn btn-peq', onclick: () => irA('misVouchers', { corregir: v.id }) }, 'Corregir') : v.estado === 'pendiente' ? h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await confirmar('Anular voucher', `¿Anular el voucher del ${fecha(v.fecha)} por ${RD(v.total)}? No contará para la comisión.`, { okTexto: 'Anular voucher' })) { await api('POST', `/api/vouchers/${v.id}/anular`).catch((e) => alert(e.message)); pintar(); } } }, 'Anular') : '' },
@@ -1292,7 +1374,7 @@ V.receta = async () => {
     };
   };
   const cmR = cargaMasiva({
-    nombre: 'receta', meds: await medicamentos(), conPrecio: false, etiquetaCant: 'Unidades', extras: extrasReceta,
+    nombre: 'receta', meds: await medicamentos(), conPrecio: false, etiquetaCant: 'Cantidad indicada', extras: extrasReceta,
     arriba: h('div', {}, h('div', { class: 'form-fila' }, selOp), h('p', { class: 'hint' }, '¿El médico no está en la lista? Elige "No está en la lista" y escribe su nombre, apellido y especialidad. Queda guardado para la próxima vez.')),
     enviar: async ({ items, foto, huella, dhash, extras }) => api('POST', '/api/recetas', { operativoId: selOp.querySelector('select').value, medicoId: await extras.medico.valor(), paciente: extras.paciente, items, adjunto: foto, fotoHuella: huella, fotoDhash: dhash }),
   });
@@ -1329,7 +1411,7 @@ async function recetaMedico() {
     };
   };
   const cm = cargaMasiva({
-    nombre: 'receta', meds, conPrecio: false, etiquetaCant: 'Unidades', extras, fechaReceta: true,
+    nombre: 'receta', meds, conPrecio: false, etiquetaCant: 'Cantidad indicada', extras, fechaReceta: true, medsOpcional: true,
     arriba: h('div', {}, h('div', { class: 'form-fila' }, selLugar), h('p', { class: 'hint' }, `Cada receta lleva tu nombre y especialidad (${yoTxt}). Si alguna la prescribió otro médico, cámbialo en esa fila. Todas pasan a revisión antes de contar.`)),
     enviar: async ({ items, foto, huella, dhash, fecha: f, extras: x }) => api('POST', '/api/recetas', { establecimientoId: lugarElegido().establecimientoId, fecha: f, medicoId: (await x.medico.valor()) || undefined, ...(x.paciente ? { paciente: x.paciente } : {}), items, adjunto: foto, fotoHuella: huella, fotoDhash: dhash }),
   });
@@ -1345,7 +1427,7 @@ V.misRecetas = async () => {
   const uni = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
   const filas = items.slice().reverse();
   let vistos = filas;
-  const meds = (r) => r.items.map((i) => `${i.medicamento} ×${i.unidades}`).join(', ');
+  const meds = (r) => medsTexto(r.items);
   const campos = [
     { id: 'q', etiqueta: 'Buscar', tipo: 'buscar', placeholder: 'Medicamento, médico, paciente…', valor: (r) => [meds(r), r.medico, r.paciente?.nombre, r.cargadoPorNombre, r.lugar].join(' ') },
     { id: 'estado', etiqueta: 'Estado', tipo: 'opciones', opciones: Object.entries(ESTADO_RECETA).filter(([k]) => items.some((r) => r.estado === k)).map(([value, label]) => ({ value, label })), valor: (r) => r.estado },
@@ -1374,7 +1456,7 @@ V.revisarRecetas = async () => {
   const { items } = await api('GET', '/api/recetas?estado=pendiente');
   const sub = (x) => h('small', { style: 'display:block;color:var(--texto-2)' }, x);
   const uni = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
-  const meds = (r) => r.items.map((i) => `${i.medicamento} ×${i.unidades}`).join(', ');
+  const meds = (r) => medsTexto(r.items);
   const filas = items.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || String(a.createdAt).localeCompare(String(b.createdAt)));
   let vistos = filas; let cambios = false;
   const SUG_R = [
@@ -1390,7 +1472,7 @@ V.revisarRecetas = async () => {
     if (m == null || m === false) return null;
     try { await api('POST', `/api/recetas/${r.id}/${aprobar ? 'aprobar' : 'rechazar'}`, { motivo: m }); cambios = true; return aprobar ? 'Aprobada' : 'Rechazada'; } catch (e) { alert(e.message); return null; }
   }
-  const etiquetas = (r) => ({ titulo: 'Lo que cargó', lineas: r.items.map((i) => ({ texto: i.medicamento, extra: `${fmtN.format(i.unidades)} unidad(es)` })),
+  const etiquetas = (r) => ({ titulo: 'Lo que cargó', lineas: r.items.length ? r.items.map((i) => ({ texto: i.medicamento, extra: cantLinea(i) })) : [{ texto: 'Sin medicamentos', extra: 'Agrégalos antes de aprobar' }],
     notas: [`Médico: ${r.medico}${r.especialidad ? `, ${r.especialidad}` : ''}`, `Fecha: ${fecha(r.fecha)}`, r.paciente ? `Paciente: ${r.paciente.nombre}` : 'Sin paciente', `Cargada por ${r.cargadoPorNombre}${r.cargadoPorRol ? ` (${r.cargadoPorRol})` : ''}`] });
   const abrir = (r) => verAdjunto(r.adjunto.clave, vistos.filter((x) => x.adjunto).map((x) => ({ clave: x.adjunto.clave, nombre: `${x.cargadoPorNombre} · ${x.lugar ?? x.municipio}`, detalle: `${x.municipio}, ${x.provincia} · ${meds(x)}`,
     etiquetas: () => etiquetas(x), acciones: [{ texto: 'Aprobar', clase: 'ok', accion: () => decidir(x, true) }, { texto: 'Rechazar', clase: 'no', accion: () => decidir(x, false) }] })), { onClose: () => { if (cambios) router(); } });
@@ -1436,8 +1518,9 @@ V.revisarRecetas = async () => {
     { t: 'Fecha', v: (r) => fecha(r.fecha) },
     { t: 'Médico', v: (r) => [r.medico, sub(r.especialidad)] },
     { t: 'Lugar', v: (r) => [r.lugar ?? r.municipio, sub(`${r.municipio}, ${r.provincia}`)] },
-    { t: 'Medicamentos', v: (r) => meds(r) },
-    { t: '', clase: 'td-acciones', v: (r) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' }, h('button', { class: 'btn btn-peq', onclick: async () => { if (await decidir(r, true)) router(); } }, 'Aprobar'), h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await decidir(r, false)) router(); } }, 'Rechazar')) },
+    { t: 'Medicamentos', v: (r) => [r.items.length ? meds(r) : h('span', { class: 'chip pendiente' }, 'Sin medicamentos'),
+      h('button', { class: 'btn-enlace btn-completar', type: 'button', onclick: async () => { if (await completarMeds({ titulo: `Medicamentos de la receta del ${fecha(r.fecha)}`, ruta: `/api/recetas/${r.id}/completar`, conPrecio: false, items: r.items, foto: r.adjunto?.clave })) { aviso('Listo: medicamentos guardados.', 'ok'); router(); } } }, r.items.length ? 'Corregir' : 'Agregar medicamentos')] },
+    { t: '', clase: 'td-acciones', v: (r) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' }, h('button', { class: 'btn btn-peq', disabled: !r.items.length, title: r.items.length ? null : 'Agrega los medicamentos antes de aprobar', onclick: async () => { if (await decidir(r, true)) router(); } }, 'Aprobar'), h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await decidir(r, false)) router(); } }, 'Rechazar')) },
   ];
   return vista('Recetas por revisar', 'Todas las pendientes: de promotoras y de médicos. Solo las aprobadas cuentan en metas y reportes. En la foto puedes comparar lo cargado y aprobar o rechazar sin cerrarla.',
     listaFiltrada('revisarRecetas', filas, campos, (vs, activos) => { vistos = vs; for (const id of [...sel]) if (!vs.some((r) => r.id === id)) sel.delete(id); pintarLote(); return h('div', {}, loteCaja, tabla(cols, vs, activos ? ['Ninguna receta pendiente con estos filtros', 'Cambia o limpia los filtros.'] : ['No hay recetas pendientes', 'Cuando una promotora o un médico cargue una, aparecerá aquí.'], { porPagina: 25 })); }));
@@ -1492,7 +1575,7 @@ V.revisar = async () => {
   // Por defecto: todos los pendientes, de cualquier usuario, provincia o municipio. Los filtros son opcionales.
   const { items } = await api('GET', '/api/vouchers?estado=pendiente');
   const sub = (x) => h('small', { style: 'display:block;color:var(--texto-2)' }, x);
-  const medsDe = (v) => v.items.map((i) => `${i.medicamento}${i.cantidad ? ` ×${i.cantidad}` : ''}`).join(', ');
+  const medsDe = (v) => medsTexto(v.items);
   const unicos = (xs) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
   const filas = items.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || String(a.createdAt).localeCompare(String(b.createdAt)));
   let vistos = filas; let cambios = false;
@@ -1521,7 +1604,7 @@ V.revisar = async () => {
       cambios = true; return aprobar ? 'Aprobado' : r.corregible ? 'Rechazado: lo puede corregir' : 'Rechazado';
     } catch (e) { alert(e.message); return null; }
   }
-  const etiquetasDe = (v) => ({ titulo: 'Lo que cargó', lineas: v.items.map((i) => ({ texto: `${i.medicamento}${i.presentacion ? `, ${i.presentacion}` : ''}`, extra: `${i.cantidad ?? 1} × ${RD(i.precio ?? (i.monto / (i.cantidad || 1)))} = ${RD(i.monto)}` })),
+  const etiquetasDe = (v) => ({ titulo: 'Lo que cargó', lineas: v.items.length ? v.items.map((i) => ({ texto: `${i.medicamento}${i.presentacion ? `, ${i.presentacion}` : ''}`, extra: `${cantLinea(i)} × ${RD(i.precio ?? (i.monto / (i.cantidad || 1)))} = ${RD(i.monto)}` })) : [{ texto: 'Sin medicamentos', extra: 'Agrégalos antes de aprobar' }],
     notas: [`Fecha del voucher: ${fecha(v.fecha)}`, v.medico ? `Médico: ${v.medico}` : 'Sin médico', v.cargadoPor ? `Cargado por ${v.cargadoPor}` : null].filter(Boolean), total: `Total ${RD(v.total)}` });
   const abrirFoto = (v) => verAdjunto(v.foto.clave, vistos.filter((x) => x.foto).map((x) => ({
     clave: x.foto.clave, nombre: `${x.dependiente} · ${x.farmacia ?? ''}`, detalle: `${x.municipio ? `${x.municipio}, ${x.provincia} · ` : ''}${medsDe(x)} · ${RD(x.total)}`,
@@ -1577,8 +1660,9 @@ V.revisar = async () => {
     { t: marcaTodos, etiqueta: 'Seleccionar este voucher', clase: 'td-sel', v: (v) => { const c = h('input', { type: 'checkbox', 'data-sel-voucher': v.id, 'aria-label': `Seleccionar voucher de ${v.dependiente} del ${fecha(v.fecha)} por ${RD(v.total)}` }); c.checked = sel.has(v.id); c.addEventListener('change', () => { if (c.checked) sel.add(v.id); else sel.delete(v.id); c.closest('tr')?.classList.toggle('fila-sel', c.checked); pintarLote(); }); queueMicrotask(() => c.closest('tr')?.classList.toggle('fila-sel', c.checked)); return h('span', { class: 'celda-sel' }, c); } },
     { t: 'Dependiente', v: (v) => [v.dependiente, sub(v.farmacia ?? ''), v.municipio ? sub(`${v.municipio}, ${v.provincia}`) : null] },
     { t: 'Foto', v: (v) => (v.foto ? h('button', { class: 'btn-sec btn-peq btn-suave', onclick: () => abrirFoto(v) }, 'Ver foto') : v.referencia ?? '') }, { t: 'Fecha', v: (v) => fecha(v.fecha) },
-    { t: 'Medicamentos', v: (v) => [medsDe(v), v.medico ? sub(v.medico) : null] }, { t: 'Total', num: true, v: (v) => RD(v.total) },
-    { t: '', clase: 'td-acciones', v: (v) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' }, h('button', { class: 'btn btn-peq', onclick: async () => { if (await decidir(v, true)) router(); } }, 'Aprobar'), h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await decidir(v, false)) router(); } }, 'Rechazar')) },
+    { t: 'Medicamentos', v: (v) => [v.items.length ? medsDe(v) : h('span', { class: 'chip pendiente' }, 'Sin medicamentos'), v.medico ? sub(v.medico) : null,
+      h('button', { class: 'btn-enlace btn-completar', type: 'button', onclick: async () => { if (await completarMeds({ titulo: `Medicamentos del voucher del ${fecha(v.fecha)}`, ruta: `/api/vouchers/${v.id}/completar`, conPrecio: true, items: v.items, foto: v.foto?.clave })) { aviso('Listo: medicamentos guardados.', 'ok'); router(); } } }, v.items.length ? 'Corregir' : 'Agregar medicamentos')] }, { t: 'Total', num: true, v: (v) => RD(v.total) },
+    { t: '', clase: 'td-acciones', v: (v) => h('span', { class: 'acciones', style: 'margin:0;flex-wrap:nowrap' }, h('button', { class: 'btn btn-peq', disabled: !v.items.length, title: v.items.length ? null : 'Agrega los medicamentos antes de aprobar', onclick: async () => { if (await decidir(v, true)) router(); } }, 'Aprobar'), h('button', { class: 'btn-sec btn-peq', onclick: async () => { if (await decidir(v, false)) router(); } }, 'Rechazar')) },
   ];
 
   return vista('Vouchers por revisar', 'Todos los pendientes, de cualquier dependiente, provincia o municipio. Solo los aprobados cuentan para la comisión. En la foto puedes comparar lo cargado y aprobar o rechazar sin cerrarla.',
@@ -2655,9 +2739,9 @@ V.catalogo = async () => {
     if (ES_GER()) {
       const b = h('button', { class: 'btn', type: 'submit' }, 'Agregar medicamento');
       const f = h('form', { class: 'tarjeta', novalidate: true }, h('h2', {}, 'Nuevo medicamento'),
-        h('div', { class: 'form-fila' }, campo('codigo', 'Código', { placeholder: 'Ej. TIODEX01', autocomplete: 'off' }, '(opcional)'), campo('nombre', 'Medicamento / Producto'), campo('linea', 'Línea', {}, '(opcional)'), campo('presentacion', 'Presentación', {}, '(opcional)'), campo('precio', 'Precio final RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }, '(opcional)')),
+        h('div', { class: 'form-fila' }, campo('codigo', 'Código', { placeholder: 'Ej. TIODEX01', autocomplete: 'off' }, '(opcional)'), campo('nombre', 'Medicamento / Producto'), campo('linea', 'Línea', {}, '(opcional)'), campo('presentacion', 'Presentación', {}, '(opcional)'), campo('unidadesPorCaja', 'Unidades por caja', { type: 'number', min: 2, step: 1, inputmode: 'numeric', placeholder: 'Ej. 30' }, '(vacío si es jarabe)'), campo('precio', 'Precio final RD$', { type: 'number', min: 0.01, step: 0.01, inputmode: 'decimal' }, '(opcional)')),
         h('div', { class: 'acciones' }, b));
-      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/medicamentos', { codigo: f.codigo.value, nombre: f.nombre.value, linea: f.linea.value, presentacion: f.presentacion.value, precio: f.precio.value || undefined }))) { cache = {}; irA('catalogo', { ver: 'medicamentos' }); } });
+      f.addEventListener('submit', async (e) => { e.preventDefault(); if (await enviar(f, b, () => api('POST', '/api/catalogo/medicamentos', { codigo: f.codigo.value, nombre: f.nombre.value, linea: f.linea.value, presentacion: f.presentacion.value, unidadesPorCaja: f.unidadesPorCaja.value || undefined, precio: f.precio.value || undefined }))) { cache = {}; irA('catalogo', { ver: 'medicamentos' }); } });
       bloques.push(S('nuevo', 'Nuevo medicamento', f));
     }
     const ponerPrecio = async (m) => {
@@ -2670,10 +2754,11 @@ V.catalogo = async () => {
       const v = await confirmar(`Editar ${m.nombre}`, 'Cambia lo que necesites. Si cambias el precio, el anterior queda en el historial.', { okTexto: 'Guardar cambios', campos: [
         { name: 'codigo', label: 'Código', value: m.codigo ?? '' }, { name: 'nombre', label: 'Medicamento / Producto', value: m.nombre },
         { name: 'presentacion', label: 'Presentación (opcional)', value: m.presentacion ?? '' }, { name: 'linea', label: 'Línea (opcional)', value: m.linea ?? '' },
+        { name: 'unidadesPorCaja', label: 'Unidades por caja (vacío si es jarabe)', value: m.unidadesPorCaja ?? '', type: 'number', inputmode: 'numeric' },
         { name: 'precio', label: 'Precio final RD$', value: m.precio ?? '', type: 'number', inputmode: 'decimal' }] });
       if (!v) return;
       try {
-        await api('POST', `/api/catalogo/medicamentos/${m.id}`, { codigo: v.codigo, nombre: v.nombre, presentacion: v.presentacion, linea: v.linea });
+        await api('POST', `/api/catalogo/medicamentos/${m.id}`, { codigo: v.codigo, nombre: v.nombre, presentacion: v.presentacion, linea: v.linea, unidadesPorCaja: v.unidadesPorCaja });
         if (v.precio !== '' && Number(v.precio) !== Number(m.precio)) { accionPendiente = 'cambiar precio'; await api('POST', `/api/catalogo/medicamentos/${m.id}/precios`, { precio: v.precio, vigenteDesde: hoy() }); }
         cache = {}; router();
       } catch (e) { alert(e.fields ? Object.values(e.fields).join(' ') : e.message); }
@@ -2688,7 +2773,15 @@ V.catalogo = async () => {
       await confirmar(`Precios de ${m.nombre}`, items.length ? items.map((p) => `${fecha(p.vigenteDesde)}: ${RD(p.precio)} (${p.fuente})`).join('  ·  ') : 'Sin historial de precios.', { okTexto: 'Cerrar' });
     };
     bloques.push(S('lista', `Medicamentos (${fmtN.format(ms.length)})`, tabla([{ t: 'Código', v: (m) => (m.codigo ? h('code', { class: 'codigo-med' }, m.codigo) : '') }, { t: 'Medicamento / Producto', v: (m) => [m.nombre, m.presentacion ? h('small', { style: 'display:block;color:var(--texto-2)' }, m.presentacion) : null] }, { t: 'Línea', v: (m) => m.linea ?? '' },
-        { t: 'Precio', num: true, v: (m) => m.precio != null ? h('strong', { class: 'precio-cat' }, RD(m.precio)) : h('span', { class: 'chip pendiente' }, 'Sin precio') },
+        { t: 'Precio', num: true, v: (m) => m.precio != null ? h('strong', { class: 'precio-cat' }, RD(m.precio), m.unidadesPorCaja ? h('small', { class: 'hint', style: 'display:block' }, 'por caja') : null) : h('span', { class: 'chip pendiente' }, 'Sin precio') },
+        { t: 'Por unidad', num: true, v: (m) => {
+          const u = precioUnidadMed(m);
+          if (!m.unidadesPorCaja) return h('span', { class: 'hint' }, 'No aplica');
+          if (u == null) return h('span', { class: 'hint' }, `${fmtN.format(m.unidadesPorCaja)} por caja`);
+          // Costo a farmacia por unidad; con el margen usual de la farmacia (15 % a 30 %) como referencia.
+          return h('span', { class: 'precio-unidad' }, h('strong', {}, RD(u)), h('small', {}, `Costo a farmacia (caja de ${fmtN.format(m.unidadesPorCaja)})`),
+            h('small', { title: 'Referencia: la farmacia suma su margen, usualmente de 15 % a 30 %.' }, `Con margen 15–30 %: ${RD(Math.round(u * 115) / 100)} a ${RD(Math.round(u * 130) / 100)}`));
+        } },
         { t: '', v: (m) => [ES_GER() ? h('button', { class: 'btn-sec btn-peq', type: 'button', onclick: () => editarMed(m) }, 'Editar') : null, ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => ponerPrecio(m) }, m.precio != null ? 'Cambiar precio' : 'Poner precio') : null,
           h('button', { class: 'btn-sec btn-peq btn-suave', type: 'button', onclick: () => historial(m) }, 'Historial'),
           ES_GER() ? h('button', { class: 'btn-sec btn-peq btn-peligro', type: 'button', onclick: () => eliminarMed(m) }, 'Eliminar') : null] }], ms, ['Catálogo vacío', 'Agrega los medicamentos de FERSUAZ o impórtalos desde Excel.'], { exportar: { nombre: 'medicamentos-fersuaz', titulo: 'Medicamentos' } })));
